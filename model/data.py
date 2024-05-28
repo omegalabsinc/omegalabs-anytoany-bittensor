@@ -28,7 +28,7 @@ class ModelId(BaseModel):
     )
     name: str = Field(description="Name of the model.")
 
-    chat_template: str = Field(description="Chat template for the model.")
+    epoch: str = Field(description="The epoch number to submit as your checkpoint to evaluate e.g. 10")
 
     # When handling a model locally the commit and hash are not necessary.
     # Commit must be filled when trying to download from a remote store.
@@ -42,7 +42,7 @@ class ModelId(BaseModel):
 
     def to_compressed_str(self) -> str:
         """Returns a compressed string representation."""
-        return f"{self.namespace}:{self.name}:{self.chat_template}:{self.commit}:{self.hash}:{self.competition_id}"
+        return f"{self.namespace}:{self.name}:{self.epoch}:{self.commit}:{self.hash}:{self.competition_id}"
 
     @classmethod
     def from_compressed_str(cls, cs: str) -> Type["ModelId"]:
@@ -51,7 +51,7 @@ class ModelId(BaseModel):
         return cls(
             namespace=tokens[0],
             name=tokens[1],
-            chat_template=tokens[2] if tokens[2] != "None" else None,
+            epoch=tokens[2] if tokens[2] != "None" else None,
             commit=tokens[3] if tokens[3] != "None" else None,
             hash=tokens[4] if tokens[4] != "None" else None,
             competition_id=(

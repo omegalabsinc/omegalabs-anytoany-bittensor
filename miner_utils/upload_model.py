@@ -10,12 +10,10 @@ Prerequisites:
 """
 
 import asyncio
-import json
 import os
 import argparse
-import torch
 import constants
-from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
+from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore, get_required_files, check_config
 from model.model_updater import ModelUpdater
 import bittensor as bt
 from utilities import utils
@@ -48,15 +46,8 @@ def get_config():
 
     parser.add_argument(
         "--epoch",
-        type=int,
-        help="The epoch number to load e.g. if you want to upload meta_model_0.pt, epoch should be 0",
-    )
-
-    parser.add_argument(
-        "--chat_template",
         type=str,
-        default="vicuna",
-        help="The chat template for the model.",
+        help="The epoch number to load e.g. if you want to upload meta_model_0.pt, epoch should be 0",
     )
 
     parser.add_argument(
@@ -65,22 +56,16 @@ def get_config():
         default=constants.SUBNET_UID,
         help="The subnet UID.",
     )
+
     parser.add_argument(
         "--competition_id",
         type=str,
         default=constants.ORIGINAL_COMPETITION_ID,
         help="competition to mine for (use --list-competitions to get all competitions)",
     )
+
     parser.add_argument(
         "--list_competitions", action="store_true", help="Print out all competitions"
-    )
-
-    parser.add_argument(
-        "--model_commit_id", type=str, help="The commit id of the model to upload"
-    )
-
-    parser.add_argument(
-        "--skip_model_upload", action="store_true", help="Skip model upload"
     )
 
     # Include wallet and logging arguments from bittensor
@@ -92,61 +77,19 @@ def get_config():
     config = bt.config(parser)
     return config
 
-def regenerate_hash(namespace, name, chat_template, competition_id):
-    s = " ".join([namespace, name, chat_template, competition_id])
+
+def regenerate_hash(namespace, name, epoch, competition_id):
+    s = " ".join([namespace, name, epoch, competition_id])
     hash_output = hashlib.sha256(s.encode('utf-8')).hexdigest()
     return int(hash_output[:16], 16)  # Returns a 64-bit integer from the first 16 hexadecimal characters
 
 
-def check_model_dir(model_dir):
-    """Check if model dir has all the required files."""
-    if not os.path.exists(model_dir):
-        raise FileNotFoundError(f"Model directory {model_dir} not found.")
-
-    ls_dir = os.listdir(model_dir)
-    # check if at least 1 *.safetensors file exists
-    if not any(file.endswith(".safetensors") for file in ls_dir):
-        raise FileNotFoundError(
-            f"No *.safetensors file found in model directory {model_dir}."
-        )
-    
-    # check if tokenizer.json exists
-    if not any(file.endswith("tokenizer.json") for file in ls_dir):
-        raise FileNotFoundError(
-            f"No tokenizer.json file found in model directory {model_dir}."
-        )
-    
-    # check if config.json exists
-    if not any(file.endswith("config.json") for file in ls_dir):
-        raise FileNotFoundError(
-            f"No config.json file found in model directory {model_dir}."
-        )
-    
-    # # check if generation_config.json exists
-    # if not any(file.endswith("generation_config.json") for file in ls_dir):
-    #     raise FileNotFoundError(
-    #         f"No generation_config.json file found in model directory {model_dir}."
-    #     )
-    
-    # check if special_tokens_map.json exists
-    if not any(file.endswith("special_tokens_map.json") for file in ls_dir):
-        raise FileNotFoundError(
-            f"No special_tokens_map.json file found in model directory {model_dir}."
-        )
-    
-    # check if model.safetensors.index.json exists
-    if not any(file.endswith("model.safetensors.index.json") for file in ls_dir):
-        raise FileNotFoundError(
-            f"No model.safetensors.index.json file found in model directory {model_dir}."
-        )
-    
-    # check if this file contains metadata.total_size
-    # with open(os.path.join(model_dir, "model.safetensors.index.json"), "r") as f:
-    #     index = json.load(f)
-    #     if "metadata" not in index or "total_size" not in index["metadata"]:
-    #         raise FileNotFoundError(
-    #             f"model.safetensors.index.json file in model directory {model_dir} does not contain metadata.total_size."
-    #         )
+def validate_repo(ckpt_dir, epoch):
+    for filename in get_required_files(epoch):
+        filepath = os.path.join(ckpt_dir, filename)
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"Required file {filepath} not found in {ckpt_dir}")
+    check_config(ckpt_dir)
 
 
 async def main(config: bt.config):
@@ -172,37 +115,28 @@ async def main(config: bt.config):
     model_id = ModelId(
         namespace=repo_namespace,
         name=repo_name,
-        chat_template=config.chat_template,
+        epoch=config.epoch,
         competition_id=config.competition_id,
     )
 
-    if not config.skip_model_upload:
-        model = Model(id=model_id, local_repo_dir=config.model_dir)
+    model = Model(id=model_id, local_repo_dir=config.model_dir)
 
-        check_model_dir(config.model_dir)
+    validate_repo(config.model_dir, config.epoch)
 
-        remote_model_store = HuggingFaceModelStore()
+    remote_model_store = HuggingFaceModelStore()
 
-        bt.logging.info(f"Uploading model to Hugging Face with id {model_id}")
+    bt.logging.info(f"Uploading model to Hugging Face with id {model_id}")
 
-
-        model_id_with_commit = await remote_model_store.upload_model(
-            model=model,
-            competition_parameters=parameters,
-        )
-    else:
-        # get the latest commit id of hf repo
-        model_id_with_commit = model_id
-        if config.model_commit_id is None or config.model_commit_id == "":
-            raise ValueError("model_commit_id should not be set when skip_model_upload is set to True")
-        
-        model_id_with_commit.commit = config.model_commit_id
+    model_id_with_commit = await remote_model_store.upload_model(
+        model=model,
+        competition_parameters=parameters,
+    )
 
     model_id_with_hash = ModelId(
         namespace=repo_namespace,
         name=repo_name,
-        chat_template=config.chat_template, 
-        hash=regenerate_hash(repo_namespace, repo_name, config.chat_template, config.competition_id), 
+        epoch=config.epoch, 
+        hash=regenerate_hash(repo_namespace, repo_name, config.epoch, config.competition_id), 
         commit=model_id_with_commit.commit,
         competition_id=config.competition_id,
     )

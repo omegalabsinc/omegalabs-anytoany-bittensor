@@ -5,6 +5,7 @@ sh:
 		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
+		-v ~/.bittensor:/root/.bittensor \
 		a2a
 
 sh-headless:
@@ -12,6 +13,7 @@ sh-headless:
 		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
+		-v ~/.bittensor:/root/.bittensor \
 		--name a2a \
 		a2a
 	docker attach a2a

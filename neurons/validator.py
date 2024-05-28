@@ -22,16 +22,14 @@ import os
 import math
 import time
 import torch
-import random
 import shutil
 import asyncio
 import argparse
 import typing
-from threadpoolctl import threadpool_limits
-import requests
-
+from tempfile import TemporaryDirectory
 
 import constants
+import ulid
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
@@ -39,6 +37,9 @@ from model.storage.chain.chain_model_metadata_store import ChainModelMetadataSto
 from model.storage.disk.disk_model_store import DiskModelStore
 from model.storage.disk.utils import get_hf_download_path
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
+from datasets import load_dataset, Dataset, disable_caching
+from omegaconf import OmegaConf, DictConfig
+import huggingface_hub
 import traceback
 import threading
 import multiprocessing
@@ -48,6 +49,7 @@ from rich.console import Console
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
+from tune_recipes.gen import InferenceRecipe
 
 import math
 import torch
@@ -59,6 +61,32 @@ import bittensor as bt
 import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+HF_DATASET = "omegalabsinc/omega-multimodal"
+DATA_FILES_PREFIX = "default/train/"
+DATA_FILES_SUFFIX = ".parquet"
+MIN_AGE = 4 * 60 * 60  # 4 hours
+MAX_FILES = 8
+MODEL_FILE_PREFIX = "meta_model"
+CONFIG_FILE = "training_config.yml"
+
+
+def get_timestamp_from_filename(filename: str):
+    return ulid.from_str(filename[len(DATA_FILES_PREFIX):filename.find(DATA_FILES_SUFFIX)]).timestamp().timestamp
+
+
+def pull_latest_omega_dataset() -> Dataset:
+    omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
+    recent_files = [
+        f.rfilename
+        for f in omega_ds_files if
+        f.rfilename.startswith(DATA_FILES_PREFIX) and 
+        time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
+    ][:MAX_FILES]
+    omega_dataset = load_dataset(HF_DATASET, data_files=recent_files)["train"]
+    omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+    return omega_dataset
+
 
 def iswin(score_i, score_j, block_i, block_j):
     """
@@ -239,6 +267,7 @@ class Validator:
         bt.logging(config=self.config)
 
         bt.logging.info(f"Starting validator with config: {self.config}")
+        disable_caching()
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
@@ -537,9 +566,6 @@ class Validator:
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
-    def load_latest_data(self):
-        raise ValueError("load_latest_data not implemented")
-
     async def run_step(self):
         """
         Executes a step in the evaluation process of models. This function performs several key tasks:
@@ -637,7 +663,7 @@ class Validator:
             
         bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
-        eval_data = self.load_latest_data()
+        eval_data = pull_latest_omega_dataset()
 
         for uid_i, (
             hotkey,
@@ -658,23 +684,10 @@ class Validator:
                         while True:
                             try:
                                 _score, status = get_model_score(
-                                    model_i_metadata.id.namespace,
-                                    model_i_metadata.id.name,
-                                    model_i_metadata.id.hash,
-                                    model_i_metadata.id.chat_template,
-                                    self.config
+                                    model_i_metadata.id.namespace + "/" + model_i_metadata.id.name,
+                                    mini_batch=eval_data,
                                 )
                                 bt.logging.info(f"Score for {model_i_metadata} is {_score}")
-                                bt.logging.info(f"Status for {model_i_metadata} is {status}")
-                                if status == 'COMPLETED':
-                                    score = _score
-                                    break
-                                elif status == 'FAILED':
-                                    score = 0
-                                    break
-                                else:
-                                    bt.logging.debug(f"Waiting for score for {model_i_metadata.id} Current status: {status}")
-                                    time.sleep(10)
                             except:
                                 bt.logging.error(f"Failed to get score for {model_i_metadata.id}")
                                 break
@@ -861,43 +874,76 @@ class Validator:
                     f"Error in validator loop \n {e} \n {traceback.format_exc()}"
                 )
 
-def get_model_score(hf_repo_id, batch):
-    # Status:
-    # QUEUED, RUNNING, FAILED, COMPLETED
-    # return (score, status)
-    if config.use_local_validation_api:
-        validation_endpoint = f"http://localhost:{config.local_validation_api_port}/evaluate_model"
-    else:
-        validation_endpoint = f"{constants.VALIDATION_SERVER}/evaluate_model"
 
-    # Construct the payload with the model name and chat template type
-    payload = {
-        "repo_namespace": namespace,
-        "repo_name": name,
-        "hash": hash,
-        "chat_template_type": template,
-    }
+def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
+    # assert False, "make sure not to cache downloaded checkpoints"
+    hf_api = huggingface_hub.HfApi()
+    ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
+    if len(ckpt_files) == 0:
+        raise ValueError(f"No checkpoint files found in {hf_repo_id}")
+    with TemporaryDirectory() as temp_dir:
+        config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=temp_dir)
+        ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=temp_dir)
+        train_cfg = OmegaConf.load(config_path)
+        train_cfg.model = DictConfig({
+            "_component_": "models.mmllama3_8b",
+            "use_clip": False,
+            "perception_tokens": train_cfg.model.perception_tokens,
+        })
+        train_cfg.checkpointer.checkpoint_dir = os.path.dirname(ckpt_path)
+        train_cfg.checkpointer.checkpoint_files = [os.path.basename(ckpt_path)]
+        train_cfg.inference.max_new_tokens = 300
+        inference_recipe = InferenceRecipe(train_cfg)
+        inference_recipe.setup(cfg=train_cfg)
+    return inference_recipe, train_cfg
 
-    # Make the POST request to the validation endpoint
-    try:
-        response = requests.post(validation_endpoint, json=payload)
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        # Parse the response JSON
-        result = response.json()
-        status = result['status']
-        if status == 'COMPLETED':
-            score = result['score']['total_score']
-        elif status in ["QUEUED", "RUNNING", "FAILED"]:
-            bt.logging.warning(f"Model {namespace}/{name} is in status {status}")
-            score = 0
-    except Exception as e:
-        score = 0
-        status = 'FAILED'
-        bt.logging.error(e)
-        bt.logging.error(f"Failed to get score and status for {namespace}/{name}")
 
-    bt.logging.info(f"Model {namespace}/{name} has score {score} and status {status}")
-    return score, status
+def get_model_score(hf_repo_id, mini_batch):
+    inference_recipe, config = load_ckpt_from_hf(hf_repo_id)
+    for video_emb, actual_caption in zip(mini_batch["video_embed"], mini_batch["description"]):
+        generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=video_emb)
+        print("-----------------------------------")
+        print(f"Actual caption: {actual_caption}")
+        print(f"Generated caption: {generated_caption}")
+    
+    # TODO: turn the actual vs generated captions into a loss and return it!
+
+    # # Status:
+    # # QUEUED, RUNNING, FAILED, COMPLETED
+    # # return (score, status)
+    # if config.use_local_validation_api:
+    #     validation_endpoint = f"http://localhost:{config.local_validation_api_port}/evaluate_model"
+    # else:
+    #     validation_endpoint = f"{constants.VALIDATION_SERVER}/evaluate_model"
+
+    # # Construct the payload with the model name and chat template type
+    # payload = {
+    #     "repo_namespace": namespace,
+    #     "repo_name": name,
+    #     "hash": hash,
+    #     "epoch_type": template,
+    # }
+
+    # # Make the POST request to the validation endpoint
+    # try:
+    #     response = requests.post(validation_endpoint, json=payload)
+    #     response.raise_for_status()  # Raise an exception for HTTP errors
+    #     # Parse the response JSON
+    #     result = response.json()
+    #     status = result['status']
+    #     if status == 'COMPLETED':
+    #         score = result['score']['total_score']
+    #     elif status in ["QUEUED", "RUNNING", "FAILED"]:
+    #         bt.logging.warning(f"Model {namespace}/{name} is in status {status}")
+    #         score = 0
+    # except Exception as e:
+    #     score = 0
+    #     status = 'FAILED'
+    #     bt.logging.error(e)
+    #     bt.logging.error(f"Failed to get score and status for {namespace}/{name}")
+
+    # bt.logging.info(f"Model {namespace}/{name} has score {score} and status {status}")
+    # return score, status
 
 if __name__ == "__main__":
     asyncio.run(Validator().run())

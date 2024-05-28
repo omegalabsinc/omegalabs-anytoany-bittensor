@@ -1,4 +1,5 @@
 import os
+from omegaconf import OmegaConf
 from huggingface_hub import HfApi
 from model.data import Model, ModelId
 from model.storage.disk import utils
@@ -9,15 +10,46 @@ from huggingface_hub import HfApi, file_exists
 from collections import defaultdict
 
 
-def shared_pointers(tensors):
-    ptrs = defaultdict(list)
-    for k, v in tensors.items():
-        ptrs[v.data_ptr()].append(k)
-    failing = []
-    for ptr, names in ptrs.items():
-        if len(names) > 1:
-            failing.append(names)
-    return failing
+MODEL_FILE_PT = "meta_model_{epoch}.pt"
+ADAPTER_FILE_PT = "adapter_{epoch}.pt"
+CONFIG_FILE = "training_config.yml"
+README_FILE = "README.md"
+
+
+def check_config(ckpt_dir):
+    config_file = os.path.join(ckpt_dir, CONFIG_FILE)
+    cfg = OmegaConf.load(config_file)
+    if cfg.model.use_clip:
+        raise ValueError("Cannot upload checkpoints with CLIP embeddings")
+
+
+def get_required_files(epoch: int):
+    return [
+        MODEL_FILE_PT.format(epoch=epoch),
+        ADAPTER_FILE_PT.format(epoch=epoch),
+        CONFIG_FILE,
+    ]
+
+
+def export_readme(ckpt_dir: str):
+    readme_file = os.path.join(ckpt_dir, README_FILE)
+    with open(readme_file, "w") as f:
+        f.write(
+            f"""---
+license: mit
+tags:
+- any-to-any
+- omega
+- omegalabs
+- bittensor
+- agi
+---
+
+This is an Any-to-Any model checkpoint for the OMEGA Labs x Bittensor Any-to-Any subnet.
+
+Check out the [git repo](https://github.com/omegalabsinc/omegalabs-anytoany-bittensor) and find OMEGA on X: [@omegalabsai](https://x.com/omegalabsai).
+"""
+        )
 
 
 class HuggingFaceModelStore(RemoteModelStore):
@@ -38,25 +70,22 @@ class HuggingFaceModelStore(RemoteModelStore):
         """Uploads a trained model to Hugging Face."""
         token = HuggingFaceModelStore.assert_access_token_exists()
         api = HfApi(token=token)
+        export_readme(model.local_repo_dir)
+        files_to_upload = get_required_files(model.id.epoch) + [README_FILE]
+        hf_repo_id = model.id.namespace + "/" + model.id.name
         api.create_repo(
-            repo_id=model.id.namespace + "/" + model.id.name,
+            repo_id=hf_repo_id,
             exist_ok=True,
             private=True,
         )
-        
-        # upload model.local_repo_dir to Hugging Face
-        commit_info = api.upload_folder(
-            repo_id=model.id.namespace + "/" + model.id.name,
-            folder_path=model.local_repo_dir,
-            commit_message="Upload model",
-            repo_type="model",
-        )
-        
+        for filename in files_to_upload:
+            commit_info = api.upload_file(repo_id=hf_repo_id, path_in_repo=filename, path_or_fileobj=os.path.join(model.local_repo_dir, filename))
+        print(f"Successfully uploaded checkpoint '{model.local_repo_dir}' @ epoch={model.id.epoch} to {hf_repo_id}")
         
         model_id_with_commit = ModelId(
             namespace=model.id.namespace,
             name=model.id.name,
-            chat_template=model.id.chat_template,
+            epoch=model.id.epoch,
             hash=model.id.hash,
             commit=commit_info.oid,
             competition_id=model.id.competition_id,

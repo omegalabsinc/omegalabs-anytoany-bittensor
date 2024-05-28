@@ -109,3 +109,10 @@ enable_activation_checkpointing: False
 profiler:
   _component_: torchtune.utils.profiler
   enabled: False
+
+inference:
+  prompt_template: "Video:\n{video}\nCaption the previous video."
+  max_new_tokens: 300
+  temperature: 0.6 # 0.8 and 0.6 are popular values to try
+  top_k: 300
+  quantizer: null

@@ -108,8 +108,8 @@ def check_model_repo_size(hash: int, repo_namespace: str, repo_name: str) -> int
             shutil.rmtree(os.path.join(original_dir, repo_dir), ignore_errors=True)
 
 
-def regenerate_hash(namespace, name, chat_template, competition_id):
-    s = " ".join([namespace, name, chat_template, competition_id])
+def regenerate_hash(namespace, name, epoch, competition_id):
+    s = " ".join([namespace, name, epoch, competition_id])
     hash_output = hashlib.sha256(s.encode('utf-8')).hexdigest()
     return int(hash_output[:16], 16)  # Returns a 64-bit integer from the first 16 hexadecimal characters
 
