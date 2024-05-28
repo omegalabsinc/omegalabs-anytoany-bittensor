@@ -1,0 +1,22 @@
+bittensor==6.12.2
+transformers==4.41.0
+torch==2.3.0
+pandas==2.2.2
+sentencepiece==0.2.0
+protobuf==4.25.3
+python-dotenv==1.0.1
+tiktoken==0.4.0
+threadpoolctl==3.5.0
+datasets==2.16.1
+peft==0.11.1
+six==1.16.0
+torchtune @ git+https://github.com/pytorch/torchtune.git@8f59c2fecd722691271eecca630a526719a32f76#egg=torchtune
+lm_eval==0.4
+torchvision==0.18.0
+torchdata @ git+https://github.com/pytorch/data.git@c78bbc7c69809172d13ce80cc8098ebc3715b96e#egg=torchdata
+diffusers==0.27.2
+sortedcontainers==2.4.0
+ulid-py==1.1.0
+imagebind @ git+https://github.com/omegalabsinc/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
+llama3 @ git+https://github.com/meta-llama/llama3.git@af6eedf7042fb51d00b2b26d8ef1ceaab73e1670
+pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@28fe037d212663c6a24f373b94cc5d478c8c1a1d

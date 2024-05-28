@@ -1,0 +1,40 @@
+# Config for EleutherEvalRecipe in eleuther_eval.py
+#
+# To launch, run the following command from root torchtune directory:
+#    tune run eleuther_eval --config eleuther_evaluation tasks=["truthfulqa_mc2","hellaswag"]
+
+model:
+  _component_: torchtune.models.llama3.llama3_8b
+
+tokenizer:
+  _component_: torchtune.models.llama3.llama3_tokenizer
+  path: checkpoints/Meta-Llama-3-8B-Instruct/tokenizer.model
+
+checkpointer:
+  _component_: torchtune.utils.FullModelMetaCheckpointer
+  checkpoint_dir: checkpoints/Meta-Llama-3-8B-Instruct/
+  checkpoint_files: [
+    consolidated.00.pth
+  ]
+  output_dir: output/Meta-Llama-3-8B-Instruct/
+  model_type: LLAMA3
+
+# Environment
+device: cuda
+dtype: bf16
+seed: 217
+
+# EleutherAI specific eval args
+tasks: [
+    "lambada_openai",         # 1:05 @ 28.3 GB
+    "winogrande",             # 0:16 @ 18.4 GB
+    "piqa",                   # 0:15 @ 29.3 GB
+    # "truthfulqa_mc2",         # 1:20 @ 29.0 GB
+    # "hellaswag",              # 7:30 @ 24.6 GB
+    # "super-glue-lm-eval-v1",  # 1:30:00 @ 67 GB
+]
+limit: null
+max_seq_length: 4096
+
+# Quantization specific args
+quantizer: null
