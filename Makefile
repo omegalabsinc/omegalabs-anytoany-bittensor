@@ -30,30 +30,30 @@ checkpoints/sd2-1/%:
 CKPT_OUTPUT ?= output_checkpoints/experiment_1
 OPTIONS ?=
 finetune-x1:
-	tune run omega_a2a/tune_recipes/lora_finetune_single_device.py --config config/8B_lora.yaml \
+	tune run tune_recipes/lora_finetune_single_device.py --config config/8B_lora.yaml \
 		checkpointer.output_dir=$(CKPT_OUTPUT) $(OPTIONS)
 
 finetune-x%:
 	tune run --nnodes 1 --nproc_per_node $* \
-		omega_a2a/tune_recipes/lora_finetune_distributed.py --config config/8B_lora.yaml \
+		tune_recipes/lora_finetune_distributed.py --config config/8B_lora.yaml \
 		checkpointer.output_dir=$(CKPT_OUTPUT) $(OPTIONS) \
 		gradient-accumulation-steps=32
 
 # eg. make eval_baseline, or make eval_finetune
 eval%:
-	tune run omega_a2a/tune_recipes/eleuther_eval.py --config config/eleuther_eval$*.yaml
+	tune run tune_recipes/eleuther_eval.py --config config/eleuther_eval$*.yaml
 
 mm_eval:
-	tune run omega_a2a/tune_recipes/mm_eval.py --config config/mm_eval.yaml
+	tune run tune_recipes/mm_eval.py --config config/mm_eval.yaml
 
 # included as an example: replace prompt as required
 gen:
-	tune run omega_a2a/tune_recipes/gen.py --config config/gen.yaml prompt="definition of inference in one word"
+	tune run tune_recipes/gen.py --config config/gen.yaml prompt="definition of inference in one word"
 
 # included as an example: replace prompt as required
 mmgen:
-	tune run omega_a2a/tune_recipes/gen.py --config config/gen.yaml image="media/cactus.png" prompt="Caption the image\nImage:\n{image}"
-	# tune run omega_a2a/tune_recipes/gen.py --config config/gen.yaml image="media/cactus.png" prompt="Image:\n{image}\nCaption the preceding image."
+	tune run tune_recipes/gen.py --config config/gen.yaml image="media/cactus.png" prompt="Caption the image\nImage:\n{image}"
+	# tune run tune_recipes/gen.py --config config/gen.yaml image="media/cactus.png" prompt="Image:\n{image}\nCaption the preceding image."
 
 # download+process SAM dataset into imagebind+clip embeddings
 sam_llava: ds/sam_llava/00.caption.pt

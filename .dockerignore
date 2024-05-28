@@ -150,9 +150,9 @@ leaderboard.csv
 *playground.ipynb
 *venv*
 testing/
-omega_a2a/ds/sam_llava
-omega_a2a/ds/coco_llava_instruct
-omega_a2a/ds/vision_flan
+ds/sam_llava
+ds/coco_llava_instruct
+ds/vision_flan
 checkpoints/
 .checkpoints/
 *.tar
