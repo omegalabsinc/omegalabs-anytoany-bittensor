@@ -11,13 +11,13 @@
 
 ---
 - [Introduction](#introduction)
-- [Why Any-to-Any?](#why-any-to-any)
-- [Roadmap](#roadmap)
-- [Getting Started](#getting-started)
-- [Current A2A Architecture](#current-a2a-architecture)
-- [The Future of A2A](#the-future-of-a2a)
-- [Incentives](#incentives)
-- [Acknowledgements](#acknowledgements)
+- [Why Any-to-Any?](#why-any-to-any-)
+- [Roadmap](#roadmap-)
+- [Getting Started](#getting-started-)
+- [Current A2A Architecture](#current-a2a-architecture-)
+- [The Future of A2A](#the-future-of-a2a-)
+- [Incentives](#incentives-)
+- [Acknowledgements](#acknowledgements-)
 ---
 
 ## Introduction
@@ -27,7 +27,7 @@
 ## Why Any-to-Any? 🧠📚🌃🎧🎥
 
 - **Multimodal First**: A2A jointly models all modalities (text, image, audio, video) at once, with the belief that true intelligence lies in the associative representations present at the intersection of all modalities.
-- **Unified Fundamental Representation of Reality**: The Platonic Representation Hypothesis suggests that as AI models increase in scale and capability, they converge towards a shared, fundamental representation of reality. A2A models, by jointly modeling all modalities, are uniquely positioned to capture this underlying structure, potentially accelerating the path towards more general and robust AI. (https://phillipi.github.io/prh/)
+- **Unified Fundamental Representation of Reality**: The [Platonic Representation Hypothesis](https://phillipi.github.io/prh/) suggests that as AI models increase in scale and capability, they converge towards a shared, fundamental representation of reality. A2A models, by jointly modeling all modalities, are uniquely positioned to capture this underlying structure, potentially accelerating the path towards more general and robust AI.
 - **Decentralized Data Collection**: Thanks to our [SN24 data collection](https://github.com/omegalabsinc/omegalabs-bittensor-subnet), we leverage a fresh stream of data that mimics real-world demand distribution for training and evaluation. 
 - **Incentivized Research**: World class AI researchers and engineers already love open source. With Bittensor's model for incentivizing intelligence, researchers can be permissionlessly compensated for their efforts and have their compute subsidized according to their productivity.
 - **Bittensor Subnet Orchestrator**: Incorporates specialist models from other Bittensor subnets, acting as a high-bandwidth, general-purpose router. By being the best open source natively multimodal model, future AI projects can leverage our rich multimodal embeddings to bootstrap their own expert models.
@@ -77,7 +77,7 @@
 
 #### Requirements
 - Python 3.11+ with pip
-- GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice, or use a 1024xH100 if you wanna train a really good model :sunglasses:
+- GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice, or use a 1024xH100 if you wanna train a **really** good model :sunglasses:
 - At least 40 GB of CPU RAM
 - If running on runpod, runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04 is a good base template.
 
