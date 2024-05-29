@@ -18,6 +18,23 @@ sh-headless:
 		a2a
 	docker attach a2a
 
+NETUID ?= $(error "Please specify NETUID=...")
+WALLET_NAME ?= $(error "Please specify WALLET_NAME=...")
+WALLET_HOTKEY ?= $(error "Please specify WALLET_HOTKEY=...")
+PORT ?= 8091
+validator:
+	docker run -it --detach --restart always \
+		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
+		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
+		-v $(shell pwd):/app \
+		-v ~/.bittensor:/root/.bittensor \
+		--name omega-a2a-validator \
+		a2a \
+		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT)
+
+check-vali-logs:
+	docker logs omega-a2a-validator --follow --limit 100
+
 a2a:
 	docker build -t $@ -f Dockerfile .
 
