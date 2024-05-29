@@ -232,7 +232,7 @@ class InferenceRecipe:
         cleaned_tokens = [t for t in generated_tokens[len(prompt):] if t not in disallowed_tokens + allowed_id]
         caption = self._tokenizer.decode(cleaned_tokens)
 
-        log.info(f"Generated caption: {caption} in {t:.02f} sec")
+        log.debug(f"Generated caption: {caption} in {t:.02f} sec")
 
         return caption
 
