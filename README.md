@@ -14,6 +14,8 @@
 - [Why Any-to-Any?](#why-any-to-any-)
 - [Roadmap](#roadmap-)
 - [Getting Started](#getting-started-)
+  - [For Miners](#for-miners)
+  - [For Validators](#for-validators)
 - [Current A2A Architecture](#current-a2a-architecture-)
 - [The Future of A2A](#the-future-of-a2a-)
 - [Incentives](#incentives-)
@@ -79,19 +81,29 @@
 - Python 3.11+ with pip
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice, or use a 1024xH100 if you wanna train a **really** good model :sunglasses:
 - At least 40 GB of CPU RAM
-- If running on runpod, runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04 is a good base template.
+- If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
 
+#### Setup
 1. Clone the repo and `cd` into it:
 ```bash
 git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
 2. Install the requirements:
-  a. Using docker: `make build-and-run`
-  b. Using your local Python: `pip install -e .`
+  - Using docker: `make build-and-run`
+  - Using your local Python: `pip install -e .`
 3. Start a finetuning run: `make finetune-x1`
-  a. Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
-4. Upload the model to Huggingface: `python miner_utils/upload_model.py --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} --wallet.name {miner wallet name} --wallet.hotkey {miner hotkey} --model_dir {the directory that the checkpoint is saved in e.g. output_checkpoints/experiment_1/} --epoch 0 --netuid NETUID`
+  - Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
+4. Upload the model to Huggingface:
+```
+python miner_utils/upload_model.py \
+    --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} \
+    --wallet.name {miner wallet name} \
+    --wallet.hotkey {miner hotkey} \
+    --model_dir {the directory that the checkpoint is saved in e.g. output_checkpoints/experiment_1/} \
+    --epoch 0 \
+    --netuid NETUID
+```
 NOTE: If you want to run on testnet, simply add `--subtensor.network test` at the end of the command and use `--netuid 157`.
 
 ### For Validators
@@ -100,22 +112,29 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 - Python 3.11+ with pip
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
 - At least 40 GB of CPU RAM
-- If running on runpod, runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04 is a good base template.
+- If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
 
+#### Running with Docker
 1. Clone the repo and `cd` into it:
 ```bash
 git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
-
-Using Docker:
-2. Run the validator: `make validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}`
+2. Run the validator:
+```bash
+make validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
+```
 3. Check your logs: `make check-logs`
 
-Using PM2:
-2. Install the requirements: `pip install -e .`
-3. Run the validator script: 
+#### Running with PM2
+1. Clone the repo and `cd` into it:
+```bash
+git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+cd omegalabs-anytoany-bittensor
 ```
+2. Install the requirements: `pip install -e .`
+3. Run the validator script:
+```bash
 pm2 start neurons/validator.py --name omega-a2a-validator -- \
     --netuid {netuid} \
     --wallet.name {wallet} \
