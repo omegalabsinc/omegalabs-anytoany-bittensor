@@ -167,4 +167,4 @@ As we improve the incentive scheme over time to create better and more diverse m
 
 ## Acknowledgements 🙏
 
-Thank you to Nous Research [finetuning subnet repo](https://github.com/NousResearch/finetuning-subnet), [MyShell](https://github.com/myshell-ai/MyShell-TTS-Subnet), and [Impel](https://github.com/impel-intelligence/dippy-bittensor-subnet) for the structure of the miner chain model upload and validator comparison scoring logic!
+Thank you to [Nous Research](https://github.com/NousResearch/finetuning-subnet), [MyShell](https://github.com/myshell-ai/MyShell-TTS-Subnet), and [Impel](https://github.com/impel-intelligence/dippy-bittensor-subnet) for the structure of the miner chain model upload and validator comparison scoring logic!
