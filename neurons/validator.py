@@ -45,7 +45,7 @@ from rich.console import Console
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
-from neurons.model_scoring import get_model_score, pull_latest_omega_dataset
+from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE
 
 import math
 import torch
@@ -377,6 +377,21 @@ class Validator:
             self.update_thread.join()
             self.clean_thread.join()
 
+    def is_model_old_enough(self, model_metadata: ModelMetadata):
+        """
+        Determines if a model is old enough to be evaluated i.e. it must not have seen data from the OMEGA data subnet.
+
+        Parameters:
+            model_metadata (ModelMetadata): The metadata of the model to evaluate.
+
+        Returns:
+            bool: True if the model is old enough, False otherwise.
+        """
+        block_uploaded_at = model_metadata.block
+        current_block = self.subtensor.block
+        model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
+        return model_age > MIN_AGE
+
     def update_models(self, update_delay_minutes):
         # Track how recently we updated each uid
         uid_last_checked = dict()
@@ -419,7 +434,7 @@ class Validator:
                     metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(
                         hotkey
                     )
-                    if metadata is not None:
+                    if metadata is not None and self.is_model_old_enough(metadata):
                         bt.logging.warning(
                             f"Updated model for UID={next_uid}. Was new = {updated}"
                         )

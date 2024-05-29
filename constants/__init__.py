@@ -18,11 +18,8 @@ class CompetitionParameters:
 # Project Constants.
 # ---------------------------------
 
-# Validation API hosted by SN Owner
-VALIDATION_SERVER = "http://34.41.206.211:8000"
-
 # The uid for this subnet.
-SUBNET_UID = 11
+SUBNET_UID = 157
 # The start block of this subnet
 SUBNET_START_BLOCK = 2635801
 # The root directory of this project.
@@ -33,10 +30,11 @@ MAX_HUGGING_FACE_BYTES: int = 18 * 1024 * 1024 * 1024
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
         reward_percentage=1.0,
-        competition_id="d1",
+        competition_id="o1",
     ),
 ]
-ORIGINAL_COMPETITION_ID = "d1"
+ORIGINAL_COMPETITION_ID = "o1"
+BLOCK_DURATION = 12  # 12 seconds
 
 
 assert math.isclose(sum(x.reward_percentage for x in COMPETITION_SCHEDULE), 1.0)
