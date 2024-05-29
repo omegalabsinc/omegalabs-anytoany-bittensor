@@ -33,7 +33,7 @@ validator:
 		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT)
 
 check-vali-logs:
-	docker logs omega-a2a-validator --follow --limit 100
+	docker logs omega-a2a-validator --follow --tail 100
 
 a2a:
 	docker build -t $@ -f Dockerfile .
