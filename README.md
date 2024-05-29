@@ -6,10 +6,11 @@
 
 - **Multimodal First**: A2A jointly models all modalities (text, image, audio, video) at once, with the belief that true intelligence lies in the associative representations present at the intersection of all modalities.
 - **Decentralized Data Collection**: Thanks to our [SN24 data collection](https://github.com/omegalabsinc/omegalabs-bittensor-subnet), we leverage a fresh stream of data that mimics real-world demand distribution for training and evaluation. 
-- **Incentivized Participation**: World class AI researchers and engineers already love open source. With Bittensor's model for incentivizing intelligence, researchers can be permissionlessly compensated for their efforts and have their compute subsidized according to their productivity.
-- **Mixture-of-Experts Architecture**: Incorporates specialist models from other Bittensor subnets, acting as a high-bandwidth, general-purpose router. By being the best open source natively multimodal model, future AI projects can leverage our rich multimodal embeddings to bootstrap their own expert models.
-- **Iterative Capability Expansion**: Public demand dictates which capabilities the model learns first through the decentralized incentive structure.
-- **Innovative Research Directions**: Integrate emerging state-of-the-art architectures like [early fusion transformers](https://arxiv.org/pdf/2405.09818), [diffusion transformers](https://arxiv.org/pdf/2401.08740), [liquid neural networks](https://arxiv.org/pdf/2006.04439), and [KANs](https://arxiv.org/pdf/2404.19756).
+- **Incentivized Research**: World class AI researchers and engineers already love open source. With Bittensor's model for incentivizing intelligence, researchers can be permissionlessly compensated for their efforts and have their compute subsidized according to their productivity.
+- **Bittensor Subnet Orchestrator**: Incorporates specialist models from other Bittensor subnets, acting as a high-bandwidth, general-purpose router. By being the best open source natively multimodal model, future AI projects can leverage our rich multimodal embeddings to bootstrap their own expert models.
+- **Public-Driven Capability Expansion**: Public demand dictates which capabilities the model learns first through the decentralized incentive structure.
+- **Unified Fundamental Representation of Reality**: The Platonic Representation Hypothesis suggests that as AI models increase in scale and capability, they converge towards a shared, fundamental representation of reality. A2A models, by jointly modeling all modalities, are uniquely positioned to capture this underlying structure, potentially accelerating the path towards more general and robust AI. (https://phillipi.github.io/prh/)
+- **Beyond Transformers**: Integrate emerging state-of-the-art architectures like [early fusion transformers](https://arxiv.org/pdf/2405.09818), [diffusion transformers](https://arxiv.org/pdf/2401.08740), [liquid neural networks](https://arxiv.org/pdf/2006.04439), and [KANs](https://arxiv.org/pdf/2404.19756). 
 
 ## Roadmap 🚀
 
