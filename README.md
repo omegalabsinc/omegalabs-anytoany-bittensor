@@ -1,4 +1,26 @@
+<div align="center">
+
 # OMEGA Labs Bittensor Any-to-Any (A2A) Subnet
+[![OMEGA](galactic_a2a.png)](https://omegatron.ai)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+---
+### TN157
+
+</div>
+
+---
+- [Introduction](#introduction)
+- [Why Any-to-Any?](#why-any-to-any)
+- [Roadmap](#roadmap)
+- [Getting Started](#getting-started)
+- [Current A2A Architecture](#current-a2a-architecture)
+- [The Future of A2A](#the-future-of-a2a)
+- [Incentives](#incentives)
+- [Acknowledgements](#acknowledgements)
+---
+
+## Introduction
 
 **OMEGA Any-to-Any** is a decentralized, open-source AI project built on the Bittensor blockchain by OMEGA Labs. Our mission is to create state-of-the-art (SOTA)  multimodal any-to-any models by attracting the world's top AI researchers to train on Bittensor, taking advantage of Bittensor's incentivized intelligence platform. Our goal is to establish a self-sustaining, well-resourced research lab, where participants are rewarded for contributing compute and/or research insight.
 
@@ -53,15 +75,55 @@
 
 ### For Miners
 
-1. Clone the repo and install dependencies
-2. Configure your miner settings
-3. Run the miner script and start earning rewards
+#### Requirements
+- Python 3.11+ with pip
+- GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice, or use a 1024xH100 if you wanna train a really good model :sunglasses:
+- At least 40 GB of CPU RAM
+- If running on runpod, runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04 is a good base template.
+
+1. Clone the repo and `cd` into it:
+```bash
+git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+cd omegalabs-anytoany-bittensor
+```
+2. Install the requirements:
+  a. Using docker: `make build-and-run`
+  b. Using your local Python: `pip install -e .`
+3. Start a finetuning run: `make finetune-x1`
+  a. Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
+4. Upload the model to Huggingface: `python miner_utils/upload_model.py --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} --wallet.name {miner wallet name} --wallet.hotkey {miner hotkey} --model_dir {the directory that the checkpoint is saved in e.g. output_checkpoints/experiment_1/} --epoch 0 --netuid NETUID`
+NOTE: If you want to run on testnet, simply add `--subtensor.network test` at the end of the command and use `--netuid 157`.
 
 ### For Validators
 
-1. Review the validation code in `validation/`
-2. Set up your validation environment
-3. Participate in the validation process to ensure model quality
+#### Requirements
+- Python 3.11+ with pip
+- GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
+- At least 40 GB of CPU RAM
+- If running on runpod, runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04 is a good base template.
+
+1. Clone the repo and `cd` into it:
+```bash
+git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+cd omegalabs-anytoany-bittensor
+```
+
+Using Docker:
+2. Run the validator: `make validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}`
+3. Check your logs: `make check-logs`
+
+Using PM2:
+2. Install the requirements: `pip install -e .`
+3. Run the validator script: 
+```
+pm2 start neurons/validator.py --name omega-a2a-validator -- \
+    --netuid {netuid} \
+    --wallet.name {wallet} \
+    --wallet.hotkey {hotkey} \
+    --axon.port {port} \
+    --logging.trace
+```
+4. Check the logs: `pm2 logs omega-a2a-validator`
 
 ## Current A2A Architecture 🤖
 
@@ -105,5 +167,4 @@ As we improve the incentive scheme over time to create better and more diverse m
 
 ## Acknowledgements 🙏
 
-We would like to express our gratitude to the Bittensor Root Validators for their support and belief in our vision. Your funding is critical to the success of OMEGA A2A and the growth of the Bittensor ecosystem.
-
+Thank you to Nous Research [finetuning subnet repo](https://github.com/NousResearch/finetuning-subnet), [MyShell](https://github.com/myshell-ai/MyShell-TTS-Subnet), and [Impel](https://github.com/impel-intelligence/dippy-bittensor-subnet) for the structure of the miner chain model upload and validator comparison scoring logic!

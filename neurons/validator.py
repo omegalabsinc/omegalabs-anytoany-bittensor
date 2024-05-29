@@ -198,17 +198,6 @@ class Validator:
             default=64,
             help="Number of samples to evaluate per UID",
         )
-        parser.add_argument(
-            "--use-local-validation-api",
-            action="store_true",
-            help="Use a local validation api",
-        )
-        parser.add_argument(
-            "--local-validation-api-port",
-            type=int,
-            default=8000,
-            help="Port for local validation api",
-        )
 
         bt.subtensor.add_args(parser)
         bt.logging.add_args(parser)
