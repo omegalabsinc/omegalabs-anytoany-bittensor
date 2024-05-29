@@ -296,7 +296,7 @@ class Validator:
                             if metadata.id.competition_id is not None
                             else constants.ORIGINAL_COMPETITION_ID
                         )
-                        if metadata is not None
+                        if metadata is not None and self.is_model_old_enough(metadata)
                         else None
                     )
                 except Exception as e:
@@ -390,7 +390,12 @@ class Validator:
         block_uploaded_at = model_metadata.block
         current_block = self.subtensor.block
         model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
-        return model_age > MIN_AGE
+        is_old_enough = model_age > MIN_AGE
+        if not is_old_enough:
+            bt.logging.debug(
+                f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
+            )
+        return is_old_enough
 
     def update_models(self, update_delay_minutes):
         # Track how recently we updated each uid
