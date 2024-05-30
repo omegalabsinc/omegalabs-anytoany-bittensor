@@ -1,15 +1,14 @@
 <div align="center">
 
-# OMEGA Labs Bittensor Any-to-Any (A2A) Subnet
+# OMEGA Labs Bittensor Any-to-Any Subnet
 [![OMEGA](galactic_a2a.png)](https://omegatron.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
-### TN157
+## Be, and it becomes ...
 
 </div>
 
----
 - [Introduction](#introduction)
 - [Why Any-to-Any?](#why-any-to-any-)
 - [Roadmap](#roadmap-)
@@ -20,17 +19,19 @@
 - [The Future of A2A](#the-future-of-a2a-)
 - [Incentives](#incentives-)
 - [Acknowledgements](#acknowledgements-)
----
+
 
 ## Introduction
 
-**OMEGA Any-to-Any** is a decentralized, open-source AI project built on the Bittensor blockchain by OMEGA Labs. Our mission is to create state-of-the-art (SOTA)  multimodal any-to-any models by attracting the world's top AI researchers to train on Bittensor, taking advantage of Bittensor's incentivized intelligence platform. Our goal is to establish a self-sustaining, well-resourced research lab, where participants are rewarded for contributing compute and/or research insight.
+**OMEGA Any-to-Any** is a decentralized, open-source AI project built on the Bittensor blockchain by OMEGA Labs. Our mission is to create state-of-the-art (SOTA) multimodal any-to-any models by attracting the world's top AI researchers to train on Bittensor, taking advantage of Bittensor's incentivized intelligence platform. Our goal is to establish a self-sustaining, well-resourced research lab, where participants are rewarded for contributing compute and/or research insight.
+
+**TestNet UID**: 157
 
 ## Why Any-to-Any? 🧠📚🌃🎧🎥
 
 - **Multimodal First**: A2A jointly models all modalities (text, image, audio, video) at once, with the belief that true intelligence lies in the associative representations present at the intersection of all modalities.
 - **Unified Fundamental Representation of Reality**: The [Platonic Representation Hypothesis](https://phillipi.github.io/prh/) suggests that as AI models increase in scale and capability, they converge towards a shared, fundamental representation of reality. A2A models, by jointly modeling all modalities, are uniquely positioned to capture this underlying structure, potentially accelerating the path towards more general and robust AI.
-- **Decentralized Data Collection**: Thanks to our [SN24 data collection](https://github.com/omegalabsinc/omegalabs-bittensor-subnet), we leverage a fresh stream of data that mimics real-world demand distribution for training and evaluation. 
+- **Decentralized Data Collection**: Thanks to our [SN24 data collection](https://github.com/omegalabsinc/omegalabs-bittensor-subnet), we leverage a fresh stream of data that mimics real-world demand distribution for training and evaluation. By frequently refreshing our data collection topics based on gaps in the current data, we avoid the issue of underrepresented data classes (see [this paper](https://arxiv.org/abs/2404.04125) for more discussion on this issue). Through self-play, our SN's best checkpoints can learn from each other and pool their intelligence.
 - **Incentivized Research**: World class AI researchers and engineers already love open source. With Bittensor's model for incentivizing intelligence, researchers can be permissionlessly compensated for their efforts and have their compute subsidized according to their productivity.
 - **Bittensor Subnet Orchestrator**: Incorporates specialist models from other Bittensor subnets, acting as a high-bandwidth, general-purpose router. By being the best open source natively multimodal model, future AI projects can leverage our rich multimodal embeddings to bootstrap their own expert models.
 - **Public-Driven Capability Expansion**: Public demand dictates which capabilities the model learns first through the decentralized incentive structure.
@@ -162,16 +163,22 @@ There are several immediate areas miners can investigate in order to produce a c
 
 In the near future we'll enable much deeper architecture search, allowing researchers to experiment with different LLM backbones, vastly different encoders and decoders.
 
-## The Future of A2A 🔮
+## The Future of OMEGA A2A 🔮
 
-A2A aims to showcase the power of Bittensor's incentivized intelligence model by attracting and properly incentivizing the best AI researchers worldwide. As the project evolves, we will explore:
+OMEGA A2A is poised to revolutionize the AI landscape by harnessing the power of Bittensor's incentivized intelligence model and attracting the world's top AI researchers. Our mission is to push the boundaries of what's possible in decentralized AI, focusing on:
 
-- Fully decentralized infrastructure and governance
-- Fundamental AI research on architectures beyond transformers and attention mechanisms
-- Hyper-connection to the Ω SN24 for diverse, high-quality data
-- Innovative monetization strategies to sustain and grow the ecosystem
+- Developing fully multimodal, any-to-any models that outperform all other open-source solutions
+- Creating an AI gateway framework to seamlessly integrate and evaluate models from across the Bittensor ecosystem and beyond
+- Implementing task-driven learning and agent-focused validation to create models capable of completing complex, real-world tasks
+- Powering up the OMEGA Focus app with cutting-edge multimodal intelligence and personalized digital twin companions
 
-We believe this decentralized OMEGA A2A research collective will build a strong reputation for Bittensor in the AI research community and beyond. Join us on this epic journey to push the boundaries of decentralized AI! 🌟
+As we progress, we will explore fully decentralized infrastructure and governance to ensure a truly democratized AI ecosystem. Our research will explore groundbreaking architectures beyond transformers and attention mechanisms, pushing the limits of AI capabilities.
+
+By hyper-connecting to the Ω SN24, we will access diverse, high-quality data that fuels our models' growth and enables them to tackle a wide range of tasks. Innovative monetization strategies will be implemented to sustain and grow the ecosystem, ensuring long-term success and viability.
+
+Through the tireless efforts of our decentralized OMEGA A2A research collective, we aim to showcase the immense potential of Bittensor's incentivized intelligence model and establish ourselves as leaders in the AI research community and beyond.
+
+Join us on this transformative journey as we shape the future of decentralized AI, unlocking new possibilities and creating a more accessible, powerful, and innovative AI ecosystem for all. :rocket:
 
 ## Incentives 🎂
 
