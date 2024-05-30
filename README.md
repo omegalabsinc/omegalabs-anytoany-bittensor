@@ -5,8 +5,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
-## Be, and it becomes ...
-
+### Be, and it becomes ...
+---
 </div>
 
 - [Introduction](#introduction)
@@ -19,7 +19,7 @@
 - [The Future of A2A](#the-future-of-a2a-)
 - [Incentives](#incentives-)
 - [Acknowledgements](#acknowledgements-)
-
+---
 
 ## Introduction
 
