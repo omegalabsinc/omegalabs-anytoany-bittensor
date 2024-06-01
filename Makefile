@@ -106,7 +106,7 @@ ds/bagel/bagel-%-v1.0.parquet:
 	wget https://huggingface.co/datasets/jondurbin/bagel-llama-3-v1.0/resolve/main/bagel-$*-v1.0.parquet?download=true -O $@
 
 download-base-model:
-	tune download meta-llama/Meta-Llama-3-8B --output-dir checkpoints/Meta-Llama-3-8B
+	tune download meta-llama/Meta-Llama-3-8B-Instruct --output-dir checkpoints/Meta-Llama-3-8B-Instruct
 
 download-datasets: download-sam_llava-dataset download-coco_llava_instruct-dataset download-vision_flan-dataset
 
