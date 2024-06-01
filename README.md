@@ -93,9 +93,10 @@ cd omegalabs-anytoany-bittensor
 2. Install the requirements:
   - Using docker: `make build-and-run`
   - Using your local Python: `pip install -e .`
-3. Start a finetuning run: `make finetune-x1`
+3. Download the base model and datasets: `make download-everything`
+4. Start a finetuning run: `make finetune-x1`
   - Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
-4. Upload the model to Huggingface:
+5. Upload the model to Huggingface:
 ```
 python miner_utils/upload_model.py \
     --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} \
