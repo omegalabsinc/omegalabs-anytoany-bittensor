@@ -30,7 +30,7 @@ model:
 # Tokenizer
 tokenizer:
   _component_: models.a2a_tokenizer
-  path: checkpoints/Meta-Llama-3-8B-Instruct/tokenizer.model
+  path: checkpoints/Meta-Llama-3-8B-Instruct/original/tokenizer.model
 
 checkpointer:
   _component_: torchtune.utils.FullModelMetaCheckpointer
