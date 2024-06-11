@@ -23,6 +23,7 @@ import math
 import time
 import torch
 import shutil
+from subprocess import Popen, PIPE
 import asyncio
 import argparse
 import typing
@@ -198,6 +199,12 @@ class Validator:
             default=64,
             help="Number of samples to evaluate per UID",
         )
+        parser.add_argument(
+            "--auto_update",
+            action="store_true",
+            help="Quits and restarts the validator if it is out of date.",
+            default=False,
+        )
 
         bt.subtensor.add_args(parser)
         bt.logging.add_args(parser)
@@ -370,6 +377,13 @@ class Validator:
             daemon=True,
         )
         self.clean_thread.start()
+
+        self.last_update_check = dt.datetime.now()
+        self.update_check_interval = 1800  # 30 minutes
+        if self.config.auto_update:
+            bt.logging.info("Auto update enabled.")
+        else:
+            bt.logging.info("Auto update disabled.")
 
     def __del__(self):
         if hasattr(self, "stop_event"):
@@ -546,6 +560,33 @@ class Validator:
             bt.logging.warning("Finished running step.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
+
+        if self.config.auto_update and self.should_restart():
+            bt.logging.info(f'Validator is out of date, quitting to restart.')
+            raise KeyboardInterrupt
+
+    def is_git_latest(self) -> bool:
+        p = Popen(['git', 'rev-parse', 'HEAD'], stdout=PIPE, stderr=PIPE)
+        out, err = p.communicate()
+        if err:
+            return False
+        current_commit = out.decode().strip()
+        p = Popen(['git', 'ls-remote', 'origin', 'HEAD'], stdout=PIPE, stderr=PIPE)
+        out, err = p.communicate()
+        if err:
+            return False
+        latest_commit = out.decode().split()[0]
+        bt.logging.info(f'Current commit: {current_commit}, Latest commit: {latest_commit}')
+        return current_commit == latest_commit
+
+    def should_restart(self) -> bool:
+        # Check if enough time has elapsed since the last update check, if not assume we are up to date.
+        if (dt.datetime.now() - self.last_update_check).seconds < self.update_check_interval:
+            return False
+
+        self.last_update_check = dt.datetime.now()
+
+        return not self.is_git_latest()
 
     async def run_step(self):
         """
