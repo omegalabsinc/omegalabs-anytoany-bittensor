@@ -18,7 +18,7 @@ sh-headless:
 		a2a
 	docker attach a2a
 
-NETUID ?= $(error "Please specify NETUID=...")
+NETUID ?= 21
 WALLET_NAME ?= $(error "Please specify WALLET_NAME=...")
 WALLET_HOTKEY ?= $(error "Please specify WALLET_HOTKEY=...")
 PORT ?= 8091

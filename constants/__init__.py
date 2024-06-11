@@ -19,7 +19,7 @@ class CompetitionParameters:
 # ---------------------------------
 
 # The uid for this subnet.
-SUBNET_UID = 157
+SUBNET_UID = 21
 # The start block of this subnet
 SUBNET_START_BLOCK = 2635801
 # The root directory of this project.
