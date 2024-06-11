@@ -22,7 +22,17 @@ NETUID ?= $(error "Please specify NETUID=...")
 WALLET_NAME ?= $(error "Please specify WALLET_NAME=...")
 WALLET_HOTKEY ?= $(error "Please specify WALLET_HOTKEY=...")
 PORT ?= 8091
-validator:
+validator: a2a
+	docker run -it --detach --restart always \
+		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
+		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
+		-v $(shell pwd):/app \
+		-v ~/.bittensor:/root/.bittensor \
+		--name omega-a2a-validator \
+		a2a \
+		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT)
+
+manual-validator: a2a
 	docker run -it --detach --restart always \
 		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \

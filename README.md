@@ -125,6 +125,14 @@ cd omegalabs-anytoany-bittensor
 ```bash
 make validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 ```
+<details>
+  <summary>To run with manually updating validator</summary>
+  
+  Simply run the following command instead:
+  ```bash
+  make manual-validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
+  ```
+</details>
 3. Check your logs: `make check-logs`
 
 #### Running with PM2
@@ -136,13 +144,26 @@ cd omegalabs-anytoany-bittensor
 2. Install the requirements: `pip install -e .`
 3. Run the validator script:
 ```bash
-pm2 start neurons/validator.py --name omega-a2a-validator -- \
+pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
     --netuid {netuid} \
     --wallet.name {wallet} \
     --wallet.hotkey {hotkey} \
     --axon.port {port} \
     --logging.trace
 ```
+<details>
+  <summary>To run with manually updating validator</summary>
+  
+  Simply run the following command instead:
+  ```bash
+  pm2 start neurons/validator.py --name omega-a2a-validator -- \
+    --netuid {netuid} \
+    --wallet.name {wallet} \
+    --wallet.hotkey {hotkey} \
+    --axon.port {port} \
+    --logging.trace
+  ```
+</details>
 4. Check the logs: `pm2 logs omega-a2a-validator`
 
 ## Current A2A Architecture 🤖
