@@ -16,8 +16,7 @@ from tune_recipes.gen import InferenceRecipe
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
-DATA_FILES_SUFFIX = ".parquet"
-MIN_AGE = 6 * 60 * 60  # 6 hours
+MIN_AGE = 4 * 60 * 60  # 4 hours
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
@@ -25,7 +24,7 @@ BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
 
 
 def get_timestamp_from_filename(filename: str):
-    return ulid.from_str(filename[len(DATA_FILES_PREFIX):filename.find(DATA_FILES_SUFFIX)]).timestamp().timestamp
+    return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
 
 
 def pull_latest_omega_dataset() -> Optional[Dataset]:
