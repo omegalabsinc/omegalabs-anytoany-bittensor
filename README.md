@@ -25,6 +25,7 @@
 
 **OMEGA Any-to-Any** is a decentralized, open-source AI project built on the Bittensor blockchain by OMEGA Labs. Our mission is to create state-of-the-art (SOTA) multimodal any-to-any models by attracting the world's top AI researchers to train on Bittensor, taking advantage of Bittensor's incentivized intelligence platform. Our goal is to establish a self-sustaining, well-resourced research lab, where participants are rewarded for contributing compute and/or research insight.
 
+**MainNet UID**: 21
 **TestNet UID**: 157
 
 ## Why Any-to-Any? 🧠📚🌃🎧🎥
@@ -123,14 +124,14 @@ cd omegalabs-anytoany-bittensor
 ```
 2. Run the validator:
 ```bash
-make validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
+make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 ```
 <details>
   <summary>To run with manually updating validator</summary>
   
   Simply run the following command instead:
   ```bash
-  make manual-validator NETUID={netuid} WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
+  make manual-validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
   ```
 </details>
 3. Check your logs: `make check-logs`
@@ -145,7 +146,6 @@ cd omegalabs-anytoany-bittensor
 3. Run the validator script:
 ```bash
 pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
-    --netuid {netuid} \
     --wallet.name {wallet} \
     --wallet.hotkey {hotkey} \
     --axon.port {port} \
@@ -157,7 +157,6 @@ pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
   Simply run the following command instead:
   ```bash
   pm2 start neurons/validator.py --name omega-a2a-validator -- \
-    --netuid {netuid} \
     --wallet.name {wallet} \
     --wallet.hotkey {hotkey} \
     --axon.port {port} \
