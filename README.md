@@ -16,7 +16,7 @@
   - [For Miners](#for-miners)
   - [For Validators](#for-validators)
 - [Current A2A Architecture](#current-a2a-architecture-)
-- [The Future of A2A](#the-future-of-a2a-)
+- [The Future of A2A](#the-future-of-omega-a2a-)
 - [Incentives](#incentives-)
 - [Acknowledgements](#acknowledgements-)
 ---
@@ -26,6 +26,7 @@
 **OMEGA Any-to-Any** is a decentralized, open-source AI project built on the Bittensor blockchain by OMEGA Labs. Our mission is to create state-of-the-art (SOTA) multimodal any-to-any models by attracting the world's top AI researchers to train on Bittensor, taking advantage of Bittensor's incentivized intelligence platform. Our goal is to establish a self-sustaining, well-resourced research lab, where participants are rewarded for contributing compute and/or research insight.
 
 **MainNet UID**: 21
+
 **TestNet UID**: 157
 
 ## Why Any-to-Any? 🧠📚🌃🎧🎥
