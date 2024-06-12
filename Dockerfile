@@ -19,6 +19,7 @@ RUN apt-get update && \
     rustc \
     cargo \
     git \
+    libatlas-base-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create symbolic links for python3 and python

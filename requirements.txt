@@ -20,4 +20,5 @@ ulid-py==1.1.0
 imagebind @ git+https://github.com/omegalabsinc/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
 llama3 @ git+https://github.com/meta-llama/llama3.git@af6eedf7042fb51d00b2b26d8ef1ceaab73e1670
 pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@28fe037d212663c6a24f373b94cc5d478c8c1a1d
-wandb==0.16.6
+wandb==0.17.1
+numpy==1.26.4
