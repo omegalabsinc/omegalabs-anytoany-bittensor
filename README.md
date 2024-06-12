@@ -116,6 +116,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
 - At least 40 GB of CPU RAM
 - If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
+- Install libatlas-base-dev: `apt get install libatlas-base-dev`
 
 #### Running with Docker
 1. Clone the repo and `cd` into it:
@@ -136,6 +137,9 @@ make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
   ```
 </details>
 3. Check your logs: `make check-vali-logs`
+
+##### Recommended
+- Setting up wandb. Create `.env` file in the repo root directory with `WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `WANDB=off` in Step 2.
 
 #### Running with PM2
 1. Clone the repo and `cd` into it:
@@ -165,6 +169,9 @@ pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
   ```
 </details>
 4. Check the logs: `pm2 logs omega-a2a-validator`
+
+##### Recommended
+- Setting up wandb. Set environment variable with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `--wandb.off`
 
 ## Current A2A Architecture 🤖
 
