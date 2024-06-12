@@ -747,20 +747,14 @@ class Validator:
                     try:
                         # Update the block this uid last updated their model.
                         uid_to_block[uid_i] = model_i_metadata.block
-
-                        while True:
-                            try:
-                                _score = get_model_score(
-                                    model_i_metadata.id.namespace + "/" + model_i_metadata.id.name,
-                                    mini_batch=eval_data,
-                                )
-                                bt.logging.info(f"Score for {model_i_metadata} is {_score}")
-                            except:
-                                bt.logging.error(f"Failed to get score for {model_i_metadata.id} \n {traceback.format_exc()}")
-                                break
+                        score = get_model_score(
+                            model_i_metadata.id.namespace + "/" + model_i_metadata.id.name,
+                            mini_batch=eval_data,
+                        )
+                        bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:
                         bt.logging.error(
-                            f"Error in eval loop: {e}. Setting score for uid: {uid_i} to 0."
+                            f"Error in eval loop: {e}. Setting score for uid: {uid_i} to 0. \n {traceback.format_exc()}"
                         )
                     finally:
                         # After we are done with the model, release it.
