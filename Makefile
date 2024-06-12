@@ -26,6 +26,7 @@ WANDB ?= on
 WANDBOFF := ""
 ifeq ($(WANDB), off)
 	WANDBOFF := --wandb.off
+endif
 
 validator: a2a
 	docker run -it --detach --restart always \
