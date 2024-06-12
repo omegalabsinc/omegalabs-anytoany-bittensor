@@ -37,8 +37,9 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
     ][:MAX_FILES]
     if len(recent_files) == 0:
         return None
-    omega_dataset = load_dataset(HF_DATASET, data_files=recent_files)["train"]
-    omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+    with TemporaryDirectory() as temp_dir:
+        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
+        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
     return omega_dataset
 
 
@@ -82,7 +83,7 @@ def get_model_score(hf_repo_id, mini_batch):
     inference_recipe, config = load_ckpt_from_hf(hf_repo_id)
     similarities = []
     for video_emb, actual_caption in zip(mini_batch["video_embed"], mini_batch["description"]):
-        generated_caption = inference_recipe.generate(cfg=config, video_ib_embeds=[video_emb])
+        generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
         text_embeddings = embed_text(inference_recipe._embed_model, [generated_caption, actual_caption], device=inference_recipe._device)
         text_similarity = torch.nn.functional.cosine_similarity(text_embeddings[0], text_embeddings[1], dim=-1)
         similarities.append(text_similarity.item())

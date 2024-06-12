@@ -756,7 +756,7 @@ class Validator:
                                 )
                                 bt.logging.info(f"Score for {model_i_metadata} is {_score}")
                             except:
-                                bt.logging.error(f"Failed to get score for {model_i_metadata.id}")
+                                bt.logging.error(f"Failed to get score for {model_i_metadata.id} \n {traceback.format_exc()}")
                                 break
                     except Exception as e:
                         bt.logging.error(
