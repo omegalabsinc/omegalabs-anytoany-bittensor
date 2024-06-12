@@ -280,7 +280,7 @@ class Validator:
             self.uid = utils.assert_registered(self.wallet, self.metagraph)
 
         # === W&B ===
-        if not self.config.wandb.off:
+        if not self.config.wandb.off and not self.config.offline:
             if os.getenv("WANDB_API_KEY"):
                 self.new_wandb_run()
             else:
@@ -931,7 +931,7 @@ class Validator:
                 self.epoch_step += 1
 
                 # Check if we should start a new wandb run.
-                if not self.config.wandb.off:
+                if not self.config.wandb.off and not self.config.offline:
                     if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
                         days=1
                     ):
