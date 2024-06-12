@@ -23,7 +23,7 @@ WALLET_NAME ?= $(error "Please specify WALLET_NAME=...")
 WALLET_HOTKEY ?= $(error "Please specify WALLET_HOTKEY=...")
 PORT ?= 8091
 WANDB ?= on
-WANDBOFF := ""
+WANDBOFF :=
 ifeq ($(WANDB), off)
 	WANDBOFF := --wandb.off
 endif
