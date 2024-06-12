@@ -54,6 +54,7 @@ import typing
 import constants
 import traceback
 import bittensor as bt
+import wandb
 
 import os
 
@@ -205,6 +206,12 @@ class Validator:
             help="Quits and restarts the validator if it is out of date.",
             default=False,
         )
+        parser.add_argument(
+            "--wandb.off",
+            action="store_true",
+            help="Runs wandb in offline mode.",
+            default=False,
+        )
 
         bt.subtensor.add_args(parser)
         bt.logging.add_args(parser)
@@ -229,6 +236,30 @@ class Validator:
                 "vali-state",
             )
         )
+    
+    def new_wandb_run(self):
+        # Shoutout SN13 for the wandb snippet!
+        """Creates a new wandb run to save information to."""
+        # Create a unique run id for this run.
+        now = dt.datetime.now()
+        self.wandb_run_start = now
+        run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
+        name = "validator-" + str(self.uid) + "-" + run_id
+        self.wandb_run = wandb.init(
+            name=name,
+            project="omega-sn21-validator-logs",
+            entity="omega-labs",
+            config={
+                "uid": self.uid,
+                "hotkey": self.wallet.hotkey.ss58_address,
+                "run_name": run_id,
+                "type": "validator",
+            },
+            allow_val_change=True,
+            anonymous="allow",
+        )
+
+        bt.logging.debug(f"Started a new wandb run: {name}")
 
     def __init__(self):
         self.config = Validator.config()
@@ -247,6 +278,15 @@ class Validator:
         # Dont check registration status if offline.
         if not self.config.offline:
             self.uid = utils.assert_registered(self.wallet, self.metagraph)
+
+        # === W&B ===
+        if not self.config.wandb.off:
+            if os.getenv("WANDB_API_KEY"):
+                self.new_wandb_run()
+            else:
+                bt.logging.exception("WANDB_API_KEY not found. Set it with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with --wandb.off, but it is strongly recommended to run with W&B enabled.")
+        else:
+            bt.logging.warning("Running with --wandb.off. It is strongly recommended to run with W&B enabled.")
 
         # Track how may run_steps this validator has completed.
         self.run_step_count = 0
@@ -889,6 +929,17 @@ class Validator:
                     await self.try_set_weights(ttl=120)
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
+
+                # Check if we should start a new wandb run.
+                if not self.config.wandb.off:
+                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
+                        days=1
+                    ):
+                        bt.logging.info(
+                            "Current wandb run is more than 1 day old. Starting a new run."
+                        )
+                        self.wandb_run.finish()
+                        self.new_wandb_run()
 
             except KeyboardInterrupt:
                 bt.logging.info(
