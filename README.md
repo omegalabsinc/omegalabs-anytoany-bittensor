@@ -117,6 +117,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
 - At least 40 GB of CPU RAM
 - If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
+- Install libatlas-base-dev: `apt get install libatlas-base-dev`
 
 #### Running with Docker
 1. Clone the repo and `cd` into it:
@@ -128,6 +129,8 @@ cd omegalabs-anytoany-bittensor
 ```bash
 make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 ```
+##### Recommended
+- Setting up wandb. Open the `vali.env` file in the repo root directory and set the `WANDB_API_KEY`. Alternatively, you can disable W&B with `WANDB=off` in Step 2.
 <details>
   <summary>To run with manually updating validator</summary>
   
@@ -153,6 +156,8 @@ pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
     --axon.port {port} \
     --logging.trace
 ```
+##### Recommended
+- Setting up wandb. Set environment variable with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `--wandb.off`
 <details>
   <summary>To run with manually updating validator</summary>
   
