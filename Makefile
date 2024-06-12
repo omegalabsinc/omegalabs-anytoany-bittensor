@@ -23,9 +23,12 @@ WALLET_NAME ?= $(error "Please specify WALLET_NAME=...")
 WALLET_HOTKEY ?= $(error "Please specify WALLET_HOTKEY=...")
 PORT ?= 8091
 WANDB ?= on
+WANDBOFF := ""
+ifeq ($(WANDB), off)
+	WANDBOFF := --wandb.off
 
 validator: a2a
-	BASE_CMD = docker run -it --detach --restart always \
+	docker run -it --detach --restart always \
 		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
@@ -33,15 +36,8 @@ validator: a2a
 		--env-file .env \
 		--name omega-a2a-validator \
 		a2a \
-		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT)
+		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
 	
-	# Add the --wandb.off flag if WANDB is off
-	ifeq ($(WANDB), off)
-		BASE_CMD += --wandb.off
-	endif
-	run:
-		$(BASE_CMD)
-
 manual-validator: a2a
 	docker run -it --detach --restart always \
 		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
@@ -51,7 +47,7 @@ manual-validator: a2a
 		--env-file .env \
 		--name omega-a2a-validator \
 		a2a \
-		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT)
+		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
 
 check-vali-logs:
 	docker logs omega-a2a-validator --follow --tail 100
