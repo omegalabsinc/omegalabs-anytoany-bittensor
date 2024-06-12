@@ -128,6 +128,8 @@ cd omegalabs-anytoany-bittensor
 ```bash
 make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 ```
+##### Recommended
+- Setting up wandb. Open the `vali.env` file in the repo root directory and set the `WANDB_API_KEY`. Alternatively, you can disable W&B with `WANDB=off` in Step 2.
 <details>
   <summary>To run with manually updating validator</summary>
   
@@ -137,9 +139,6 @@ make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
   ```
 </details>
 3. Check your logs: `make check-vali-logs`
-
-##### Recommended
-- Setting up wandb. Create `.env` file in the repo root directory with `WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `WANDB=off` in Step 2.
 
 #### Running with PM2
 1. Clone the repo and `cd` into it:
@@ -156,6 +155,8 @@ pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
     --axon.port {port} \
     --logging.trace
 ```
+##### Recommended
+- Setting up wandb. Set environment variable with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `--wandb.off`
 <details>
   <summary>To run with manually updating validator</summary>
   
@@ -169,9 +170,6 @@ pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
   ```
 </details>
 4. Check the logs: `pm2 logs omega-a2a-validator`
-
-##### Recommended
-- Setting up wandb. Set environment variable with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `--wandb.off`
 
 ## Current A2A Architecture 🤖
 

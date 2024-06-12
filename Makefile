@@ -34,7 +34,7 @@ validator: a2a
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
-		--env-file .env \
+		--env-file vali.env \
 		--name omega-a2a-validator \
 		a2a \
 		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
