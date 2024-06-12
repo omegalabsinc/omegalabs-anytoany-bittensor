@@ -120,7 +120,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 #### Running with Docker
 1. Clone the repo and `cd` into it:
 ```bash
-git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
 2. Run the validator:
@@ -140,7 +140,7 @@ make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 #### Running with PM2
 1. Clone the repo and `cd` into it:
 ```bash
-git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
 2. Install the requirements: `pip install -e .`
