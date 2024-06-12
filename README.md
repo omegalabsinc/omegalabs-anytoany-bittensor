@@ -16,7 +16,7 @@
   - [For Miners](#for-miners)
   - [For Validators](#for-validators)
 - [Current A2A Architecture](#current-a2a-architecture-)
-- [The Future of A2A](#the-future-of-a2a-)
+- [The Future of A2A](#the-future-of-omega-a2a-)
 - [Incentives](#incentives-)
 - [Acknowledgements](#acknowledgements-)
 ---
@@ -26,6 +26,7 @@
 **OMEGA Any-to-Any** is a decentralized, open-source AI project built on the Bittensor blockchain by OMEGA Labs. Our mission is to create state-of-the-art (SOTA) multimodal any-to-any models by attracting the world's top AI researchers to train on Bittensor, taking advantage of Bittensor's incentivized intelligence platform. Our goal is to establish a self-sustaining, well-resourced research lab, where participants are rewarded for contributing compute and/or research insight.
 
 **MainNet UID**: 21
+
 **TestNet UID**: 157
 
 ## Why Any-to-Any? 🧠📚🌃🎧🎥
@@ -88,15 +89,16 @@
 #### Setup
 1. Clone the repo and `cd` into it:
 ```bash
-git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
 2. Install the requirements:
   - Using docker: `make build-and-run`
   - Using your local Python: `pip install -e .`
-3. Start a finetuning run: `make finetune-x1`
+3. Download the base model and datasets: `make download-everything`
+4. Start a finetuning run: `make finetune-x1`
   - Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
-4. Upload the model to Huggingface:
+5. Upload the model to Huggingface:
 ```
 python miner_utils/upload_model.py \
     --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} \
@@ -119,7 +121,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 #### Running with Docker
 1. Clone the repo and `cd` into it:
 ```bash
-git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
 2. Run the validator:
@@ -134,12 +136,12 @@ make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
   make manual-validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
   ```
 </details>
-3. Check your logs: `make check-logs`
+3. Check your logs: `make check-vali-logs`
 
 #### Running with PM2
 1. Clone the repo and `cd` into it:
 ```bash
-git clone git@github.com:omegalabsinc/omegalabs-anytoany-bittensor.git
+git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
 2. Install the requirements: `pip install -e .`
