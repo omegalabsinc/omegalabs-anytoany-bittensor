@@ -117,7 +117,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
 - At least 40 GB of CPU RAM
 - If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
-- Install libatlas-base-dev: `apt get install libatlas-base-dev`
+- Install libatlas-base-dev: `apt install libatlas-base-dev`
 
 #### Running with Docker
 1. Clone the repo and `cd` into it:
