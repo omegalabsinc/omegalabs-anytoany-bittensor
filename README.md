@@ -148,7 +148,7 @@ make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
-2. Install the requirements: `pip install -e .`
+2. Install the requirements: `apt install libatlas-base-dev` and `pip install -e .`
 3. Run the validator script:
 ```bash
 pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
