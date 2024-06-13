@@ -139,7 +139,7 @@ class Validator:
         parser.add_argument(
             "--blocks_per_epoch",
             type=int,
-            default=100,
+            default=150,
             help="Number of blocks to wait before setting weights.",
         )
         parser.add_argument(
@@ -549,6 +549,7 @@ class Validator:
                     uids=self.metagraph.uids,
                     weights=self.weights,
                     wait_for_inclusion=False,
+                    wait_for_finalization=False,
                     version_key=constants.weights_version_key,
                 )
             except:
