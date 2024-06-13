@@ -95,10 +95,11 @@ cd omegalabs-anytoany-bittensor
 2. Install the requirements:
   - Using docker: `make build-and-run`
   - Using your local Python: `pip install -e .`
-3. Download the base model and datasets: `make download-everything`
-4. Start a finetuning run: `make finetune-x1`
+3. Log into Huggingface: `huggingface-cli login`. Make sure your account has access to Llama-3-8B on HF, you can get access [here](https://huggingface.co/meta-llama/Meta-Llama-3-8B)
+4. Download the base model and datasets: `make download-everything`
+5. Start a finetuning run: `make finetune-x1`
   - Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
-5. Upload the model to Huggingface:
+6. Upload the model to Huggingface:
 ```
 python miner_utils/upload_model.py \
     --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} \
@@ -117,7 +118,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
 - At least 40 GB of CPU RAM
 - If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
-- Install libatlas-base-dev: `apt-get install libatlas-base-dev`
+- Install libatlas-base-dev: `apt install libatlas-base-dev`
 
 #### Running with Docker
 1. Clone the repo and `cd` into it:
@@ -147,7 +148,7 @@ make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
 git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
-2. Install the requirements: `apt-get install libatlas-base-dev` and `pip install -e .`
+2. Install the requirements: `apt install libatlas-base-dev` and `pip install -e .`
 3. Run the validator script:
 ```bash
 pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
