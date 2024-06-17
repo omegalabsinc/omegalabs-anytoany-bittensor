@@ -549,7 +549,7 @@ class Validator:
                     uids=self.metagraph.uids,
                     weights=self.weights,
                     wait_for_inclusion=False,
-                    wait_for_finalization=False,
+                    wait_for_finalization=True,
                     version_key=constants.weights_version_key,
                 )
             except:
@@ -921,7 +921,7 @@ class Validator:
                     self.global_step += 1
 
                 if not self.config.dont_set_weights and not self.config.offline:
-                    await self.try_set_weights(ttl=120)
+                    await self.try_set_weights(ttl=300)
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
 
