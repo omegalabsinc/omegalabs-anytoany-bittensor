@@ -11,7 +11,6 @@ import huggingface_hub
 from datasets import load_dataset, Dataset
 from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 from imagebind.models.imagebind_model import ModalityType
-import streamlit as st
 
 from tune_recipes.gen import InferenceRecipe
 
@@ -69,7 +68,6 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
         inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg
 
-#@st.cache_data
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     try:
 
@@ -145,6 +143,8 @@ def get_model_score_cached(hf_repo_id, mini_batch):
     inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
     similarities = []
     for video_emb, actual_caption in zip(mini_batch["video_embed"], mini_batch["description"]):
+        print("actual caption: ", actual_caption)
+        print("video_emb: ", video_emb)
         generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
         text_embeddings = embed_text(inference_recipe._embed_model, [generated_caption, actual_caption], device=inference_recipe._device)
         text_similarity = torch.nn.functional.cosine_similarity(text_embeddings[0], text_embeddings[1], dim=-1)

@@ -135,7 +135,7 @@ async def resync_model_info():
 
 async def main():
     # run initial pull and cache/creation of JSON
-    #await pull_and_cache_miner_info()
+    await pull_and_cache_miner_info()
 
     # Load models from JSON file
     if os.path.exists(JSON_FILE):
