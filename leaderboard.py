@@ -26,6 +26,7 @@ from model.storage.chain.chain_model_metadata_store import ChainModelMetadataSto
 from neurons.model_scoring import get_caption_from_model
 
 import bittensor as bt
+from apscheduler.schedulers.background import BackgroundScheduler
 
 NETWORK = None
 NETUID = 21
@@ -177,7 +178,7 @@ async def resync_model_info():
             print_exception(type(err), err, err.__traceback__)
         await asyncio.sleep(1800) # 30 minutes
 
-@st.cache_data
+@st.cache_data(ttl=1800) # Cache for 30 minutes
 def load_models():
     # Load models from JSON file
     if os.path.exists(JSON_FILE):
@@ -189,7 +190,7 @@ def load_models():
 
     return models
 
-@st.cache_data
+@st.cache_data(ttl=1800) # Cache for 30 minutes
 def load_video_metadata():
     # Load video metadata from JSON file
     if os.path.exists(CACHE_FILE):
@@ -200,6 +201,16 @@ def load_video_metadata():
 
     return video_metadata
 
+# Background task scheduler
+scheduler = BackgroundScheduler()
+
+def scheduled_tasks():
+    pull_and_cache_miner_info()
+    pull_and_cache_recent_descriptions()
+
+scheduler.add_job(scheduled_tasks, 'interval', minutes=30)
+scheduler.start()
+
 async def main():
     # run initial pull and cache/creation of JSON
     #await pull_and_cache_miner_info()
@@ -208,7 +219,7 @@ async def main():
     st.set_page_config(
         layout="wide",
         page_title='OMEGA Any2Any Leaderboard',
-        page_icon="Ω"
+        page_icon="\u03a9"
     )
 
     models = load_models()
@@ -374,9 +385,6 @@ async def main():
                 "model_path": st.column_config.LinkColumn()
             }
         )
-    
-
-    #asyncio.create_task(resync_model_info())
 
 if __name__ == "__main__":
     asyncio.run(main())
