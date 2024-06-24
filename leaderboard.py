@@ -1,4 +1,4 @@
-# pip install streamlit datasets huggingface-hub ulid-py bittensor
+# pip install streamlit datasets huggingface-hub ulid-py bittensor apscheduler
 
 import asyncio
 import os
@@ -208,7 +208,9 @@ def scheduled_tasks():
     pull_and_cache_miner_info()
     pull_and_cache_recent_descriptions()
 
-scheduler.add_job(scheduled_tasks, 'interval', minutes=30)
+# Check if the job already exists before adding it
+if not scheduler.get_job('scheduled_tasks'):
+    scheduler.add_job(scheduled_tasks, 'interval', minutes=30, id='scheduled_tasks')
 scheduler.start()
 
 async def main():
@@ -350,7 +352,7 @@ async def main():
                         try:
                             print("Trying to generate caption from model...")
                             generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
-                            st.text_area(f"Generated Caption", value=generated_caption, height=100, disabled=True)
+                            st.text_area(f"Generated Caption", value=generated_caption, height=200, disabled=True)
 
                         except Exception as e:
                             print(e)
