@@ -8,6 +8,7 @@ import time
 import typing
 import json
 import random
+import html
 from tempfile import TemporaryDirectory
 
 from traceback import print_exception
@@ -176,11 +177,8 @@ async def resync_model_info():
             print_exception(type(err), err, err.__traceback__)
         await asyncio.sleep(1800) # 30 minutes
 
-async def main():
-    # run initial pull and cache/creation of JSON
-    await pull_and_cache_miner_info()
-    await pull_and_cache_recent_descriptions()
-
+@st.cache_data
+def load_models():
     # Load models from JSON file
     if os.path.exists(JSON_FILE):
         with open(JSON_FILE, 'r') as f:
@@ -189,15 +187,29 @@ async def main():
     else:
         models = {}
 
-    # Load demo video metadata from JSON file
+    return models
+
+@st.cache_data
+def load_video_metadata():
+    # Load video metadata from JSON file
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, 'r') as f:
             video_metadata = json.load(f)
-            #video_metadata = {metadata['name']: metadata for metadata in data}
     else:
-        video_metadata = {}
+        video_metadata = []
+
+    return video_metadata
+
+async def main():
+    # run initial pull and cache/creation of JSON
+    #await pull_and_cache_miner_info()
+    #await pull_and_cache_recent_descriptions()
 
     st.set_page_config(layout="wide")  # Set the layout to wide
+
+    models = load_models()
+    video_metadata = load_video_metadata()
+    
 
     # Custom CSS for centering the title and table data
     st.markdown("""
@@ -279,28 +291,53 @@ async def main():
 
             # Convert the list of video metadata dictionaries to a DataFrame
             df = pd.DataFrame(video_metadata)
-            # Display the table
+            #st.dataframe(df, hide_index=True)
+
+            # Filter the DataFrame to show only certain rows (e.g., based on a condition)
+            # For this example, let's show all rows
+            filtered_df = df
+
+            # Display the table with buttons
             st.write("### Recent Video Metadata")
-            st.dataframe(df)
 
-            # Add buttons for each row
-            for index, row in df.iterrows():
-                col1, col2 = st.columns([9, 1])
-                with col1:
-                    st.write(f"**YouTube ID**: {row['youtube_id']}")
-                    st.write(f"**Description**: {row['description']}")
-                    st.write(f"**Start Time**: {row['start_time']}")
-                    st.write(f"**End Time**: {row['end_time']}")
-                with col2:
-                    if st.button("Select", key=index):
-                        st.write(f"Selected video ID: {row['video_id']}")
-                        # Add your logic to process the selected video with the LLM here
+            # Create a custom HTML table
+            table_html = """
+            <table>
+                <thead>
+                    <tr>
+                        <th>YouTube ID</th>
+                        <th>Description</th>
+                        <th>Relevance Score</th>
+                        <th>Select</th>
+                    </tr>
+                </thead>
+                <tbody>
+            """
 
-            # Example usage of the selected video
-            selected_video_id = st.text_input("Selected Video ID")
+            # Add rows to the table
+            for index, row in filtered_df.iterrows():
+                table_html += f"""
+                <tr>
+                    <td>{html.escape(row['youtube_id'])}</td>
+                    <td>{html.escape(row['description'])}</td>
+                    <td>{row['description_relevance_score']}</td>
+                    <td><button onclick="window.location.href='/?selected_video_id={row['video_id']}'">Select</button></td>
+                </tr>
+                """
+
+            table_html += """
+                </tbody>
+            </table>
+            """
+  
+            # Display the custom HTML table
+            st.components.v1.html(table_html, height=600)
+
+            # Handle button clicks
+            selected_video_id = st.query_params.get("selected_video_id", [None])[0]
             if selected_video_id:
                 st.write(f"Processing video ID: {selected_video_id} with the LLM...")
-                # Add your LLM processing logic here
+            
 
             """
             input_text = st.text_area("Input Text")
