@@ -50,7 +50,7 @@ metadata_store = ChainModelMetadataStore(
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
 
-def pull_and_cache_recent_descriptions() -> typing.List[str]:
+async def pull_and_cache_recent_descriptions() -> typing.List[str]:
     # Get the list of files in the dataset repository
     omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
     
@@ -70,19 +70,8 @@ def pull_and_cache_recent_descriptions() -> typing.List[str]:
     with TemporaryDirectory() as temp_dir:
         omega_dataset = load_dataset(HF_DATASET, data_files=sampled_files, cache_dir=temp_dir)["train"]
         for entry in omega_dataset:
-            metadata = []
             if "description" in entry and "description_embed" in entry:
-                metadata.append(entry["video_id"])
-                metadata.append(entry["youtube_id"])
-                metadata.append(entry["start_time"])
-                metadata.append(entry["end_time"])
-                metadata.append(entry["description"])
-                metadata.append(entry["description_embed"])
-                metadata.append(entry["description_relevance_score"])
-                metadata.append(entry["query_relevance_score"])
-                metadata.append(entry["query"])
-                metadata.append(entry["submitted_at"])
-                video_metadata.append(metadata)
+                video_metadata.append(entry)
             
             if len(video_metadata) >= MAX_METADATA:
                 break
@@ -281,17 +270,45 @@ async def main():
 
             try:
                 print("Trying to get model score")
-                mini_batch = pull_latest_omega_dataset()
-                print(get_model_score_cached(model_info['model_path'], mini_batch))
+                #mini_batch = pull_latest_omega_dataset()
+                #print(get_model_score_cached(model_info['model_path'], mini_batch))
+
             except Exception as e:
                 print(e)
                 traceback.print_exc()
 
+            # Convert the list of video metadata dictionaries to a DataFrame
+            df = pd.DataFrame(video_metadata)
+            # Display the table
+            st.write("### Recent Video Metadata")
+            st.dataframe(df)
+
+            # Add buttons for each row
+            for index, row in df.iterrows():
+                col1, col2 = st.columns([9, 1])
+                with col1:
+                    st.write(f"**YouTube ID**: {row['youtube_id']}")
+                    st.write(f"**Description**: {row['description']}")
+                    st.write(f"**Start Time**: {row['start_time']}")
+                    st.write(f"**End Time**: {row['end_time']}")
+                with col2:
+                    if st.button("Select", key=index):
+                        st.write(f"Selected video ID: {row['video_id']}")
+                        # Add your logic to process the selected video with the LLM here
+
+            # Example usage of the selected video
+            selected_video_id = st.text_input("Selected Video ID")
+            if selected_video_id:
+                st.write(f"Processing video ID: {selected_video_id} with the LLM...")
+                # Add your LLM processing logic here
+
+            """
             input_text = st.text_area("Input Text")
             if st.button("Generate"):
                 # Dummy output for the sake of example
                 output_text = f"Generated text for model {selected_model}"
                 st.text_area("Output Text", value=output_text, height=200)
+            """
 
     # Sidebar for leaderboard
     with col3:
