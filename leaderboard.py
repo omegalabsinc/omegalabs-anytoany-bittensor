@@ -7,6 +7,8 @@ from datetime import datetime as dt
 import time
 import typing
 import json
+import random
+from tempfile import TemporaryDirectory
 
 from traceback import print_exception
 
@@ -28,6 +30,12 @@ NETWORK = None
 NETUID = 21
 VPERMIT_TAO_LIMIT = 1024
 JSON_FILE = "leaderboard.json"
+CACHE_FILE = "omega_dataset_examples.json"
+HF_DATASET = "omegalabsinc/omega-multimodal"
+DATA_FILES_PREFIX = "default/train/"
+MIN_AGE = 48 * 60 * 60  #48 hours
+MAX_FILES = 1
+MAX_METADATA = 25
 
 subtensor = bt.subtensor(network=NETWORK)
 metagraph: bt.metagraph = subtensor.metagraph(NETUID)
@@ -38,6 +46,52 @@ model_tracker = ModelTracker()
 metadata_store = ChainModelMetadataStore(
     subtensor, NETUID, None
 )
+
+def get_timestamp_from_filename(filename: str):
+    return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
+
+def pull_and_cache_recent_descriptions() -> typing.List[str]:
+    # Get the list of files in the dataset repository
+    omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
+    
+    # Filter files that match the DATA_FILES_PREFIX
+    recent_files = [
+        f.rfilename
+        for f in omega_ds_files if
+        f.rfilename.startswith(DATA_FILES_PREFIX) and 
+        time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
+    ][:MAX_FILES]
+    
+    # Randomly sample up to MAX_FILES from the matching files
+    sampled_files = random.sample(recent_files, min(MAX_FILES, len(recent_files)))
+    
+    # Load the dataset using the sampled files
+    video_metadata = []
+    with TemporaryDirectory() as temp_dir:
+        omega_dataset = load_dataset(HF_DATASET, data_files=sampled_files, cache_dir=temp_dir)["train"]
+        for entry in omega_dataset:
+            metadata = []
+            if "description" in entry and "description_embed" in entry:
+                metadata.append(entry["video_id"])
+                metadata.append(entry["youtube_id"])
+                metadata.append(entry["start_time"])
+                metadata.append(entry["end_time"])
+                metadata.append(entry["description"])
+                metadata.append(entry["description_embed"])
+                metadata.append(entry["description_relevance_score"])
+                metadata.append(entry["query_relevance_score"])
+                metadata.append(entry["query"])
+                metadata.append(entry["submitted_at"])
+                video_metadata.append(metadata)
+            
+            if len(video_metadata) >= MAX_METADATA:
+                break
+    
+    # Cache the descriptions to a local file
+    with open(CACHE_FILE, "w") as f:
+        json.dump(video_metadata, f)
+    
+    return video_metadata
 
 def check_uid_availability(
     metagraph: "bt.metagraph.Metagraph", uid: int, vpermit_tao_limit: int
@@ -136,6 +190,7 @@ async def resync_model_info():
 async def main():
     # run initial pull and cache/creation of JSON
     await pull_and_cache_miner_info()
+    await pull_and_cache_recent_descriptions()
 
     # Load models from JSON file
     if os.path.exists(JSON_FILE):
@@ -144,6 +199,14 @@ async def main():
             models = {model['name']: model for model in data}
     else:
         models = {}
+
+    # Load demo video metadata from JSON file
+    if os.path.exists(CACHE_FILE):
+        with open(CACHE_FILE, 'r') as f:
+            video_metadata = json.load(f)
+            #video_metadata = {metadata['name']: metadata for metadata in data}
+    else:
+        video_metadata = {}
 
     st.set_page_config(layout="wide")  # Set the layout to wide
 
