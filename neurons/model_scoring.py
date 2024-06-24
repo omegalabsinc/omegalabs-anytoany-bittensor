@@ -70,24 +70,24 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
 
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     try:
-
         hf_api = huggingface_hub.HfApi()
         ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
         if len(ckpt_files) == 0:
             raise ValueError(f"No checkpoint files found in {hf_repo_id}")
 
-        # Ensure the cache directory exists
-        os.makedirs(CACHE_DIR, exist_ok=True)
+        # Create a unique subdirectory for each repository within the cache directory
+        repo_cache_dir = os.path.join(CACHE_DIR, hf_repo_id.replace("/", "_"))
+        os.makedirs(repo_cache_dir, exist_ok=True)
 
         # Define paths for the config and checkpoint files
-        config_path = os.path.join(CACHE_DIR, CONFIG_FILE)
-        ckpt_path = os.path.join(CACHE_DIR, ckpt_files[0])
+        config_path = os.path.join(repo_cache_dir, CONFIG_FILE)
+        ckpt_path = os.path.join(repo_cache_dir, ckpt_files[0])
 
-        # Download files if they don't exist in the cache directory
+        # Download files if they don't exist in the repository's cache directory
         if not os.path.exists(config_path):
-            config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=CACHE_DIR)
+            config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=repo_cache_dir)
         if not os.path.exists(ckpt_path):
-            ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=CACHE_DIR)
+            ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=repo_cache_dir)
 
         train_cfg = OmegaConf.load(config_path)
         train_cfg.model = DictConfig({
@@ -106,14 +106,15 @@ def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
         return inference_recipe, train_cfg
 
     except Exception as e:
+        print(f"Error loading checkpoint from {hf_repo_id}: {e}")
         # Additional debug information
         print("Debug Information:")
         print(f"hf_repo_id: {hf_repo_id}")
         print(f"config_path: {config_path}")
         print(f"ckpt_path: {ckpt_path}")
         print(f"Cache directory contents: {os.listdir(CACHE_DIR)}")
-        print(e)
         traceback.print_exc()
+        #raise
 
 def load_and_transform_text(text, device):
     if text is None:
@@ -139,19 +140,10 @@ def get_model_score(hf_repo_id, mini_batch):
     mean_similarity = torch.tensor(similarities).mean().item()
     return mean_similarity
 
-def get_model_score_cached(hf_repo_id, mini_batch):
+def get_caption_from_model(hf_repo_id, video_emb):
     inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
-    similarities = []
-    for video_emb, actual_caption in zip(mini_batch["video_embed"], mini_batch["description"]):
-        print("actual caption: ", actual_caption)
-        print("video_emb: ", video_emb)
-        generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
-        text_embeddings = embed_text(inference_recipe._embed_model, [generated_caption, actual_caption], device=inference_recipe._device)
-        text_similarity = torch.nn.functional.cosine_similarity(text_embeddings[0], text_embeddings[1], dim=-1)
-        similarities.append(text_similarity.item())
-    mean_similarity = torch.tensor(similarities).mean().item()
-    return mean_similarity
-
+    generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
+    return generated_caption
 
 if __name__ == "__main__":
     hf_repo_id = "salmanshahid/omega_a2a_test"

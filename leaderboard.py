@@ -23,7 +23,7 @@ import torch.nn as nn
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
-from neurons.model_scoring import pull_latest_omega_dataset, get_model_score, get_model_score_cached
+from neurons.model_scoring import get_caption_from_model
 
 import bittensor as bt
 
@@ -232,6 +232,43 @@ async def main():
             width: 100%; /* Make the SVG fill the container */
             height: 100%; /* Make the SVG fill the container */
         }
+        /* Table styles */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'Roboto', sans-serif;
+        }
+        th, td {
+            padding: 12px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+        button {
+            background-color: #068AC7;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background-color: #005f8a;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -280,63 +317,25 @@ async def main():
                     time.sleep(0.01)  # Simulate loading time
                     progress_bar.progress(i + 1)
 
-            try:
-                print("Trying to get model score")
-                #mini_batch = pull_latest_omega_dataset()
-                #print(get_model_score_cached(model_info['model_path'], mini_batch))
-
-            except Exception as e:
-                print(e)
-                traceback.print_exc()
-
-            # Convert the list of video metadata dictionaries to a DataFrame
-            df = pd.DataFrame(video_metadata)
-            #st.dataframe(df, hide_index=True)
-
-            # Filter the DataFrame to show only certain rows (e.g., based on a condition)
-            # For this example, let's show all rows
-            filtered_df = df
-
             # Display the table with buttons
             st.write("### Recent Video Metadata")
+            # Iterate over the DataFrame rows and create a button for each row
+            for index, row in enumerate(video_metadata):
+                st.write(f"**YouTube ID:** {row['youtube_id']}")
+                st.write(f"**Description:** {row['description']}")
+                st.write(f"**Relevance Score:** {row['description_relevance_score']}")
+                if st.button(f"Select {row['youtube_id']}", key=f"button_{index}"):
+                    st.write(f"Processing video ID: {row['youtube_id']} with the LLM...")
+                    try:
+                        print("Trying to generate caption from model...")
+                        generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
+                        st.text_area(f"Generated Caption", value=generated_caption, height=200, disabled=True)
 
-            # Create a custom HTML table
-            table_html = """
-            <table>
-                <thead>
-                    <tr>
-                        <th>YouTube ID</th>
-                        <th>Description</th>
-                        <th>Relevance Score</th>
-                        <th>Select</th>
-                    </tr>
-                </thead>
-                <tbody>
-            """
-
-            # Add rows to the table
-            for index, row in filtered_df.iterrows():
-                table_html += f"""
-                <tr>
-                    <td>{html.escape(row['youtube_id'])}</td>
-                    <td>{html.escape(row['description'])}</td>
-                    <td>{row['description_relevance_score']}</td>
-                    <td><button onclick="window.location.href='/?selected_video_id={row['video_id']}'">Select</button></td>
-                </tr>
-                """
-
-            table_html += """
-                </tbody>
-            </table>
-            """
-  
-            # Display the custom HTML table
-            st.components.v1.html(table_html, height=600)
-
-            # Handle button clicks
-            selected_video_id = st.query_params.get("selected_video_id", [None])[0]
-            if selected_video_id:
-                st.write(f"Processing video ID: {selected_video_id} with the LLM...")
+                    except Exception as e:
+                        print(e)
+                        traceback.print_exc()
+                    
+                st.write("-----------------------------------------------------")
             
 
             """
@@ -357,7 +356,7 @@ async def main():
             table_data.append({
                 "rank": model_info['rank'],
                 "UID": model_info['uid'],
-                "model_path": f'https://huggingface.co/{model_info["model_path"]}',
+                "model path": f'https://huggingface.co/{model_info["model_path"]}',
                 "incentive": str(round(float(model_info['incentive']), 3))
             })
         
