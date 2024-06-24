@@ -61,6 +61,7 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
         train_cfg.checkpointer.checkpoint_dir = os.path.dirname(ckpt_path)
         train_cfg.checkpointer.checkpoint_files = [os.path.basename(ckpt_path)]
         train_cfg.inference.max_new_tokens = 300
+        train_cfg.tokenizer.path = "./models/tokenizer.model"
         inference_recipe = InferenceRecipe(train_cfg)
         inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg
