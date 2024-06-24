@@ -205,7 +205,11 @@ async def main():
     #await pull_and_cache_miner_info()
     #await pull_and_cache_recent_descriptions()
 
-    st.set_page_config(layout="wide")  # Set the layout to wide
+    st.set_page_config(
+        layout="wide",
+        page_title='OMEGA Any2Any Leaderboard',
+        page_icon="Ω"
+    )
 
     models = load_models()
     video_metadata = load_video_metadata()
@@ -295,7 +299,7 @@ async def main():
     # Center the title
     st.markdown('<h1 class="centered-title">OMEGA Any2Any Leaderboard</h1>', unsafe_allow_html=True)
 
-    # Create a two-column layout
+    # Create a three-column layout
     col1, col2, col3 = st.columns([0.6, 0.05, 0.3])
 
     # Main column for model demo
@@ -316,35 +320,36 @@ async def main():
                 for i in range(100):
                     time.sleep(0.01)  # Simulate loading time
                     progress_bar.progress(i + 1)
-
-            # Display the table with buttons
-            st.write("### Recent Video Metadata")
+            
+            st.markdown('<h2 class="centered-title">Recent Video Metadata</h2>', unsafe_allow_html=True)
+            st.write("-----------------------------------------------------")    
+            
             # Iterate over the DataFrame rows and create a button for each row
             for index, row in enumerate(video_metadata):
-                st.write(f"**YouTube ID:** {row['youtube_id']}")
-                st.write(f"**Description:** {row['description']}")
-                st.write(f"**Relevance Score:** {row['description_relevance_score']}")
-                if st.button(f"Select {row['youtube_id']}", key=f"button_{index}"):
-                    st.write(f"Processing video ID: {row['youtube_id']} with the LLM...")
-                    try:
-                        print("Trying to generate caption from model...")
-                        generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
-                        st.text_area(f"Generated Caption", value=generated_caption, height=200, disabled=True)
+                # Create a three-column layout
+                ccol1, ccol2, ccol3 = st.columns([0.45, 0.05, 0.45])
+                with ccol1:
+                    st.write(f"**YouTube ID:** {row['youtube_id']}")
+                    st.write(f"**Description:** {row['description']}")
+                    st.write(f"**Start Time:** {row['start_time']}")
+                    st.write(f"**End Time:** {row['end_time']}")
+                    st.write(f"**Relevance Score:** {row['description_relevance_score']}")
+                    if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
+                        st.write(f"Processing video ID: {row['youtube_id']} with the LLM...")
+                        try:
+                            print("Trying to generate caption from model...")
+                            generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
+                            st.text_area(f"Generated Caption", value=generated_caption, height=100, disabled=True)
 
-                    except Exception as e:
-                        print(e)
-                        traceback.print_exc()
-                    
-                st.write("-----------------------------------------------------")
+                        except Exception as e:
+                            print(e)
+                            traceback.print_exc()
+                with ccol3:
+                    youtube_url = f"https://www.youtube.com/embed/{row['youtube_id']}"
+                    st.video(youtube_url, start_time=row['start_time'])
+        
+                st.write("-----------------------------------------------------")    
             
-
-            """
-            input_text = st.text_area("Input Text")
-            if st.button("Generate"):
-                # Dummy output for the sake of example
-                output_text = f"Generated text for model {selected_model}"
-                st.text_area("Output Text", value=output_text, height=200)
-            """
 
     # Sidebar for leaderboard
     with col3:
