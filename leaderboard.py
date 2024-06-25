@@ -216,11 +216,7 @@ async def main():
         {
             "youtube_id": entry["youtube_id"],
             "description": entry["description"],
-            "start_time": seconds_to_mmss(entry["start_time"]),
-            "end_time": seconds_to_mmss(entry["end_time"]),
-            "views": entry["views"],
-            "description_relevance_score": entry["description_relevance_score"],
-            "query": entry["query"],
+            "views": entry["views"]
         }
         for entry in video_metadata
     ]
@@ -309,18 +305,26 @@ async def main():
     # Center the title
     st.markdown('<h1 class="centered-title">OMEGA Any2Any Leaderboard</h1>', unsafe_allow_html=True)
 
+    pcol1, pcol2, pcol3 = st.columns([0.2, 0.6, 0.2])
+    with pcol2:
+        st.markdown('<p>Welcome to OMEGA Labs\' Any2Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21.</p>', unsafe_allow_html=True)
+        st.markdown('<p>On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
+        st.markdown('<p>On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
+
     tab1, tab2 = st.tabs(["Model Demos", "Leaderboard"])
 
     # Main column for model demo
     with tab1:
         st.header("Model Demo")
-        model_names = list(models.keys())
-        selected_model = st.selectbox(
-            "Select a model", 
-            model_names,
-            index=None,
-            placeholder="- Select a model -"
-        )
+        tcol1, tcol2 = st.columns([0.4, 0.6])
+        with tcol1:
+            model_names = list(models.keys())
+            selected_model = st.selectbox(
+                "Select a model", 
+                model_names,
+                index=None,
+                placeholder="- Select a model -"
+            )
 
         if selected_model and selected_model != "- Select a model -":
             model_info = models[selected_model]
@@ -328,67 +332,46 @@ async def main():
             st.write(f"**Incentive:** {model_info['incentive']}")
             st.write(f"**Rank:** {model_info['rank']}")
             
-            st.markdown('<h2 class="centered-title">Recent Video Metadata</h2>', unsafe_allow_html=True)
-            st.write("-----------------------------------------------------")
+            mcol1, mcol2 = st.columns([0.70, 0.3])
+            with mcol1:
+                st.markdown('<h2 class="centered-title">Recent Video Metadata</h2>', unsafe_allow_html=True)
+                st.divider()
 
-            st.write("Select a row to generate a caption for the video.")
-            if "df" not in st.session_state:
-                st.session_state.df = pd.DataFrame(
-                    filtered_metadata
-                )
+                # Iterate over the DataFrame rows and create a button for each row
+                for index, row in enumerate(video_metadata):
+                    # Create a three-column layout
+                    ccol1, ccol2, ccol3 = st.columns([0.45, 0.1, 0.4])
+                    with ccol1:
+                        st.write(f"**YouTube ID:** {row['youtube_id']}")
+                        st.write(f"**Description:** {row['description']}")
+                        if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
 
-            event = st.dataframe(
-                st.session_state.df,
-                key="data",
-                hide_index=True,
-                on_select="rerun",
-                selection_mode=["single-row"],
-            )            
+                            with st.container(height=300):
+                                if mutex.locked():
+                                    with st.spinner("Waiting to start your generation..."):
+                                        while mutex.locked():
+                                            time.sleep(0.1)
+                                with mutex:
+                                    try:
+                                        # Show a spinner and progress bar while loading the model
+                                        with st.spinner('Loading model...'):
+                                            progress_bar = st.progress(0)
+                                            for i in range(100):
+                                                time.sleep(0.01)
+                                                progress_bar.progress(i + 1)
 
-            # Check if a selection has been made
-            if event and event.selection and "rows" in event.selection:
-                selected_indices = event.selection["rows"]
-                if selected_indices:
-                    selected_index = selected_indices[0]  # Get the first selected row index
-                    selected_row = st.session_state.df.iloc[selected_index]
+                                        generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
+                                        st.text(f"Generated Caption: {generated_caption}")
 
-                    # Match the selected row with video_metadata based on youtube_id
-                    youtube_id = selected_row["youtube_id"]
-                    matched_entry = next((item for item in video_metadata if item["youtube_id"] == youtube_id), None)
+                                    except Exception as e:
+                                        st.exception(e)
+                                
+                    with ccol3:
+                        youtube_url = f"https://www.youtube.com/embed/{row['youtube_id']}"
+                        st.video(youtube_url, start_time=row['start_time'])
 
-                    ccol1, ccol2 = st.columns([0.4, 0.6])
-                    
-                    if matched_entry:
-                        video_embed = matched_entry["video_embed"]
-                        start_time = matched_entry["start_time"]
-                        end_time = matched_entry["end_time"]
-
-                        with ccol1:
-                            st.write(f"Generating caption for video embedding from Youtube ID {youtube_id} ...")
-                            youtube_url = f"https://www.youtube.com/embed/{youtube_id}"
-                            st.markdown("""<div style="width: 600px;">""", unsafe_allow_html=True)
-                            st.video(youtube_url, start_time=start_time, end_time=end_time)
-                            st.markdown("""</div>""", unsafe_allow_html=True)
-
-                        with ccol2:
-                            if mutex.locked():
-                                with st.spinner("Waiting to start your generation..."):
-                                    while mutex.locked():
-                                        time.sleep(0.1)
-                            with mutex:
-                                try:
-                                    # Show a spinner and progress bar while loading the model
-                                    with st.spinner('Loading model...'):
-                                        progress_bar = st.progress(0)
-                                        for i in range(100):
-                                            time.sleep(0.01)
-                                            progress_bar.progress(i + 1)
-
-                                    generated_caption = get_caption_from_model(model_info['model_path'], video_embed)
-                                    st.text(f"Generated Caption: {generated_caption}")
-
-                                except Exception as e:
-                                    st.exception(e)
+                    st.divider()
+            
                             
     # tab for leaderboard
     with tab2:
