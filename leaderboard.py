@@ -346,22 +346,15 @@ async def main():
                         st.write(f"**Description:** {row['description']}")
                         if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
 
-                            with st.container(height=300):
+                            with st.container(height=250):
                                 if mutex.locked():
                                     with st.spinner("Waiting to start your generation..."):
                                         while mutex.locked():
                                             time.sleep(0.1)
                                 with mutex:
                                     try:
-                                        # Show a spinner and progress bar while loading the model
-                                        with st.spinner('Loading model...'):
-                                            progress_bar = st.progress(0)
-                                            for i in range(100):
-                                                time.sleep(0.01)
-                                                progress_bar.progress(i + 1)
-
                                         generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
-                                        st.text(f"Generated Caption: {generated_caption}")
+                                        st.markdown(f"Generated Caption: {generated_caption}")
 
                                     except Exception as e:
                                         st.exception(e)
