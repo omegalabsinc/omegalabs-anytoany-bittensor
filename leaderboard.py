@@ -2,13 +2,12 @@
 
 import asyncio
 import os
-import traceback
 from datetime import datetime as dt
 import time
 import typing
 import json
 import random
-import html
+import threading
 from tempfile import TemporaryDirectory
 
 from traceback import print_exception
@@ -201,6 +200,16 @@ def load_video_metadata():
 
     return video_metadata
 
+@st.cache_resource
+def get_mutex():
+    return threading.Lock()
+
+# Helper function to convert seconds to mm:ss format
+def seconds_to_mmss(seconds):
+    minutes = seconds // 60
+    seconds = seconds % 60
+    return f"{minutes:02}:{seconds:02}"
+
 # Background task scheduler
 scheduler = BackgroundScheduler()
 
@@ -223,10 +232,21 @@ async def main():
         page_title='OMEGA Any2Any Leaderboard',
         page_icon="\u03a9"
     )
-
+    mutex = get_mutex()
     models = load_models()
     video_metadata = load_video_metadata()
-    
+    filtered_metadata = [
+        {
+            "youtube_id": entry["youtube_id"],
+            "description": entry["description"],
+            "start_time": seconds_to_mmss(entry["start_time"]),
+            "end_time": seconds_to_mmss(entry["end_time"]),
+            "views": entry["views"],
+            "description_relevance_score": entry["description_relevance_score"],
+            "query": entry["query"],
+        }
+        for entry in video_metadata
+    ]
 
     # Custom CSS for centering the title and table data
     st.markdown("""
@@ -312,60 +332,89 @@ async def main():
     # Center the title
     st.markdown('<h1 class="centered-title">OMEGA Any2Any Leaderboard</h1>', unsafe_allow_html=True)
 
-    # Create a three-column layout
-    col1, col2, col3 = st.columns([0.6, 0.05, 0.3])
+    tab1, tab2 = st.tabs(["Model Demos", "Leaderboard"])
 
     # Main column for model demo
-    with col1:
+    with tab1:
         st.header("Model Demo")
-        model_names = ["- Select a model -"] + list(models.keys())
-        selected_model = st.selectbox("Select a model", model_names)
+        model_names = list(models.keys())
+        selected_model = st.selectbox(
+            "Select a model", 
+            model_names,
+            index=None,
+            placeholder="- Select a model -"
+        )
 
         if selected_model and selected_model != "- Select a model -":
             model_info = models[selected_model]
             st.write(f"**Model Path:** {model_info['model_path']}")
             st.write(f"**Incentive:** {model_info['incentive']}")
             st.write(f"**Rank:** {model_info['rank']}")
-
-            # Show a spinner and progress bar while loading the model
-            with st.spinner('Loading model...'):
-                progress_bar = st.progress(0)
-                for i in range(100):
-                    time.sleep(0.01)  # Simulate loading time
-                    progress_bar.progress(i + 1)
             
             st.markdown('<h2 class="centered-title">Recent Video Metadata</h2>', unsafe_allow_html=True)
-            st.write("-----------------------------------------------------")    
-            
-            # Iterate over the DataFrame rows and create a button for each row
-            for index, row in enumerate(video_metadata):
-                # Create a three-column layout
-                ccol1, ccol2, ccol3 = st.columns([0.45, 0.05, 0.45])
-                with ccol1:
-                    st.write(f"**YouTube ID:** {row['youtube_id']}")
-                    st.write(f"**Description:** {row['description']}")
-                    st.write(f"**Start Time:** {row['start_time']}")
-                    st.write(f"**End Time:** {row['end_time']}")
-                    st.write(f"**Relevance Score:** {row['description_relevance_score']}")
-                    if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
-                        st.write(f"Processing video ID: {row['youtube_id']} with the LLM...")
-                        try:
-                            print("Trying to generate caption from model...")
-                            generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
-                            st.text_area(f"Generated Caption", value=generated_caption, height=200, disabled=True)
+            st.write("-----------------------------------------------------")
 
-                        except Exception as e:
-                            print(e)
-                            traceback.print_exc()
-                with ccol3:
-                    youtube_url = f"https://www.youtube.com/embed/{row['youtube_id']}"
-                    st.video(youtube_url, start_time=row['start_time'])
-        
-                st.write("-----------------------------------------------------")    
-            
+            st.write("Select a row to generate a caption for the video.")
+            if "df" not in st.session_state:
+                st.session_state.df = pd.DataFrame(
+                    filtered_metadata
+                )
 
-    # Sidebar for leaderboard
-    with col3:
+            event = st.dataframe(
+                st.session_state.df,
+                key="data",
+                hide_index=True,
+                on_select="rerun",
+                selection_mode=["single-row"],
+            )            
+
+            # Check if a selection has been made
+            if event and event.selection and "rows" in event.selection:
+                selected_indices = event.selection["rows"]
+                if selected_indices:
+                    selected_index = selected_indices[0]  # Get the first selected row index
+                    selected_row = st.session_state.df.iloc[selected_index]
+
+                    # Match the selected row with video_metadata based on youtube_id
+                    youtube_id = selected_row["youtube_id"]
+                    matched_entry = next((item for item in video_metadata if item["youtube_id"] == youtube_id), None)
+
+                    ccol1, ccol2 = st.columns([0.4, 0.6])
+                    
+                    if matched_entry:
+                        video_embed = matched_entry["video_embed"]
+                        start_time = matched_entry["start_time"]
+                        end_time = matched_entry["end_time"]
+
+                        with ccol1:
+                            st.write(f"Generating caption for video embedding from Youtube ID {youtube_id} ...")
+                            youtube_url = f"https://www.youtube.com/embed/{youtube_id}"
+                            st.markdown("""<div style="width: 600px;">""", unsafe_allow_html=True)
+                            st.video(youtube_url, start_time=start_time, end_time=end_time)
+                            st.markdown("""</div>""", unsafe_allow_html=True)
+
+                        with ccol2:
+                            if mutex.locked():
+                                with st.spinner("Waiting to start your generation..."):
+                                    while mutex.locked():
+                                        time.sleep(0.1)
+                            with mutex:
+                                try:
+                                    # Show a spinner and progress bar while loading the model
+                                    with st.spinner('Loading model...'):
+                                        progress_bar = st.progress(0)
+                                        for i in range(100):
+                                            time.sleep(0.01)
+                                            progress_bar.progress(i + 1)
+
+                                    generated_caption = get_caption_from_model(model_info['model_path'], video_embed)
+                                    st.text(f"Generated Caption: {generated_caption}")
+
+                                except Exception as e:
+                                    st.exception(e)
+                            
+    # tab for leaderboard
+    with tab2:
         st.header("Leaderboard")
 
         # Prepare data for the table
@@ -374,19 +423,26 @@ async def main():
             table_data.append({
                 "rank": model_info['rank'],
                 "UID": model_info['uid'],
-                "model path": f'https://huggingface.co/{model_info["model_path"]}',
+                "model_path": f'https://huggingface.co/{model_info["model_path"]}',
                 "incentive": str(round(float(model_info['incentive']), 3))
             })
         
         df = pd.DataFrame(table_data)
+
         st.dataframe(
             df, 
-            use_container_width=True, 
+            width=800,
             hide_index=True,
             column_config={
-                "model_path": st.column_config.LinkColumn()
+                "model_path": st.column_config.LinkColumn(
+                    "Repo",
+                    validate="^https://huggingface\\.co/.*",
+                    max_chars=100,
+                    display_text="https://huggingface\\.co/(.*)",
+                )
             }
         )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

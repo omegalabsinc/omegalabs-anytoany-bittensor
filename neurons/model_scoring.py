@@ -13,6 +13,7 @@ from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 from imagebind.models.imagebind_model import ModalityType
 
 from tune_recipes.gen import InferenceRecipe
+import streamlit as st
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -68,6 +69,7 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
         inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg
 
+@st.cache_resource
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     try:
         hf_api = huggingface_hub.HfApi()
