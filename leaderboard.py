@@ -203,49 +203,7 @@ def seconds_to_mmss(seconds):
     seconds = seconds % 60
     return f"{minutes:02}:{seconds:02}"
 
-
-# Global task manager
-class TaskManager:
-    _instance = None
-    _tasks = {}
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super(TaskManager, cls).__new__(cls)
-        return cls._instance
-
-    def add_task(self, task_id, task):
-        if task_id not in self._tasks:
-            self._tasks[task_id] = task
-
-    def get_task(self, task_id):
-        return self._tasks.get(task_id)
-    
-# Define a periodic task
-async def periodic_task(interval, *tasks):
-    while True:
-        try:
-            await asyncio.gather(*[task() for task in tasks])
-        except Exception as err:
-            print("Error during syncing data", str(err))
-        await asyncio.sleep(interval)
-
-# Function to start the background tasks
-def start_background_tasks():
-    task_manager = TaskManager()
-    task_id = 'background_tasks'
-    if task_manager.get_task(task_id) is None:
-        loop = asyncio.get_event_loop()
-        if not loop.is_running():
-            task = asyncio.run(periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions))
-        else:
-            task = asyncio.create_task(periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions))
-        task_manager.add_task(task_id, task)
-
 async def main():
-    # Run the periodic task with an interval of 30 minutes (1800 seconds) to pull and cache miner info and recent descriptions
-    start_background_tasks()
-
     st.set_page_config(
         layout="wide",
         page_title='OMEGA Any2Any Leaderboard',
@@ -366,7 +324,6 @@ async def main():
 
         if selected_model and selected_model != "- Select a model -":
             model_info = models[selected_model]
-            #st.write(f"**Model Path:** {model_info['model_path']}")
             st.write(f"**Model Path:** [{model_info['model_path']}](http://huggingface.co/{model_info['model_path']})")
             st.write(f"**Incentive:** {model_info['incentive']}")
             st.write(f"**Rank:** {model_info['rank']}")
@@ -462,7 +419,6 @@ async def main():
                 )
             }
         )
-
 
 if __name__ == "__main__":
     asyncio.run(main())
