@@ -307,7 +307,7 @@ async def main():
 
     pcol1, pcol2, pcol3 = st.columns([0.2, 0.6, 0.2])
     with pcol2:
-        st.markdown('<p>Welcome to OMEGA Labs\' Any2Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21.</p>', unsafe_allow_html=True)
+        st.markdown('<p>Welcome to OMEGA Labs\' Any2Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21. Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</p>', unsafe_allow_html=True)
         st.markdown('<p>On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
         st.markdown('<p>On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
