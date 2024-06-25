@@ -1,4 +1,4 @@
-# pip install streamlit datasets huggingface-hub ulid-py bittensor apscheduler
+# pip install streamlit datasets huggingface-hub ulid-py bittensor
 
 import asyncio
 import os
@@ -19,13 +19,10 @@ import pandas as pd
 import ulid
 import torch.nn as nn
 
-from model.data import ModelMetadata
-from model.model_tracker import ModelTracker
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from neurons.model_scoring import get_caption_from_model
 
 import bittensor as bt
-from apscheduler.schedulers.background import BackgroundScheduler
 
 NETWORK = None
 NETUID = 21
@@ -40,8 +37,6 @@ MAX_METADATA = 25
 
 subtensor = bt.subtensor(network=NETWORK)
 metagraph: bt.metagraph = subtensor.metagraph(NETUID)
-
-model_tracker = ModelTracker()
 
 # Setup a ModelMetadataStore
 metadata_store = ChainModelMetadataStore(
@@ -81,6 +76,7 @@ async def pull_and_cache_recent_descriptions() -> typing.List[str]:
     with open(CACHE_FILE, "w") as f:
         json.dump(video_metadata, f)
     
+    await asyncio.sleep(1)
     return video_metadata
 
 def check_uid_availability(
@@ -166,16 +162,8 @@ async def pull_and_cache_miner_info():
     with open(JSON_FILE, "w") as f:
         json.dump(model_info, f)
     
+    await asyncio.sleep(1)
     return True
-
-async def resync_model_info():
-    while True:
-        try:
-            await pull_and_cache_miner_info()
-        except Exception as err:
-            print("Error during model info sync", str(err))
-            print_exception(type(err), err, err.__traceback__)
-        await asyncio.sleep(1800) # 30 minutes
 
 @st.cache_data(ttl=1800) # Cache for 30 minutes
 def load_models():
@@ -187,7 +175,12 @@ def load_models():
     else:
         models = {}
 
-    return models
+    # Sort models by rank (lowest to highest)
+    models_to_sort = models.values()
+    sorted_models = sorted(models_to_sort, key=lambda x: x.get('rank', float('inf')))
+    sorted_models = {model['name']: model for model in sorted_models}
+
+    return sorted_models
 
 @st.cache_data(ttl=1800) # Cache for 30 minutes
 def load_video_metadata():
@@ -210,22 +203,48 @@ def seconds_to_mmss(seconds):
     seconds = seconds % 60
     return f"{minutes:02}:{seconds:02}"
 
-# Background task scheduler
-scheduler = BackgroundScheduler()
 
-def scheduled_tasks():
-    pull_and_cache_miner_info()
-    pull_and_cache_recent_descriptions()
+# Global task manager
+class TaskManager:
+    _instance = None
+    _tasks = {}
 
-# Check if the job already exists before adding it
-if not scheduler.get_job('scheduled_tasks'):
-    scheduler.add_job(scheduled_tasks, 'interval', minutes=30, id='scheduled_tasks')
-scheduler.start()
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(TaskManager, cls).__new__(cls)
+        return cls._instance
+
+    def add_task(self, task_id, task):
+        if task_id not in self._tasks:
+            self._tasks[task_id] = task
+
+    def get_task(self, task_id):
+        return self._tasks.get(task_id)
+    
+# Define a periodic task
+async def periodic_task(interval, *tasks):
+    while True:
+        try:
+            await asyncio.gather(*[task() for task in tasks])
+        except Exception as err:
+            print("Error during syncing data", str(err))
+        await asyncio.sleep(interval)
+
+# Function to start the background tasks
+def start_background_tasks():
+    task_manager = TaskManager()
+    task_id = 'background_tasks'
+    if task_manager.get_task(task_id) is None:
+        loop = asyncio.get_event_loop()
+        if not loop.is_running():
+            task = asyncio.run(periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions))
+        else:
+            task = asyncio.create_task(periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions))
+        task_manager.add_task(task_id, task)
 
 async def main():
-    # run initial pull and cache/creation of JSON
-    #await pull_and_cache_miner_info()
-    #await pull_and_cache_recent_descriptions()
+    # Run the periodic task with an interval of 30 minutes (1800 seconds) to pull and cache miner info and recent descriptions
+    start_background_tasks()
 
     st.set_page_config(
         layout="wide",
@@ -347,7 +366,8 @@ async def main():
 
         if selected_model and selected_model != "- Select a model -":
             model_info = models[selected_model]
-            st.write(f"**Model Path:** {model_info['model_path']}")
+            #st.write(f"**Model Path:** {model_info['model_path']}")
+            st.write(f"**Model Path:** [{model_info['model_path']}](http://huggingface.co/{model_info['model_path']})")
             st.write(f"**Incentive:** {model_info['incentive']}")
             st.write(f"**Rank:** {model_info['rank']}")
             
