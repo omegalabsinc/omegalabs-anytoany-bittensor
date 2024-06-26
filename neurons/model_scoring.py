@@ -70,7 +70,6 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
         inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg
 
-@st.cache_resource
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     hf_api = huggingface_hub.HfApi()
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
@@ -138,7 +137,7 @@ def get_caption_from_model(hf_repo_id, video_emb):
     # Unload model from GPU memory
     del inference_recipe
     torch.cuda.empty_cache()
-
+    
     return generated_caption
 
 if __name__ == "__main__":
