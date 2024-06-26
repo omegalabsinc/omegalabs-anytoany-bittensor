@@ -37,7 +37,7 @@ validator: a2a
 		--env-file vali.env \
 		--name omega-a2a-validator \
 		a2a \
-		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
+		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF) --logging.trace
 	
 manual-validator: a2a
 	docker run -it --detach --restart always \
@@ -48,7 +48,7 @@ manual-validator: a2a
 		--env-file .env \
 		--name omega-a2a-validator \
 		a2a \
-		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
+		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF) --logging.trace
 
 check-vali-logs:
 	docker logs omega-a2a-validator --follow --tail 100
