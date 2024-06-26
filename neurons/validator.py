@@ -441,7 +441,7 @@ class Validator:
             bool: True if the model is old enough, False otherwise.
         """
         block_uploaded_at = model_metadata.block
-        current_block = self.subtensor.block
+        current_block = self.metagraph.block.item()
         model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
         is_old_enough = model_age > MIN_AGE
         if not is_old_enough:
@@ -602,10 +602,6 @@ class Validator:
             bt.logging.warning("Finished running step.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
-
-        if self.config.auto_update and self.should_restart():
-            bt.logging.info(f'Validator is out of date, quitting to restart.')
-            raise KeyboardInterrupt
 
     def is_git_latest(self) -> bool:
         p = Popen(['git', 'rev-parse', 'HEAD'], stdout=PIPE, stderr=PIPE)
@@ -915,7 +911,7 @@ class Validator:
                     self.metagraph.block.item() - self.last_epoch
                     < self.config.blocks_per_epoch
                 ):
-                    await self.try_run_step(ttl=60 * 20)
+                    await self.try_run_step(ttl=60 * 50)
                     bt.logging.debug(
                         f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
                     )
@@ -936,6 +932,10 @@ class Validator:
                         )
                         self.wandb_run.finish()
                         self.new_wandb_run()
+
+                if self.config.auto_update and self.should_restart():
+                    bt.logging.info(f'Validator is out of date, quitting to restart.')
+                    raise KeyboardInterrupt
 
             except KeyboardInterrupt:
                 bt.logging.info(
