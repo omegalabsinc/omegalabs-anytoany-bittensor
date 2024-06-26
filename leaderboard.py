@@ -7,7 +7,6 @@ import time
 import typing
 import json
 import random
-import threading
 from tempfile import TemporaryDirectory
 
 from traceback import print_exception
@@ -20,7 +19,7 @@ import ulid
 import torch.nn as nn
 
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
-from neurons.model_scoring import get_caption_from_model
+from neurons.model_scoring import get_caption_from_model, get_mutex
 
 import bittensor as bt
 
@@ -192,10 +191,6 @@ def load_video_metadata():
         video_metadata = []
 
     return video_metadata
-
-@st.cache_resource
-def get_mutex():
-    return threading.Lock()
 
 # Helper function to convert seconds to mm:ss format
 def seconds_to_mmss(seconds):

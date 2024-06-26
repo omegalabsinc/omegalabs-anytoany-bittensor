@@ -15,7 +15,7 @@ from imagebind.models.imagebind_model import ModalityType
 from tune_recipes.gen import InferenceRecipe
 
 import streamlit as st
-from leaderboard import get_mutex
+import threading
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -28,6 +28,9 @@ BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
 
 CACHE_DIR = ".checkpoints"
 
+@st.cache_resource
+def get_mutex():
+    return threading.Lock()
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
