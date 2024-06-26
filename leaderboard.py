@@ -206,8 +206,8 @@ def seconds_to_mmss(seconds):
 async def main():
     st.set_page_config(
         layout="wide",
-        page_title='OMEGA Any2Any Leaderboard',
-        page_icon="\u03a9"
+        page_title="OMEGA Any-to-Any Leaderboard",
+        page_icon="omega_favico.png"
     )
     mutex = get_mutex()
     models = load_models()
@@ -221,180 +221,190 @@ async def main():
         for entry in video_metadata
     ]
 
-    # Custom CSS for centering the title and table data
-    st.markdown("""
-        <style>
-        .centered-title {
-            text-align: center;
-        }
-        .centered-data td {
-            text-align: center;
-        }
-        .logo {
-            display: block; /* Use block to apply margin auto for centering */
-            width: 75px; /* Set the width of the logo container */
-            height: 75px; /* Set the height of the logo container */
-            margin: 0 auto; /* Center the logo horizontally */
-            margin-top: 0rem; /* Add space above the logo */
-        }
+    pagecol1, pagecol2, pagecol3 = st.columns([0.1, 0.8, 0.1])
 
-        .logo svg {
-            width: 100%; /* Make the SVG fill the container */
-            height: 100%; /* Make the SVG fill the container */
-        }
-        /* Table styles */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-family: 'Roboto', sans-serif;
-        }
-        th, td {
-            padding: 12px;
-            border: 1px solid #ddd;
-            text-align: left;
-        }
-        th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-        }
-        tr:nth-child(even) {
-            background-color: #f9f9f9;
-        }
-        tr:hover {
-            background-color: #f1f1f1;
-        }
-        button {
-            background-color: #068AC7;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            text-align: center;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 14px;
-            margin: 4px 2px;
-            cursor: pointer;
-            border-radius: 4px;
-        }
-        button:hover {
-            background-color: #005f8a;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # Add the SVG logo above the title
-    st.markdown("""
-        <div class="logo">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 75 75">
-                <!-- Define the drop shadow filter -->
-                <defs>
-                    <filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
-                        <feOffset in="blur" dx="2" dy="2" result="offsetBlur"/>
-                        <feMerge>
-                            <feMergeNode in="offsetBlur"/>
-                            <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
-                    </filter>
-                </defs>
-                <text x="50%" y="70%" dominant-baseline="middle" text-anchor="middle" font-family="Roboto" font-size="100" fill="#068AC7" filter="url(#text-shadow)">Ω</text>
-            </svg>
-        </div>
-    """, unsafe_allow_html=True)
-
-    # Center the title
-    st.markdown('<h1 class="centered-title">OMEGA Any2Any Leaderboard</h1>', unsafe_allow_html=True)
-
-    pcol1, pcol2, pcol3 = st.columns([0.2, 0.6, 0.2])
-    with pcol2:
-        st.markdown('<p>Welcome to OMEGA Labs\' Any2Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21. Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</p>', unsafe_allow_html=True)
-        st.markdown('<p>On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
-        st.markdown('<p>On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
-
-    tab1, tab2 = st.tabs(["Model Demos", "Leaderboard"])
-
-    # Main column for model demo
-    with tab1:
-        st.header("Model Demo")
-        tcol1, tcol2 = st.columns([0.4, 0.6])
-        with tcol1:
-            model_names = list(models.keys())
-            selected_model = st.selectbox(
-                "Select a model", 
-                model_names,
-                index=None,
-                placeholder="- Select a model -"
-            )
-
-        if selected_model and selected_model != "- Select a model -":
-            model_info = models[selected_model]
-            st.write(f"**Model Path:** [{model_info['model_path']}](http://huggingface.co/{model_info['model_path']})")
-            st.write(f"**Incentive:** {model_info['incentive']}")
-            st.write(f"**Rank:** {model_info['rank']}")
-            
-            mcol1, mcol2 = st.columns([0.70, 0.3])
-            with mcol1:
-                st.markdown('<h2 class="centered-title">Recent Video Metadata</h2>', unsafe_allow_html=True)
-                st.divider()
-
-                # Iterate over the DataFrame rows and create a button for each row
-                for index, row in enumerate(video_metadata):
-                    # Create a three-column layout
-                    ccol1, ccol2, ccol3 = st.columns([0.45, 0.1, 0.4])
-                    with ccol1:
-                        st.write(f"**YouTube ID:** {row['youtube_id']}")
-                        st.write(f"**Description:** {row['description']}")
-                        if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
-
-                            with st.container(height=250):
-                                if mutex.locked():
-                                    with st.spinner("Waiting to start your generation..."):
-                                        while mutex.locked():
-                                            time.sleep(0.1)
-                                with mutex:
-                                    try:
-                                        generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
-                                        st.markdown(f"Generated Caption: {generated_caption}")
-
-                                    except Exception as e:
-                                        st.exception(e)
-                                
-                    with ccol3:
-                        youtube_url = f"https://www.youtube.com/embed/{row['youtube_id']}"
-                        st.video(youtube_url, start_time=row['start_time'])
-
-                    st.divider()
-            
-                            
-    # tab for leaderboard
-    with tab2:
-        st.header("Leaderboard")
-
-        # Prepare data for the table
-        table_data = []
-        for model_name, model_info in models.items():
-            table_data.append({
-                "rank": model_info['rank'],
-                "UID": model_info['uid'],
-                "model_path": f'https://huggingface.co/{model_info["model_path"]}',
-                "incentive": str(round(float(model_info['incentive']), 3))
-            })
-        
-        df = pd.DataFrame(table_data)
-
-        st.dataframe(
-            df, 
-            width=800,
-            hide_index=True,
-            column_config={
-                "model_path": st.column_config.LinkColumn(
-                    "Repo",
-                    validate="^https://huggingface\\.co/.*",
-                    max_chars=100,
-                    display_text="https://huggingface\\.co/(.*)",
-                )
+    with pagecol2:
+        # Custom CSS for centering the title and table data
+        st.markdown("""
+            <style>
+            .centered-title {
+                text-align: center;
             }
-        )
+            .centered-data td {
+                text-align: center;
+            }
+            .logo {
+                display: block; /* Use block to apply margin auto for centering */
+                width: 75px; /* Set the width of the logo container */
+                height: 75px; /* Set the height of the logo container */
+                margin: 0 auto; /* Center the logo horizontally */
+                margin-top: 0rem; /* Add space above the logo */
+            }
+
+            .logo svg {
+                width: 100%; /* Make the SVG fill the container */
+                height: 100%; /* Make the SVG fill the container */
+            }
+                    
+            .intro-text {
+                margin-top: 1rem;
+                margin-bottom: 1rem;
+                font-size: 18px;
+            }
+                    
+            /* Table styles */
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                font-family: 'Roboto', sans-serif;
+            }
+            th, td {
+                padding: 12px;
+                border: 1px solid #ddd;
+                text-align: left;
+            }
+            th {
+                background-color: #f2f2f2;
+                font-weight: bold;
+            }
+            tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            tr:hover {
+                background-color: #f1f1f1;
+            }
+            button {
+                background-color: #068AC7;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 14px;
+                margin: 4px 2px;
+                cursor: pointer;
+                border-radius: 4px;
+            }
+            button:hover {
+                background-color: #005f8a;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
+        # Add the SVG logo above the title
+        st.markdown("""
+            <div class="logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 75 75">
+                    <!-- Define the drop shadow filter -->
+                    <defs>
+                        <filter id="text-shadow" x="-20%" y="-20%" width="140%" height="140%">
+                            <feGaussianBlur in="SourceAlpha" stdDeviation="2" result="blur"/>
+                            <feOffset in="blur" dx="2" dy="2" result="offsetBlur"/>
+                            <feMerge>
+                                <feMergeNode in="offsetBlur"/>
+                                <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                        </filter>
+                    </defs>
+                    <text x="50%" y="70%" dominant-baseline="middle" text-anchor="middle" font-family="Roboto" font-size="100" fill="#068AC7" filter="url(#text-shadow)">Ω</text>
+                </svg>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Center the title
+        st.markdown('<h1 class="centered-title">OMEGA Any-to-Any Leaderboard</h1>', unsafe_allow_html=True)
+
+        pcol1, pcol2, pcol3 = st.columns([0.2, 0.6, 0.2])
+        with pcol2:
+            st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+            st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
+
+        tab1, tab2 = st.tabs(["Model Demos", "Leaderboard"])
+
+        # Main column for model demo
+        with tab1:
+            st.header("Model Demo")
+            tcol1, tcol2 = st.columns([0.4, 0.6])
+            with tcol1:
+                model_names = list(models.keys())
+                selected_model = st.selectbox(
+                    "Select a model", 
+                    model_names,
+                    index=None,
+                    placeholder="- Select a model -"
+                )
+
+            if selected_model and selected_model != "- Select a model -":
+                model_info = models[selected_model]
+                st.write(f"**Model Path:** [{model_info['model_path']}](http://huggingface.co/{model_info['model_path']})")
+                st.write(f"**Incentive:** {model_info['incentive']}")
+                st.write(f"**Rank:** {model_info['rank']}")
+                
+                mcol1, mcol2 = st.columns([0.70, 0.3])
+                with mcol1:
+                    st.markdown('<h2 class="centered-title">Recent Video Metadata</h2>', unsafe_allow_html=True)
+                    st.divider()
+
+                    # Iterate over the DataFrame rows and create a button for each row
+                    for index, row in enumerate(video_metadata):
+                        # Create a three-column layout
+                        ccol1, ccol2, ccol3 = st.columns([0.45, 0.1, 0.4])
+                        with ccol1:
+                            st.write(f"**YouTube ID:** {row['youtube_id']}")
+                            st.write(f"**Description:** {row['description']}")
+                            if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
+
+                                with st.container(height=250):
+                                    if mutex.locked():
+                                        with st.spinner("Waiting to start your generation..."):
+                                            while mutex.locked():
+                                                time.sleep(0.1)
+                                    with mutex:
+                                        try:
+                                            generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
+                                            st.markdown(f"Generated Caption: {generated_caption}")
+
+                                        except Exception as e:
+                                            st.exception(e)
+                                    
+                        with ccol3:
+                            youtube_url = f"https://www.youtube.com/embed/{row['youtube_id']}"
+                            st.video(youtube_url, start_time=row['start_time'])
+
+                        st.divider()
+                
+                                
+        # tab for leaderboard
+        with tab2:
+            st.header("Leaderboard")
+
+            # Prepare data for the table
+            table_data = []
+            for model_name, model_info in models.items():
+                table_data.append({
+                    "rank": model_info['rank'],
+                    "UID": model_info['uid'],
+                    "model_path": f'https://huggingface.co/{model_info["model_path"]}',
+                    "incentive": str(round(float(model_info['incentive']), 3))
+                })
+            
+            df = pd.DataFrame(table_data)
+
+            st.dataframe(
+                df, 
+                width=800,
+                hide_index=True,
+                column_config={
+                    "model_path": st.column_config.LinkColumn(
+                        "Repo",
+                        validate="^https://huggingface\\.co/.*",
+                        max_chars=100,
+                        display_text="https://huggingface\\.co/(.*)",
+                    )
+                }
+            )
 
 if __name__ == "__main__":
     asyncio.run(main())
