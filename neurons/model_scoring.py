@@ -77,42 +77,42 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
 @st.cache_resource
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     mutex = get_mutex()
+    
+    hf_api = huggingface_hub.HfApi()
+    ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
+    if len(ckpt_files) == 0:
+        raise ValueError(f"No checkpoint files found in {hf_repo_id}")
+
+    # Create a unique subdirectory for each repository within the cache directory
+    repo_cache_dir = os.path.join(CACHE_DIR, hf_repo_id.replace("/", "_"))
+    os.makedirs(repo_cache_dir, exist_ok=True)
+
+    # Define paths for the config and checkpoint files
+    config_path = os.path.join(repo_cache_dir, CONFIG_FILE)
+    ckpt_path = os.path.join(repo_cache_dir, ckpt_files[0])
+
+    # Download files if they don't exist in the repository's cache directory
+    if not os.path.exists(config_path):
+        config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=repo_cache_dir)
+    if not os.path.exists(ckpt_path):
+        ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=repo_cache_dir)
+
+    train_cfg = OmegaConf.load(config_path)
+    train_cfg.model = DictConfig({
+        "_component_": "models.mmllama3_8b",
+        "use_clip": False,
+        "perception_tokens": train_cfg.model.perception_tokens,
+    })
+    train_cfg.checkpointer.checkpoint_dir = os.path.dirname(ckpt_path)
+    train_cfg.checkpointer.checkpoint_files = [os.path.basename(ckpt_path)]
+    train_cfg.inference.max_new_tokens = 300
+    train_cfg.tokenizer.path = "./models/tokenizer.model"
 
     with mutex:
-        hf_api = huggingface_hub.HfApi()
-        ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
-        if len(ckpt_files) == 0:
-            raise ValueError(f"No checkpoint files found in {hf_repo_id}")
-
-        # Create a unique subdirectory for each repository within the cache directory
-        repo_cache_dir = os.path.join(CACHE_DIR, hf_repo_id.replace("/", "_"))
-        os.makedirs(repo_cache_dir, exist_ok=True)
-
-        # Define paths for the config and checkpoint files
-        config_path = os.path.join(repo_cache_dir, CONFIG_FILE)
-        ckpt_path = os.path.join(repo_cache_dir, ckpt_files[0])
-
-        # Download files if they don't exist in the repository's cache directory
-        if not os.path.exists(config_path):
-            config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=repo_cache_dir)
-        if not os.path.exists(ckpt_path):
-            ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=repo_cache_dir)
-
-        train_cfg = OmegaConf.load(config_path)
-        train_cfg.model = DictConfig({
-            "_component_": "models.mmllama3_8b",
-            "use_clip": False,
-            "perception_tokens": train_cfg.model.perception_tokens,
-        })
-        train_cfg.checkpointer.checkpoint_dir = os.path.dirname(ckpt_path)
-        train_cfg.checkpointer.checkpoint_files = [os.path.basename(ckpt_path)]
-        train_cfg.inference.max_new_tokens = 300
-        train_cfg.tokenizer.path = "./models/tokenizer.model"
-
         inference_recipe = InferenceRecipe(train_cfg)
         inference_recipe.setup(cfg=train_cfg)
 
-        return inference_recipe, train_cfg
+    return inference_recipe, train_cfg
 
 def load_and_transform_text(text, device):
     if text is None:
