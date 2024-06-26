@@ -144,7 +144,7 @@ class Validator:
         parser.add_argument(
             "--sample_min",
             type=int,
-            default=15,
+            default=5,
             help="Number of uids to eval each step.",
         )
         parser.add_argument(
