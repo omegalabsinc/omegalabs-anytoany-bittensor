@@ -326,10 +326,21 @@ async def main():
         tcol1, tcol2 = st.columns([0.4, 0.6])
         with tcol1:
             model_names = list(models.keys())
+
+            # Define the partial model name you're looking for
+            partial_model_name = "UID 31"
+
+            # Find the index of the first model name that contains the partial name
+            model_index = None
+            for i, name in enumerate(model_names):
+                if partial_model_name in name:
+                    model_index = i
+                    break
+
             selected_model = st.selectbox(
                 "Select a model", 
                 model_names,
-                index=None,
+                index=model_index,
                 placeholder="- Select a model -"
             )
 
