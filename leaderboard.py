@@ -358,7 +358,8 @@ async def main():
                                         time.sleep(0.1)
                             with mutex:
                                 try:
-                                    generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
+                                    with st.spinner('Generating caption...'):
+                                        generated_caption = get_caption_from_model(model_info['model_path'], row['video_embed'])
                                     st.markdown(f"Generated Caption: {generated_caption}")
 
                                 except Exception as e:
