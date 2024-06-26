@@ -15,7 +15,6 @@ from imagebind.models.imagebind_model import ModalityType
 from tune_recipes.gen import InferenceRecipe
 
 import streamlit as st
-import threading
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -28,9 +27,6 @@ BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
 
 CACHE_DIR = ".checkpoints"
 
-@st.cache_resource
-def get_mutex():
-    return threading.Lock()
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
@@ -76,8 +72,6 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
 
 @st.cache_resource
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
-    mutex = get_mutex()
-    
     hf_api = huggingface_hub.HfApi()
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
     if len(ckpt_files) == 0:
@@ -107,10 +101,9 @@ def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     train_cfg.checkpointer.checkpoint_files = [os.path.basename(ckpt_path)]
     train_cfg.inference.max_new_tokens = 300
     train_cfg.tokenizer.path = "./models/tokenizer.model"
-
-    with mutex:
-        inference_recipe = InferenceRecipe(train_cfg)
-        inference_recipe.setup(cfg=train_cfg)
+    
+    inference_recipe = InferenceRecipe(train_cfg)
+    inference_recipe.setup(cfg=train_cfg)
 
     return inference_recipe, train_cfg
 

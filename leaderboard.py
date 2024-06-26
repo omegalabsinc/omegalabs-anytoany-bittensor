@@ -17,9 +17,10 @@ from datasets import load_dataset
 import pandas as pd
 import ulid
 import torch.nn as nn
+import threading
 
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
-from neurons.model_scoring import get_caption_from_model, get_mutex
+from neurons.model_scoring import get_caption_from_model
 
 import bittensor as bt
 
@@ -41,6 +42,10 @@ metagraph: bt.metagraph = subtensor.metagraph(NETUID)
 metadata_store = ChainModelMetadataStore(
     subtensor, NETUID, None
 )
+
+@st.cache_resource
+def get_mutex():
+    return threading.Lock()
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
