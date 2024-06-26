@@ -52,7 +52,6 @@ import math
 import torch
 import typing
 import constants
-import traceback
 import bittensor as bt
 import wandb
 
@@ -510,7 +509,7 @@ class Validator:
                         )
 
             except Exception as e:
-                 bt.logging.error(
+                bt.logging.error(
                     f"Error in update loop \n {e} \n {traceback.format_exc()}"
                 )
 
