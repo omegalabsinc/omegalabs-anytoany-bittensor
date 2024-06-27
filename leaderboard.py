@@ -5,10 +5,7 @@ import os
 import time
 import json
 
-from traceback import print_exception
-
 import streamlit as st
-from datasets import load_dataset
 import pandas as pd
 import threading
 
@@ -50,18 +47,17 @@ class CountingLock:
 # Singleton instance
 _mutex_instance = None
 
-@st.cache_resource
-def get_mutex():
-    global _mutex_instance
-    if _mutex_instance is None:
-        _mutex_instance = CountingLock()
-    return _mutex_instance
-
 #@st.cache_resource
 #def get_mutex():
-    #return threading.Lock()
+    #global _mutex_instance
+    #if _mutex_instance is None:
+       # _mutex_instance = CountingLock()
+    #return _mutex_instance
 
-#@st.cache_data(ttl=1800) # Cache for 30 minutes
+@st.cache_resource
+def get_mutex():
+    return threading.Lock()
+
 def load_models():
     # Load models from JSON file
     if os.path.exists(JSON_FILE):
@@ -255,10 +251,9 @@ async def main():
                     if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
 
                         with st.container(height=250):
-                            print(mutex.waiting_threads())
-                            if mutex.waiting_threads() >= 5:
-                                st.warning("Too many concurrent threads, cannot use at this time. Please try again soon.")
-                                return
+                            #if mutex.waiting_threads() >= 5:
+                                #st.warning("Too many concurrent threads, cannot use at this time. Please try again soon.")
+                                #return
 
                             if mutex.locked():
                                 with st.spinner("Waiting to start your generation..."):
