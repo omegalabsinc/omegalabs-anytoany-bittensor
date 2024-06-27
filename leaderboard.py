@@ -43,9 +43,48 @@ metadata_store = ChainModelMetadataStore(
     subtensor, NETUID, None
 )
 
-@st.cache_resource
+class CountingLock:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._count = 0
+        self._count_lock = threading.Lock()
+
+    def acquire(self):
+        with self._count_lock:
+            self._count += 1
+        self._lock.acquire()
+        with self._count_lock:
+            self._count -= 1
+
+    def release(self):
+        self._lock.release()
+
+    def waiting_threads(self):
+        with self._count_lock:
+            return self._count
+        
+    def locked(self):
+        return self._lock.locked()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+# Singleton instance
+_mutex_instance = None
+
 def get_mutex():
-    return threading.Lock()
+    global _mutex_instance
+    if _mutex_instance is None:
+        _mutex_instance = CountingLock()
+    return _mutex_instance
+
+#@st.cache_resource
+#def get_mutex():
+    #return threading.Lock()
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
@@ -169,7 +208,7 @@ async def pull_and_cache_miner_info():
     await asyncio.sleep(1)
     return True
 
-@st.cache_data(ttl=1800) # Cache for 30 minutes
+#@st.cache_data(ttl=1800) # Cache for 30 minutes
 def load_models():
     # Load models from JSON file
     if os.path.exists(JSON_FILE):
@@ -363,6 +402,11 @@ async def main():
                     if st.button(f"Generate Caption for Video {row['youtube_id']}", key=f"button_{index}"):
 
                         with st.container(height=250):
+                            print(mutex.waiting_threads())
+                            if mutex.waiting_threads() >= 5:
+                                st.warning("Too many concurrent threads, cannot use at this time. Please try again soon.")
+                                return
+
                             if mutex.locked():
                                 with st.spinner("Waiting to start your generation..."):
                                     while mutex.locked():
