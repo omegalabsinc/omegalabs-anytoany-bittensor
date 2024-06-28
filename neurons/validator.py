@@ -27,6 +27,7 @@ from subprocess import Popen, PIPE
 import asyncio
 import argparse
 import typing
+import random
 
 import constants
 from model.data import ModelMetadata
@@ -148,6 +149,12 @@ class Validator:
             help="Number of uids to eval each step.",
         )
         parser.add_argument(
+            "--sample_top_models",
+            type=int,
+            default=5,
+            help="Number of uid models to persist for eval each step.",
+        )
+        parser.add_argument(
             "--dont_set_weights",
             action="store_true",
             help="Validator does not set weights on the chain.",
@@ -192,12 +199,6 @@ class Validator:
             "--do_sample",
             action="store_true",
             help="Sample a response from each model (for leaderboard)",
-        )
-        parser.add_argument(
-            "--num_samples_per_eval",
-            type=int,
-            default=64,
-            help="Number of samples to evaluate per UID",
         )
         parser.add_argument(
             "--auto_update",
@@ -358,6 +359,8 @@ class Validator:
                 bt.logging.warning(
                     f"Building consensus state for competition {competition.competition_id}"
                 )
+                
+                # Get the sample_top_models best models for for first competition
                 consensus = [
                     x[0]
                     for x in sorted(
@@ -368,7 +371,7 @@ class Validator:
                         ],
                         key=lambda x: x[1],
                         reverse=True,
-                    )[: self.config.sample_min]
+                    )[: self.config.sample_top_models]
                 ]
 
                 self.uids_to_eval[competition.competition_id] = set(consensus)
@@ -646,13 +649,28 @@ class Validator:
 
         # Add uids with newly updated models to the upcoming batch of evaluations.
         with self.pending_uids_to_eval_lock:
-            self.uids_to_eval[competition_parameters.competition_id].update(
-                self.pending_uids_to_eval[competition_parameters.competition_id]
-            )
-            self.pending_uids_to_eval[competition_parameters.competition_id].clear()
+            # Combine uids from uids_to_eval and pending_uids_to_eval
+            combined_uids = list(self.uids_to_eval[competition_parameters.competition_id] |
+                                self.pending_uids_to_eval[competition_parameters.competition_id])
+            
+            # Randomly select `sample_min` UIDs from the combined set
+            if len(combined_uids) > self.config.sample_min:
+                selected_uids = set(random.sample(combined_uids, self.config.sample_min))
+            else:
+                selected_uids = set(combined_uids)
+            
+            # Update uids_to_eval with the selected UIDs
+            self.uids_to_eval[competition_parameters.competition_id] = selected_uids
+            
+            # Determine the UIDs that were not selected
+            remaining_uids = set(combined_uids) - selected_uids
+            
+            # Update pending_uids_to_eval with the remaining UIDs
+            self.pending_uids_to_eval[competition_parameters.competition_id] = remaining_uids
 
         # Pull relevant uids for step. If they aren't found in the model tracker on eval they will be skipped.
         uids = list(self.uids_to_eval[competition_parameters.competition_id])
+        
 
         if not uids:
             if self.config.genesis:
@@ -806,9 +824,9 @@ class Validator:
         )
         self.weights = self.weights.nan_to_num(0.0)
 
-        # Filter based on win rate removing all by the sample_min best models for evaluation.
+        # Filter based on win rate removing all by the sample_top_models best models for evaluation.
         self.uids_to_eval[competition_parameters.competition_id] = set(
-            sorted(win_rate, key=win_rate.get, reverse=True)[: self.config.sample_min]
+            sorted(win_rate, key=win_rate.get, reverse=True)[: self.config.sample_top_models]
         )
 
         # Log the performance of the eval loop.
