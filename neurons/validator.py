@@ -151,8 +151,8 @@ class Validator:
         parser.add_argument(
             "--sample_top_models",
             type=int,
-            default=5,
-            help="Number of uid models to persist for eval each step.",
+            default=2,
+            help="Number of uid models to persist for eval each step. Should be LESS than sample_min.",
         )
         parser.add_argument(
             "--dont_set_weights",
@@ -360,7 +360,7 @@ class Validator:
                     f"Building consensus state for competition {competition.competition_id}"
                 )
                 
-                # Get the sample_top_models best models for for first competition
+                # Get the sample_min best models for for first competition
                 consensus = [
                     x[0]
                     for x in sorted(
@@ -371,7 +371,7 @@ class Validator:
                         ],
                         key=lambda x: x[1],
                         reverse=True,
-                    )[: self.config.sample_top_models]
+                    )[: self.config.sample_min]
                 ]
 
                 self.uids_to_eval[competition.competition_id] = set(consensus)
@@ -649,24 +649,31 @@ class Validator:
 
         # Add uids with newly updated models to the upcoming batch of evaluations.
         with self.pending_uids_to_eval_lock:
-            # Combine uids from uids_to_eval and pending_uids_to_eval
-            combined_uids = list(self.uids_to_eval[competition_parameters.competition_id] |
-                                self.pending_uids_to_eval[competition_parameters.competition_id])
+            # Get the current UIDs to evaluate
+            current_uids = self.uids_to_eval[competition_parameters.competition_id]
             
-            # Randomly select `sample_min` UIDs from the combined set
-            if len(combined_uids) > self.config.sample_min:
-                selected_uids = set(random.sample(combined_uids, self.config.sample_min))
-            else:
-                selected_uids = set(combined_uids)
+            # Determine how many more UIDs are needed to reach `self.sample_min`
+            num_needed = self.config.sample_min - len(current_uids)
             
-            # Update uids_to_eval with the selected UIDs
-            self.uids_to_eval[competition_parameters.competition_id] = selected_uids
-            
-            # Determine the UIDs that were not selected
-            remaining_uids = set(combined_uids) - selected_uids
-            
-            # Update pending_uids_to_eval with the remaining UIDs
-            self.pending_uids_to_eval[competition_parameters.competition_id] = remaining_uids
+            # If more UIDs are needed, randomly select from `pending_uids_to_eval`
+            if num_needed > 0:
+                pending_uids = list(self.pending_uids_to_eval[competition_parameters.competition_id])
+                if len(pending_uids) > num_needed:
+                    selected_uids = set(random.sample(pending_uids, num_needed))
+                else:
+                    selected_uids = set(pending_uids)
+                
+                # Update `current_uids` with the selected UIDs
+                current_uids.update(selected_uids)
+                
+                # Determine the UIDs that were not selected
+                remaining_uids = set(pending_uids) - selected_uids
+                
+                # Update `pending_uids_to_eval` with the remaining UIDs
+                self.pending_uids_to_eval[competition_parameters.competition_id] = remaining_uids
+
+            # Update `uids_to_eval` with the final set of UIDs
+            self.uids_to_eval[competition_parameters.competition_id] = current_uids
 
         # Pull relevant uids for step. If they aren't found in the model tracker on eval they will be skipped.
         uids = list(self.uids_to_eval[competition_parameters.competition_id])
@@ -824,7 +831,7 @@ class Validator:
         )
         self.weights = self.weights.nan_to_num(0.0)
 
-        # Filter based on win rate removing all by the sample_top_models best models for evaluation.
+        # Filter based on win rate removing all but the sample_top_models best models for evaluation.
         self.uids_to_eval[competition_parameters.competition_id] = set(
             sorted(win_rate, key=win_rate.get, reverse=True)[: self.config.sample_top_models]
         )
