@@ -14,22 +14,23 @@ import numpy as np
 turn_re = re.compile(r"<\|start_header_id\|>(\w+)<\|end_header_id\|>(.*)")
 
 class BagelLlama3Dataset(IterableDataset):
-    def __init__(self, parquet_path, tokenizer, train_on_input=False, max_seq_len=512, world_size=1, rank=0):
+    def __init__(self, parquet_path, tokenizer, train_on_input=False, max_seq_len=512, world_size=1, rank=0, **kwargs):
         self._data = load_dataset("parquet", data_files={"train": parquet_path})["train"]
         self._tokenizer = tokenizer
         self.train_on_input = train_on_input
         self.max_seq_len = max_seq_len
         self._world_size = world_size
         self._index = self._rank = rank
+        self._len = len(self._data) // self._world_size
 
     def __len__(self):
-        return (len(self._data) - self._rank) // self._world_size
+        return self._len
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if self._index >= len(self):
+        if self._index // self._world_size >= self._len:
             self._index = self._rank
             raise StopIteration()
         sample = self._prepare_sample(self._data[self._index])
@@ -68,10 +69,11 @@ class BagelLlama3Dataset(IterableDataset):
         )
 
         if not self.train_on_input:
-            # don't learn that "<|start_header_id|>" always comes after <|eot_id|>
+            # don't learn that "<|start_header_id|>assistant" always comes after <|eot_id|>
             try:
-                first_false_idx = mask.index(False) # <|start_header_id|>
-                mask[first_false_idx:first_false_idx+2] = [True, True]
+                first_false_idx = mask.index(False)
+                mask[first_false_idx:first_false_idx+3] = [True, True, True]
+                mask = mask[:len(tokens)]
             except ValueError:
                 pass
 
