@@ -288,12 +288,13 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
            d. The ``device_id`` param ensures that the FSDP initialization happens on
               the correct device.
         """
+        _, rank = utils.get_world_size_and_rank()
 
         if self._is_rank_zero:
             log.info("DDP is enabled. Instantiating Model...")
 
         with utils.set_default_dtype(self._dtype):
-            model = config.instantiate(cfg_model)
+            model = config.instantiate(cfg_model).to(rank)
 
         # The model contains LoRA params which won't have any matching keys in
         # the state dict. As a result, we need to load with strict=False.
@@ -444,7 +445,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
             # Filter out the adapter keys and weights from the model state dict. These will
             # be saved separately
             transformer_cpu_state_dict = {
-                k: v.cpu() for k, v in self._model.module._transformer.state_dict().items()
+                k: v.cpu() for k, v in self._model.module.state_dict().items()
             }
             adapter_key_filter = lambda x: x in self.adapter_params
             adapter_state_dict = {
@@ -520,8 +521,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
                 # update embedding context in MMEmbedding object
                 # some unfortunate abstraction-breaking here
-                self._model.tok_embeddings.set_context(mm_context)
-                self._model.output.set_context(mm_context)
+                self._model.module.tok_embeddings.set_context(mm_context)
+                self._model.module.output.set_context(mm_context)
 
                 logits = self._model(input_ids)
                 # Shift so that tokens < n predict n
@@ -531,9 +532,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                 # Compute loss
                 loss = self._loss_fn(logits, labels)
 
-                if self._model.output._clip_projections:
-                    clip_pred = torch.stack([p for p, _ in self._model.output._clip_projections])
-                    clip_embed = torch.stack([e for _, e in self._model.output._clip_projections])
+                if self._model.module.output._clip_projections:
+                    clip_pred = torch.stack([p for p, _ in self._model.module.output._clip_projections])
+                    clip_embed = torch.stack([e for _, e in self._model.module.output._clip_projections])
                     feature_loss = 1 - F.cosine_similarity(clip_pred, clip_embed).mean()
                     loss += feature_loss
 
