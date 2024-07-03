@@ -47,6 +47,7 @@ from rich.console import Console
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
+from utilities.temp_dir_cache import TempDirCache
 from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE
 
 import math
@@ -153,6 +154,12 @@ class Validator:
             type=int,
             default=2,
             help="Number of uid models to persist for eval each step. Should be LESS than sample_min.",
+        )
+        parser.add_argument(
+            "--cached_models",
+            type=int,
+            default=20,
+            help="Number of model repos to cache on disk.",
         )
         parser.add_argument(
             "--dont_set_weights",
@@ -287,6 +294,10 @@ class Validator:
                 bt.logging.exception("WANDB_API_KEY not found. Set it with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with --wandb.off, but it is strongly recommended to run with W&B enabled.")
         else:
             bt.logging.warning("Running with --wandb.off. It is strongly recommended to run with W&B enabled.")
+            self.wandb_run_start = None
+
+        # === Model caching ===
+        self.temp_dir_cache = TempDirCache(self.config.cached_models)
 
         # Track how may run_steps this validator has completed.
         self.run_step_count = 0
@@ -477,7 +488,7 @@ class Validator:
                         dt.timedelta(minutes=update_delay_minutes) - time_diff
                     ).total_seconds()
                     bt.logging.info(
-                        f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep} seconds."
+                        f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
                     )
                     time.sleep(time_to_sleep)
 
@@ -770,9 +781,11 @@ class Validator:
                     try:
                         # Update the block this uid last updated their model.
                         uid_to_block[uid_i] = model_i_metadata.block
+                        hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
                         score = get_model_score(
-                            model_i_metadata.id.namespace + "/" + model_i_metadata.id.name,
+                            hf_repo_id,
                             mini_batch=eval_data,
+                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id)
                         )
                         bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:
@@ -948,7 +961,7 @@ class Validator:
                 self.epoch_step += 1
 
                 # Check if we should start a new wandb run.
-                if not self.config.wandb.off and not self.config.offline:
+                if not self.config.wandb.off and not self.config.offline and self.wandb_run_start != None:
                     if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
                         days=1
                     ):

@@ -91,7 +91,7 @@ class InferenceRecipe:
 
         # Validate model was loaded in with the expected dtype.
         utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
-        log.info(f"Model is initialized with precision {self._dtype}.")
+        log.debug(f"Model is initialized with precision {self._dtype}.")
 
         # Ensure the cache is setup on the right device
         with self._device:
@@ -112,7 +112,7 @@ class InferenceRecipe:
 
         # Validate model was loaded in with the expected dtype.
         utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
-        log.info(f"Embed model is initialized with precision {self._dtype}.")
+        log.debug(f"Embed model is initialized with precision {self._dtype}.")
 
 #         # Ensure the cache is setup on the right device
 #         with self._device:
