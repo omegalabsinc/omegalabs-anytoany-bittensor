@@ -293,6 +293,7 @@ class Validator:
             self.uid = utils.assert_registered(self.wallet, self.metagraph)
 
         # === W&B ===
+        self.wandb_run_start = None
         if not self.config.wandb.off and not self.config.offline:
             if os.getenv("WANDB_API_KEY"):
                 self.new_wandb_run()
@@ -300,7 +301,6 @@ class Validator:
                 bt.logging.exception("WANDB_API_KEY not found. Set it with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with --wandb.off, but it is strongly recommended to run with W&B enabled.")
         else:
             bt.logging.warning("Running with --wandb.off. It is strongly recommended to run with W&B enabled.")
-            self.wandb_run_start = None
 
         # === Model caching ===
         self.temp_dir_cache = TempDirCache(self.config.cached_models)
