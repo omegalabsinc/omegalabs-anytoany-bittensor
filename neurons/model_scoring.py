@@ -63,6 +63,7 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir) -> InferenceRecipe:
         "use_clip": False,
         "perception_tokens": train_cfg.model.perception_tokens,
     })
+    train_cfg.batch_size = 4
     train_cfg.checkpointer.checkpoint_dir = os.path.dirname(ckpt_path)
     train_cfg.checkpointer.checkpoint_files = [os.path.basename(ckpt_path)]
     train_cfg.inference.max_new_tokens = 300
@@ -88,12 +89,28 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
 def get_model_score(hf_repo_id, mini_batch, local_dir):
     inference_recipe, config = load_ckpt_from_hf(hf_repo_id, local_dir)
     bt.logging.info(f"Scoring {hf_repo_id}...")
+    batch_dim = config.batch_size
     similarities = []
-    for video_emb, actual_caption in zip(mini_batch["video_embed"], mini_batch["description"]):
-        generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
-        text_embeddings = embed_text(inference_recipe._embed_model, [generated_caption, actual_caption], device=inference_recipe._device)
-        text_similarity = torch.nn.functional.cosine_similarity(text_embeddings[0], text_embeddings[1], dim=-1)
-        similarities.append(text_similarity.item())
+
+    for idx in range(0, len(mini_batch["video_embed"]), batch_dim):
+        video_embed = torch.tensor(mini_batch["video_embed"][idx:idx+batch_dim])
+        actual_captions = mini_batch["description"][idx:idx+batch_dim]
+        generated_captions = inference_recipe.generate_batch(
+            cfg=config,
+            video_ib_embed=video_embed
+        )
+        text_embeddings = embed_text(
+            inference_recipe._embed_model,
+            generated_captions + actual_captions,
+            device=inference_recipe._device
+        )
+        text_similarity = torch.nn.functional.cosine_similarity(
+            text_embeddings[:video_embed.size(0)],
+            text_embeddings[video_embed.size(0):],
+            dim=-1
+        )
+        similarities.extend(text_similarity.tolist())
+
     mean_similarity = torch.tensor(similarities).mean().item()
     bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_similarity:0.5f}")
     return mean_similarity
