@@ -666,22 +666,24 @@ class Validator:
             current_uids = self.uids_to_eval[competition_parameters.competition_id]
             
             with self.updated_uids_to_eval_lock:
-                updated_uids = list(self.updated_uids_to_eval[competition_parameters.competition_id])
-                selected_updated_uids = set(random.sample(
-                    updated_uids,
-                    min(self.config.sample_updated_models, len(updated_uids))
-                ))
-                current_uids |= selected_updated_uids
-                self.updated_uids_to_eval[competition_parameters.competition_id] -= selected_updated_uids
+                if len(current_uids) < self.config.sample_total_models:
+                    updated_uids = list(self.updated_uids_to_eval[competition_parameters.competition_id])
+                    selected_updated_uids = set(random.sample(
+                        updated_uids,
+                        min(self.config.sample_updated_models, len(updated_uids))
+                    ))
+                    current_uids |= selected_updated_uids
+                    self.updated_uids_to_eval[competition_parameters.competition_id] -= selected_updated_uids
 
             with self.pending_uids_to_eval_lock:
-                pending_uids = list(self.pending_uids_to_eval[competition_parameters.competition_id])
-                selected_pending_uids = set(random.sample(
-                    pending_uids,
-                    min(self.config.sample_total_models - len(current_uids), len(pending_uids))
-                ))
-                current_uids |= selected_pending_uids
-                self.pending_uids_to_eval[competition_parameters.competition_id] -= selected_pending_uids
+                if len(current_uids) < self.config.sample_total_models:
+                    pending_uids = list(self.pending_uids_to_eval[competition_parameters.competition_id])
+                    selected_pending_uids = set(random.sample(
+                        pending_uids,
+                        min(self.config.sample_total_models - len(current_uids), len(pending_uids))
+                    ))
+                    current_uids |= selected_pending_uids
+                    self.pending_uids_to_eval[competition_parameters.competition_id] -= selected_pending_uids
 
             # Update `uids_to_eval` with the final set of UIDs
             self.uids_to_eval[competition_parameters.competition_id] = current_uids
