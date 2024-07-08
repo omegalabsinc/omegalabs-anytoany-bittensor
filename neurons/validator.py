@@ -27,6 +27,7 @@ from subprocess import Popen, PIPE
 import asyncio
 import argparse
 import typing
+import random
 
 import constants
 from model.data import ModelMetadata
@@ -46,6 +47,7 @@ from rich.console import Console
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
+from utilities.temp_dir_cache import TempDirCache
 from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE
 
 import math
@@ -142,10 +144,28 @@ class Validator:
             help="Number of blocks to wait before setting weights.",
         )
         parser.add_argument(
-            "--sample_min",
+            "--sample_total_models",
             type=int,
-            default=5,
+            default=6,
             help="Number of uids to eval each step.",
+        )
+        parser.add_argument(
+            "--sample_top_models",
+            type=int,
+            default=2,
+            help="Number of top-scoring uid models to persist for eval each step. Should be LESS than sample_min.",
+        )
+        parser.add_argument(
+            "--sample_updated_models",
+            type=int,
+            default=2,
+            help="Number of updated uid models to eval each step. Should be LESS than sample_min.",
+        )
+        parser.add_argument(
+            "--cached_models",
+            type=int,
+            default=20,
+            help="Number of model repos to cache on disk.",
         )
         parser.add_argument(
             "--dont_set_weights",
@@ -192,12 +212,6 @@ class Validator:
             "--do_sample",
             action="store_true",
             help="Sample a response from each model (for leaderboard)",
-        )
-        parser.add_argument(
-            "--num_samples_per_eval",
-            type=int,
-            default=64,
-            help="Number of samples to evaluate per UID",
         )
         parser.add_argument(
             "--auto_update",
@@ -279,6 +293,7 @@ class Validator:
             self.uid = utils.assert_registered(self.wallet, self.metagraph)
 
         # === W&B ===
+        self.wandb_run_start = None
         if not self.config.wandb.off and not self.config.offline:
             if os.getenv("WANDB_API_KEY"):
                 self.new_wandb_run()
@@ -286,6 +301,9 @@ class Validator:
                 bt.logging.exception("WANDB_API_KEY not found. Set it with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with --wandb.off, but it is strongly recommended to run with W&B enabled.")
         else:
             bt.logging.warning("Running with --wandb.off. It is strongly recommended to run with W&B enabled.")
+
+        # === Model caching ===
+        self.temp_dir_cache = TempDirCache(self.config.cached_models)
 
         # Track how may run_steps this validator has completed.
         self.run_step_count = 0
@@ -299,6 +317,8 @@ class Validator:
         self.uids_to_eval: typing.Dict[str, typing.Set] = {}
 
         # Create a set of newly added uids that should be evaluated on the next loop.
+        self.updated_uids_to_eval_lock = threading.RLock()
+        self.updated_uids_to_eval: typing.Dict[str, typing.Set] = {}
         self.pending_uids_to_eval_lock = threading.RLock()
         self.pending_uids_to_eval: typing.Dict[str, typing.Set] = {}
 
@@ -358,6 +378,8 @@ class Validator:
                 bt.logging.warning(
                     f"Building consensus state for competition {competition.competition_id}"
                 )
+                
+                # Get the sample_total_models best models for for first competition
                 consensus = [
                     x[0]
                     for x in sorted(
@@ -368,10 +390,11 @@ class Validator:
                         ],
                         key=lambda x: x[1],
                         reverse=True,
-                    )[: self.config.sample_min]
+                    )[: self.config.sample_total_models]
                 ]
 
                 self.uids_to_eval[competition.competition_id] = set(consensus)
+                self.updated_uids_to_eval[competition.competition_id] = set()
                 self.pending_uids_to_eval[competition.competition_id] = set()
 
                 consensus_map = {uid: self.weights[uid].item() for uid in consensus}
@@ -474,7 +497,7 @@ class Validator:
                         dt.timedelta(minutes=update_delay_minutes) - time_diff
                     ).total_seconds()
                     bt.logging.info(
-                        f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep} seconds."
+                        f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
                     )
                     time.sleep(time_to_sleep)
 
@@ -488,25 +511,18 @@ class Validator:
                 updated = asyncio.run(self.model_updater.sync_model(hotkey))
                 
                 # Ensure we eval the new model on the next loop.
-                if updated:
-                    metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(
-                        hotkey
-                    )
-                    if metadata is not None and self.is_model_old_enough(metadata):
-                        bt.logging.warning(
-                            f"Updated model for UID={next_uid}. Was new = {updated}"
-                        )
-                        with self.pending_uids_to_eval_lock:
-                            self.pending_uids_to_eval[metadata.id.competition_id].add(
-                                next_uid
-                            )
-                            bt.logging.debug(
-                                f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop."
-                            )
+                metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+                if metadata is not None and self.is_model_old_enough(metadata):
+                    bt.logging.warning(f"Updated model for UID={next_uid}. Was new = {updated}")
+                    if updated:
+                        with self.updated_uids_to_eval_lock:
+                            self.updated_uids_to_eval[metadata.id.competition_id].add(next_uid)
+                            bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
                     else:
-                        bt.logging.warning(
-                            f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}"
-                        )
+                        with self.pending_uids_to_eval_lock:
+                            self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
+                else:
+                    bt.logging.warning(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
 
             except Exception as e:
                 bt.logging.error(
@@ -646,10 +662,31 @@ class Validator:
 
         # Add uids with newly updated models to the upcoming batch of evaluations.
         with self.pending_uids_to_eval_lock:
-            self.uids_to_eval[competition_parameters.competition_id].update(
-                self.pending_uids_to_eval[competition_parameters.competition_id]
-            )
-            self.pending_uids_to_eval[competition_parameters.competition_id].clear()
+            # Get the current UIDs to evaluate
+            current_uids = self.uids_to_eval[competition_parameters.competition_id]
+            
+            with self.updated_uids_to_eval_lock:
+                if len(current_uids) < self.config.sample_total_models:
+                    updated_uids = list(self.updated_uids_to_eval[competition_parameters.competition_id])
+                    selected_updated_uids = set(random.sample(
+                        updated_uids,
+                        min(self.config.sample_updated_models, len(updated_uids))
+                    ))
+                    current_uids |= selected_updated_uids
+                    self.updated_uids_to_eval[competition_parameters.competition_id] -= selected_updated_uids
+
+            with self.pending_uids_to_eval_lock:
+                if len(current_uids) < self.config.sample_total_models:
+                    pending_uids = list(self.pending_uids_to_eval[competition_parameters.competition_id])
+                    selected_pending_uids = set(random.sample(
+                        pending_uids,
+                        min(self.config.sample_total_models - len(current_uids), len(pending_uids))
+                    ))
+                    current_uids |= selected_pending_uids
+                    self.pending_uids_to_eval[competition_parameters.competition_id] -= selected_pending_uids
+
+            # Update `uids_to_eval` with the final set of UIDs
+            self.uids_to_eval[competition_parameters.competition_id] = current_uids
 
         # Pull relevant uids for step. If they aren't found in the model tracker on eval they will be skipped.
         uids = list(self.uids_to_eval[competition_parameters.competition_id])
@@ -745,9 +782,11 @@ class Validator:
                     try:
                         # Update the block this uid last updated their model.
                         uid_to_block[uid_i] = model_i_metadata.block
+                        hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
                         score = get_model_score(
-                            model_i_metadata.id.namespace + "/" + model_i_metadata.id.name,
+                            hf_repo_id,
                             mini_batch=eval_data,
+                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id)
                         )
                         bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:
@@ -806,9 +845,9 @@ class Validator:
         )
         self.weights = self.weights.nan_to_num(0.0)
 
-        # Filter based on win rate removing all by the sample_min best models for evaluation.
+        # Filter based on win rate removing all but the sample_top_models best models for evaluation.
         self.uids_to_eval[competition_parameters.competition_id] = set(
-            sorted(win_rate, key=win_rate.get, reverse=True)[: self.config.sample_min]
+            sorted(win_rate, key=win_rate.get, reverse=True)[: self.config.sample_top_models]
         )
 
         # Log the performance of the eval loop.
@@ -923,7 +962,7 @@ class Validator:
                 self.epoch_step += 1
 
                 # Check if we should start a new wandb run.
-                if not self.config.wandb.off and not self.config.offline:
+                if not self.config.wandb.off and not self.config.offline and self.wandb_run_start != None:
                     if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
                         days=1
                     ):

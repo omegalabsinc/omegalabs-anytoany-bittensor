@@ -26,7 +26,6 @@ def check_config(ckpt_dir):
 def get_required_files(epoch: int):
     return [
         MODEL_FILE_PT.format(epoch=epoch),
-        ADAPTER_FILE_PT.format(epoch=epoch),
         CONFIG_FILE,
     ]
 
