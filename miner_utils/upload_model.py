@@ -136,7 +136,7 @@ async def main(config: bt.config):
         namespace=repo_namespace,
         name=repo_name,
         epoch=config.epoch, 
-        hash=regenerate_hash(repo_namespace, repo_name, config.epoch, config.competition_id), 
+        hash=regenerate_hash(repo_namespace, repo_name, config.epoch, config.competition_id),
         commit=model_id_with_commit.commit,
         competition_id=config.competition_id,
     )
