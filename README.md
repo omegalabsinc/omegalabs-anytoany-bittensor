@@ -117,6 +117,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 - Python 3.11+ with pip
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
 - At least 40 GB of CPU RAM
+- At least 300 GB of free storage space
 - If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
 - Install libatlas-base-dev: `apt install libatlas-base-dev`
 
