@@ -164,7 +164,7 @@ class Validator:
         parser.add_argument(
             "--cached_models",
             type=int,
-            default=20,
+            default=10,
             help="Number of model repos to cache on disk.",
         )
         parser.add_argument(
