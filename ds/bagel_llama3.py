@@ -14,14 +14,18 @@ import numpy as np
 turn_re = re.compile(r"<\|start_header_id\|>(\w+)<\|end_header_id\|>(.*)")
 
 class BagelLlama3Dataset(IterableDataset):
-    def __init__(self, parquet_path, tokenizer, train_on_input=False, max_seq_len=512, world_size=1, rank=0, **kwargs):
+    def __init__(self, parquet_path, tokenizer, train_on_input=False, len_proportion=0.9, max_seq_len=512, world_size=1, rank=0, **kwargs):
         self._data = load_dataset("parquet", data_files={"train": parquet_path})["train"]
         self._tokenizer = tokenizer
         self.train_on_input = train_on_input
         self.max_seq_len = max_seq_len
         self._world_size = world_size
         self._index = self._rank = rank
-        self._len = len(self._data) // self._world_size
+        self._outer_index = 0
+        # we need len_proportion because this dataset has samples we want to reject
+        # in a distributed setting this causes end-epoch deadlock due to different number of samples
+        # per process -> solve by finishing the epoch on a deterministic but reduced number of samples
+        self._len = int(len_proportion * len(self._data)) // self._world_size
 
     def __len__(self):
         return self._len
@@ -30,12 +34,14 @@ class BagelLlama3Dataset(IterableDataset):
         return self
 
     def __next__(self):
-        if self._index // self._world_size >= self._len:
-            self._index = self._rank
+        if self._outer_index >= self._len:
             raise StopIteration()
+
         sample = self._prepare_sample(self._data[self._index])
         self._index += self._world_size
-        if not sample:
+        if sample:
+            self._outer_index += 1 # only increment when we actually return a sample
+        else:
             sample = next(self)
         return sample
 
