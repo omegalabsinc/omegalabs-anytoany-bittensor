@@ -53,6 +53,7 @@ top_k: 300
 # Dataset and Sampler
 dataset:
   _component_: ds.EvenBatcher
+  buffer_size: 36
   dataset:
     _component_: ds.RoundRobinDataset
     datasets:

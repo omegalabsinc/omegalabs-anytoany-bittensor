@@ -126,6 +126,7 @@ ds/vision_flan/%:
 
 bagel: ds/bagel/bagel-input-output-v1.0.parquet
 ds/bagel/bagel-%-v1.0.parquet:
+	mkdir -p ds/bagel
 	wget https://huggingface.co/datasets/jondurbin/bagel-llama-3-v1.0/resolve/main/bagel-$*-v1.0.parquet?download=true -O $@
 
 download-base-model:
