@@ -48,7 +48,14 @@ from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
 from utilities.temp_dir_cache import TempDirCache
-from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE, cleanup_gpu_memory, log_gpu_memory
+from neurons.model_scoring import (
+    get_model_score,
+    pull_latest_omega_dataset,
+    MIN_AGE,
+    cleanup_gpu_memory,
+    log_gpu_memory,
+    get_gpu_memory
+)
 
 import math
 import torch
@@ -61,7 +68,7 @@ import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
-
+GPU_MEM_GB_REQD = 39
 
 def iswin(score_i, score_j, block_i, block_j):
     """
@@ -280,6 +287,13 @@ class Validator:
 
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
+
+        # early exit if GPU memory insufficient
+        total_gb, used_gb, avail_gb = get_gpu_memory()
+        if avail_gb < GPU_MEM_GB_REQD:
+            m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
+            bt.logging.error(m)
+            raise RuntimeError(m)
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
@@ -592,6 +606,7 @@ class Validator:
             # Update self.metagraph
             self.metagraph = bt.subtensor(endpoint).metagraph(self.config.netuid)
             self.metagraph.save()
+            bt.logging.info(f"Metagraph synced and saved")
 
         process = multiprocessing.Process(
             target=sync_metagraph, args=(self.subtensor.chain_endpoint,)
@@ -654,10 +669,10 @@ class Validator:
         7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
         """
         cleanup_gpu_memory()
-        log_gpu_memory()
+        log_gpu_memory('at start of run_step')
 
         # Update self.metagraph
-        await self.try_sync_metagraph(ttl=60)
+        await self.try_sync_metagraph(ttl=60 * 5)
         competition_parameters = constants.COMPETITION_SCHEDULE[
             self.global_step % len(constants.COMPETITION_SCHEDULE)
         ]
@@ -763,7 +778,7 @@ class Validator:
         bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
         eval_data = pull_latest_omega_dataset()
-        log_gpu_memory()
+        log_gpu_memory('after pulling dataset')
         if eval_data is None:
             bt.logging.warning(
                 f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
@@ -808,7 +823,7 @@ class Validator:
                     f"Unable to load the model for {uid_i} (perhaps a duplicate?). Setting loss to 0."
                 )
             if not score:
-                bt.logging.error(f"Failed to get score for {model_i_metadata}")
+                bt.logging.error(f"Failed to get score for uid: {uid_i}: {model_i_metadata}")
                 score = 0
 
             scores_per_uid[uid_i] = score
