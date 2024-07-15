@@ -48,7 +48,14 @@ from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
 from utilities.temp_dir_cache import TempDirCache
-from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE
+from neurons.model_scoring import (
+    get_model_score,
+    pull_latest_omega_dataset,
+    MIN_AGE,
+    cleanup_gpu_memory,
+    log_gpu_memory,
+    get_gpu_memory
+)
 
 import math
 import torch
@@ -61,7 +68,7 @@ import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
-
+GPU_MEM_GB_REQD = 39
 
 def iswin(score_i, score_j, block_i, block_j):
     """
@@ -281,6 +288,13 @@ class Validator:
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
 
+        # early exit if GPU memory insufficient
+        total_gb, used_gb, avail_gb = get_gpu_memory()
+        if avail_gb < GPU_MEM_GB_REQD:
+            m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
+            bt.logging.error(m)
+            raise RuntimeError(m)
+
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
         self.subtensor = bt.subtensor(config=self.config)
@@ -375,7 +389,7 @@ class Validator:
             self.weights.copy_(self.metagraph.C)
 
             for competition in constants.COMPETITION_SCHEDULE:
-                bt.logging.warning(
+                bt.logging.debug(
                     f"Building consensus state for competition {competition.competition_id}"
                 )
                 
@@ -445,7 +459,7 @@ class Validator:
         if self.config.auto_update:
             bt.logging.info("Auto update enabled.")
         else:
-            bt.logging.info("Auto update disabled.")
+            bt.logging.warning("Auto update disabled.")
 
     def __del__(self):
         if hasattr(self, "stop_event"):
@@ -496,13 +510,13 @@ class Validator:
                     time_to_sleep = (
                         dt.timedelta(minutes=update_delay_minutes) - time_diff
                     ).total_seconds()
-                    bt.logging.info(
+                    bt.logging.debug(
                         f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
                     )
                     time.sleep(time_to_sleep)
 
                 uid_last_checked[next_uid] = dt.datetime.now()
-                bt.logging.info(f"Updating model for UID={next_uid}")
+                bt.logging.debug(f"Updating model for UID={next_uid}")
 
                 # Get their hotkey from the metagraph.
                 hotkey = self.metagraph.hotkeys[next_uid]
@@ -513,7 +527,7 @@ class Validator:
                 # Ensure we eval the new model on the next loop.
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
-                    bt.logging.warning(f"Updated model for UID={next_uid}. Was new = {updated}")
+                    bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
                     if updated:
                         with self.updated_uids_to_eval_lock:
                             self.updated_uids_to_eval[metadata.id.competition_id].add(next_uid)
@@ -522,7 +536,7 @@ class Validator:
                         with self.pending_uids_to_eval_lock:
                             self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
                 else:
-                    bt.logging.warning(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
+                    bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
 
             except Exception as e:
                 bt.logging.error(
@@ -538,7 +552,7 @@ class Validator:
                 old_models = self.model_tracker.get_and_clear_old_models()
 
                 if len(old_models) > 0:
-                    bt.logging.info("Starting cleanup of stale models. Removing {}...".format(len(old_models)))
+                    bt.logging.debug("Starting cleanup of stale models. Removing {}...".format(len(old_models)))
 
                 for hotkey, model_metadata in old_models:
                     local_path = self.local_store.get_path(hotkey)
@@ -546,7 +560,7 @@ class Validator:
                     shutil.rmtree(model_dir, ignore_errors=True)
 
                 if len(old_models) > 0:
-                    bt.logging.info("Starting cleanup of stale models. Removing {}... Done!".format(len(old_models)))
+                    bt.logging.debug("Starting cleanup of stale models. Removing {}... Done!".format(len(old_models)))
 
             except Exception as e:
                 bt.logging.error(f"Error in clean loop: {e}")
@@ -592,6 +606,7 @@ class Validator:
             # Update self.metagraph
             self.metagraph = bt.subtensor(endpoint).metagraph(self.config.netuid)
             self.metagraph.save()
+            bt.logging.info(f"Metagraph synced and saved")
 
         process = multiprocessing.Process(
             target=sync_metagraph, args=(self.subtensor.chain_endpoint,)
@@ -613,9 +628,9 @@ class Validator:
             await self.run_step()
 
         try:
-            bt.logging.warning("Running step.")
+            bt.logging.info("Running step.")
             await asyncio.wait_for(_try_run_step(), ttl)
-            bt.logging.warning("Finished running step.")
+            bt.logging.info("Finished running step.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
@@ -653,9 +668,11 @@ class Validator:
         6. Implements a blacklist mechanism to remove underperforming models from the evaluation set.
         7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
         """
+        cleanup_gpu_memory()
+        log_gpu_memory('at start of run_step')
 
         # Update self.metagraph
-        await self.try_sync_metagraph(ttl=60)
+        await self.try_sync_metagraph(ttl=60 * 5)
         competition_parameters = constants.COMPETITION_SCHEDULE[
             self.global_step % len(constants.COMPETITION_SCHEDULE)
         ]
@@ -738,7 +755,7 @@ class Validator:
                         and model_i_metadata.id.hash == other_metadata.id.hash
                     ):
                         if model_i_metadata.block < other_metadata.block:
-                            bt.logging.error(
+                            bt.logging.info(
                                 f"Perferring duplicate of {other_uid} with {uid_i} since it is older"
                             )
                             # Release the other model since it is not in use.
@@ -748,7 +765,7 @@ class Validator:
                                 None,
                             )
                         else:
-                            bt.logging.error(
+                            bt.logging.info(
                                 f"Perferring duplicate of {uid_i} with {other_uid} since it is newer"
                             )
                             # Release own model since it is not in use.
@@ -761,6 +778,7 @@ class Validator:
         bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
         eval_data = pull_latest_omega_dataset()
+        log_gpu_memory('after pulling dataset')
         if eval_data is None:
             bt.logging.warning(
                 f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
@@ -805,12 +823,12 @@ class Validator:
                     f"Unable to load the model for {uid_i} (perhaps a duplicate?). Setting loss to 0."
                 )
             if not score:
-                bt.logging.error(f"Failed to get score for {model_i_metadata}")
+                bt.logging.error(f"Failed to get score for uid: {uid_i}: {model_i_metadata}")
                 score = 0
 
             scores_per_uid[uid_i] = score
 
-            bt.logging.warning(
+            bt.logging.debug(
                 f"Computed model score for uid: {uid_i}: {score}"
             )
             bt.logging.debug(f"Computed model losses for uid: {uid_i}: {score}")
@@ -941,7 +959,7 @@ class Validator:
         console.print(table)
 
         # Sink step log.
-        bt.logging.warning(f"Step results: {step_log}")
+        bt.logging.info(f"Step results: {step_log}")
 
     async def run(self):
         while True:

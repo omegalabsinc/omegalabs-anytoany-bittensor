@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 import time
 from typing import List, Optional
 from pathlib import Path
+import subprocess
 
 import torch
 import ulid
@@ -40,7 +41,7 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
     ][:MAX_FILES]
     if len(recent_files) == 0:
         return None
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(dir='./data_cache') as temp_dir:
         omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
     return omega_dataset
@@ -73,6 +74,23 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir) -> InferenceRecipe:
     return inference_recipe, train_cfg
 
 
+def get_gpu_memory():
+    # system-level
+    output = subprocess.check_output(['nvidia-smi', '--query-gpu=memory.total,memory.used', '--format=csv,nounits,noheader'])
+    total_gb, used_gb = map(lambda s: int(s) / 1e3, output.decode('utf-8').split(','))
+    return total_gb, used_gb, total_gb - used_gb
+
+def log_gpu_memory(msg=''):
+    # process-level
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    bt.logging.info(f"GPU-MEM {msg} Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
+
+def cleanup_gpu_memory():
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
 def load_and_transform_text(text, device):
     if text is None:
         return None
@@ -87,8 +105,10 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
 
 
 def get_model_score(hf_repo_id, mini_batch, local_dir):
+    cleanup_gpu_memory()
     inference_recipe, config = load_ckpt_from_hf(hf_repo_id, local_dir)
     bt.logging.info(f"Scoring {hf_repo_id}...")
+    log_gpu_memory('after model load')
     batch_dim = config.batch_size
     similarities = []
 
@@ -113,6 +133,8 @@ def get_model_score(hf_repo_id, mini_batch, local_dir):
 
     mean_similarity = torch.tensor(similarities).mean().item()
     bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_similarity:0.5f}")
+    cleanup_gpu_memory()
+    log_gpu_memory('after model clean-up')
     return mean_similarity
 
 
