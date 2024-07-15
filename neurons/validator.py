@@ -16,9 +16,12 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import os
+# Set USE_TORCH=1 environment variable to use torch instead of numpy
+os.environ["USE_TORCH"] = "1"
+
 from collections import defaultdict
 import datetime as dt
-import os
 import math
 import time
 import torch
@@ -56,8 +59,6 @@ import typing
 import constants
 import bittensor as bt
 import wandb
-
-import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
