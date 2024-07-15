@@ -48,7 +48,7 @@ from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
 from utilities.temp_dir_cache import TempDirCache
-from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE
+from neurons.model_scoring import get_model_score, pull_latest_omega_dataset, MIN_AGE, cleanup_gpu_memory, log_gpu_memory
 
 import math
 import torch
@@ -653,6 +653,8 @@ class Validator:
         6. Implements a blacklist mechanism to remove underperforming models from the evaluation set.
         7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
         """
+        cleanup_gpu_memory()
+        log_gpu_memory()
 
         # Update self.metagraph
         await self.try_sync_metagraph(ttl=60)
@@ -761,6 +763,7 @@ class Validator:
         bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
         eval_data = pull_latest_omega_dataset()
+        log_gpu_memory()
         if eval_data is None:
             bt.logging.warning(
                 f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."

@@ -72,6 +72,15 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir) -> InferenceRecipe:
     inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg
 
+def log_gpu_memory():
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    bt.logging.info(f"GPU-MEM Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
+
+def cleanup_gpu_memory():
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
 
 def load_and_transform_text(text, device):
     if text is None:
@@ -89,6 +98,7 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
 def get_model_score(hf_repo_id, mini_batch, local_dir):
     inference_recipe, config = load_ckpt_from_hf(hf_repo_id, local_dir)
     bt.logging.info(f"Scoring {hf_repo_id}...")
+    log_gpu_memory()
     batch_dim = config.batch_size
     similarities = []
 
@@ -113,6 +123,9 @@ def get_model_score(hf_repo_id, mini_batch, local_dir):
 
     mean_similarity = torch.tensor(similarities).mean().item()
     bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_similarity:0.5f}")
+    log_gpu_memory()
+    cleanup_gpu_memory()
+    log_gpu_memory()
     return mean_similarity
 
 
