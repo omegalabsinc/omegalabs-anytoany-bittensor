@@ -40,7 +40,7 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
     ][:MAX_FILES]
     if len(recent_files) == 0:
         return None
-    with TemporaryDirectory() as temp_dir:
+    with TemporaryDirectory(dir='./data_cache') as temp_dir:
         omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
     return omega_dataset
