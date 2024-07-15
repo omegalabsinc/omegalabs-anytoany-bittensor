@@ -6,6 +6,8 @@ sh:
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
+		-e TQDM_DISABLE=True \
+		-e USE_TORCH=1 \
 		a2a
 
 sh-headless:
@@ -35,6 +37,7 @@ validator: a2a
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
 		-e TQDM_DISABLE=True \
+		-e USE_TORCH=1 \
 		--env-file vali.env \
 		--name omega-a2a-validator \
 		a2a \
@@ -47,6 +50,7 @@ manual-validator: a2a
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
 		-e TQDM_DISABLE=True \
+		-e USE_TORCH=1 \
 		--env-file .env \
 		--name omega-a2a-validator \
 		a2a \
