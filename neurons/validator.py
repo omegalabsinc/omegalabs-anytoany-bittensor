@@ -288,12 +288,15 @@ class Validator:
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
 
-        # early exit if GPU memory insufficient
-        total_gb, used_gb, avail_gb = get_gpu_memory()
-        if avail_gb < GPU_MEM_GB_REQD:
-            m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
-            bt.logging.error(m)
-            raise RuntimeError(m)
+        try:
+            # early exit if GPU memory insufficient
+            total_gb, used_gb, avail_gb = get_gpu_memory()
+            if avail_gb < GPU_MEM_GB_REQD:
+                m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
+                bt.logging.error(m)
+                raise RuntimeError(m)
+        except Exception as e:
+            bt.logging.error(f"Failed to get GPU memory: {e}")
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
