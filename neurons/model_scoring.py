@@ -106,6 +106,7 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
 
 def get_model_score(hf_repo_id, mini_batch, local_dir):
     cleanup_gpu_memory()
+    log_gpu_memory('before model load')
     inference_recipe, config = load_ckpt_from_hf(hf_repo_id, local_dir)
     bt.logging.info(f"Scoring {hf_repo_id}...")
     log_gpu_memory('after model load')
