@@ -51,6 +51,12 @@ class ChainModelMetadataStore(ModelMetadataStore):
 
         if not metadata:
             return None
+        
+        if isinstance(metadata, str) and metadata == "BrokenPipeError":
+            bt.logging.debug("BrokenPipeError occurred while retrieving metadata, attempting re-initialization of subtensor.")
+            self.subtensor = bt.subtensor(config=self.config)
+            bt.logging.debug("Subtensor re-initialized. Returning None to continue.")
+            return None
 
         commitment = metadata["info"]["fields"][0]
         hex_data = commitment[list(commitment.keys())[0]][2:]

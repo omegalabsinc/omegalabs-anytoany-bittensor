@@ -92,6 +92,8 @@ def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
     result = queue.get(block=False)
 
     # If we put an exception on the queue then raise instead of returning.
+    if isinstance(result, BrokenPipeError):
+        return "BrokenPipeError"
     if isinstance(result, Exception):
         raise result
     if isinstance(result, BaseException):
