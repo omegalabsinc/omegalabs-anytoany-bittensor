@@ -414,7 +414,8 @@ class Validator:
 
                 self.all_uids[competition.competition_id] = set(consensus)
                 # Get the sample_total_models best models for for first competition
-                self.uids_to_eval[competition.competition_id] = set(consensus[: self.config.sample_total_models])
+                consensus = consensus[: self.config.sample_total_models]
+                self.uids_to_eval[competition.competition_id] = set(consensus)
                 self.updated_uids_to_eval[competition.competition_id] = set()
                 self.pending_uids_to_eval[competition.competition_id] = set()
 
