@@ -54,7 +54,7 @@ class ChainModelMetadataStore(ModelMetadataStore):
         
         if isinstance(metadata, str) and metadata == "BrokenPipeError":
             bt.logging.debug("BrokenPipeError occurred while retrieving metadata, attempting re-initialization of subtensor.")
-            self.subtensor = bt.subtensor(config=self.config)
+            self.subtensor = bt.subtensor(config=self.subtensor.config)
             bt.logging.debug("Subtensor re-initialized. Returning None to continue.")
             return None
 
