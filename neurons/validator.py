@@ -715,7 +715,7 @@ class Validator:
 
             # Fallback mechanism to ensure `current_uids` is filled up to `sample_total_models`
             if len(current_uids) < self.config.sample_total_models:
-                all_uids = list(self.all_uids[competition_parameters.competition_id])
+                all_uids = self.all_uids[competition_parameters.competition_id]
                 remaining_needed = self.config.sample_total_models - len(current_uids)
                 # grab random sample of uids not already in current_uids
                 additional_uids = set(random.sample(
