@@ -153,7 +153,7 @@ class Validator:
         parser.add_argument(
             "--sample_total_models",
             type=int,
-            default=6,
+            default=8,
             help="Number of uids to eval each step.",
         )
         parser.add_argument(
@@ -330,10 +330,12 @@ class Validator:
         self.epoch_step = 0
         self.global_step = 0
         self.last_epoch = self.metagraph.block.item()
-
+        
         self.uids_to_eval: typing.Dict[str, typing.Set] = {}
 
         # Create a set of newly added uids that should be evaluated on the next loop.
+        self.all_uids: typing.Dict[str, typing.Set] = {}
+        self.all_uids_lock = threading.RLock()
         self.updated_uids_to_eval_lock = threading.RLock()
         self.updated_uids_to_eval: typing.Dict[str, typing.Set] = {}
         self.pending_uids_to_eval_lock = threading.RLock()
@@ -396,7 +398,7 @@ class Validator:
                     f"Building consensus state for competition {competition.competition_id}"
                 )
                 
-                # Get the sample_total_models best models for for first competition
+                # Get all models for initial storage and first competition
                 consensus = [
                     x[0]
                     for x in sorted(
@@ -407,9 +409,12 @@ class Validator:
                         ],
                         key=lambda x: x[1],
                         reverse=True,
-                    )[: self.config.sample_total_models]
+                    )
                 ]
 
+                self.all_uids[competition.competition_id] = set(consensus)
+                # Get the sample_total_models best models for for first competition
+                consensus = consensus[: self.config.sample_total_models]
                 self.uids_to_eval[competition.competition_id] = set(consensus)
                 self.updated_uids_to_eval[competition.competition_id] = set()
                 self.pending_uids_to_eval[competition.competition_id] = set()
@@ -530,6 +535,9 @@ class Validator:
                 # Ensure we eval the new model on the next loop.
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
+                    with self.all_uids_lock:
+                        self.all_uids[metadata.id.competition_id].add(next_uid)
+                    
                     bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
                     if updated:
                         with self.updated_uids_to_eval_lock:
@@ -704,6 +712,17 @@ class Validator:
                     ))
                     current_uids |= selected_pending_uids
                     self.pending_uids_to_eval[competition_parameters.competition_id] -= selected_pending_uids
+
+            # Fallback mechanism to ensure `current_uids` is filled up to `sample_total_models`
+            if len(current_uids) < self.config.sample_total_models:
+                all_uids = self.all_uids[competition_parameters.competition_id]
+                remaining_needed = self.config.sample_total_models - len(current_uids)
+                # grab random sample of uids not already in current_uids
+                additional_uids = set(random.sample(
+                    all_uids - current_uids,
+                    min(remaining_needed, len(all_uids - current_uids))
+                ))
+                current_uids |= additional_uids
 
             # Update `uids_to_eval` with the final set of UIDs
             self.uids_to_eval[competition_parameters.competition_id] = current_uids
