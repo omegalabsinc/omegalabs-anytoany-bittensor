@@ -181,6 +181,12 @@ class Validator:
             help="Does not launch a wandb run, does not set weights, does not check that your key is registered.",
         )
         parser.add_argument(
+            "--set_weights_delay_minutes",
+            type=int,
+            default=20,
+            help="Period between attempting to set weights",
+        )
+        parser.add_argument(
             "--model_dir",
             default=os.path.join(constants.ROOT_DIR, "model-store/"),
             help="Where to store downloaded models",
@@ -458,6 +464,15 @@ class Validator:
         )
         self.clean_thread.start()
 
+        # == Initialize the weight setting thread ==
+        if not self.config.dont_set_weights and not self.config.offline:
+            self.weight_thread = threading.Thread(
+                target=self.try_set_weights,
+                args=(300,self.config.set_weights_delay_minutes,),
+                daemon=True,
+            )
+            self.weight_thread.start()
+
         self.last_update_check = dt.datetime.now()
         self.update_check_interval = 1800  # 30 minutes
         if self.config.auto_update:
@@ -470,6 +485,8 @@ class Validator:
             self.stop_event.set()
             self.update_thread.join()
             self.clean_thread.join()
+            if not self.config.dont_set_weights and not self.config.offline:
+                self.weight_thread.join()
 
     def is_model_old_enough(self, model_metadata: ModelMetadata):
         """
@@ -620,7 +637,7 @@ class Validator:
         )
         return new_weights
 
-    async def try_set_weights(self, ttl: int):
+    async def try_set_weights(self, ttl: int, set_weights_delay_minutes: int):
         async def _try_set_weights():
             try:
                 # Fetch latest metagraph
@@ -653,12 +670,20 @@ class Validator:
             console = Console()
             console.print(table)
 
-        try:
-            bt.logging.debug("Setting weights.")
-            await asyncio.wait_for(_try_set_weights(), ttl)
-            bt.logging.debug("Finished setting weights.")
-        except asyncio.TimeoutError:
-            bt.logging.error(f"Failed to set weights after {ttl} seconds")
+        # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
+        if dt.datetime.now() - self.set_weights_last >= dt.timedelta(minutes=set_weights_delay_minutes):
+            self.set_weights_last = dt.datetime.now()
+            try:
+                bt.logging.debug("Setting weights.")
+                await asyncio.wait_for(_try_set_weights(), ttl)
+                bt.logging.debug("Finished setting weights.")
+            except asyncio.TimeoutError:
+                bt.logging.error(f"Failed to set weights after {ttl} seconds")
+        else:
+            bt.logging.debug(f"Skipping setting weights. Last set at {self.set_weights_last}")
+            # sleep for 1 minute before checking again
+            time.sleep(60)
+
 
     async def try_sync_metagraph(self, ttl: int):
         def sync_metagraph(endpoint):
@@ -1044,8 +1069,8 @@ class Validator:
                     )
                     self.global_step += 1
 
-                if not self.config.dont_set_weights and not self.config.offline:
-                    await self.try_set_weights(ttl=300)
+                #if not self.config.dont_set_weights and not self.config.offline:
+                    #await self.try_set_weights(ttl=300)
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
 
