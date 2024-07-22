@@ -641,7 +641,7 @@ class Validator:
                 weights_report = {"weights": {}}
                 for uid, score in enumerate(self.weights):
                     weights_report["weights"][uid] = score
-                bt.logging.debug("weights_report", weights=weights_report)
+                bt.logging.debug(weights_report)
             except Exception as e:
                 bt.logging.error(f"failed to set weights {e}")
             ws, ui = self.weights.topk(len(self.weights))
