@@ -46,6 +46,7 @@ from datasets import disable_caching
 import traceback
 import threading
 import multiprocessing
+import functools
 from rich.table import Table
 from rich.console import Console
 
@@ -680,7 +681,8 @@ class Validator:
                 self.set_weights_last = dt.datetime.now()
                 try:
                     bt.logging.debug("Setting weights.")
-                    utils.run_in_subprocess(_try_set_weights, ttl)
+                    partial = functools.partial(_try_set_weights)
+                    utils.run_in_subprocess(partial, ttl)
                     bt.logging.debug("Finished setting weights.")
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
