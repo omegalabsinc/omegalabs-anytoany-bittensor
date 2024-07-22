@@ -680,7 +680,7 @@ class Validator:
                 self.set_weights_last = dt.datetime.now()
                 try:
                     bt.logging.debug("Setting weights.")
-                    asyncio.run(_try_set_weights(), ttl)
+                    utils.run_in_subprocess(_try_set_weights, ttl)
                     bt.logging.debug("Finished setting weights.")
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
