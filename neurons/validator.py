@@ -465,11 +465,10 @@ class Validator:
         self.clean_thread.start()
 
         # == Initialize the weight setting thread ==
-        self.set_weights_last = dt.datetime.now()
         if not self.config.dont_set_weights and not self.config.offline:
             self.weight_thread = threading.Thread(
                 target=self.try_set_weights,
-                args=(300,self.config.set_weights_delay_minutes,),
+                args=(300),
                 daemon=True,
             )
             self.weight_thread.start()
@@ -638,7 +637,7 @@ class Validator:
         )
         return new_weights
 
-    def try_set_weights(self, ttl: int, set_weights_delay_minutes: int):
+    def try_set_weights(self, ttl: int):
         async def _try_set_weights():
             try:
                 # Fetch latest metagraph
@@ -673,8 +672,11 @@ class Validator:
 
         # Continually loop and set weights every `set_weights_delay_minutes` minutes.
         while not self.stop_event.is_set():
-            # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
-            if dt.datetime.now() - self.set_weights_last >= dt.timedelta(minutes=set_weights_delay_minutes):
+            current_time = dt.datetime.utcnow()
+            minutes = current_time.minute
+            
+            # Check if we're at a 20-minute mark for setting weights
+            if minutes % 20 == 0:
                 self.set_weights_last = dt.datetime.now()
                 try:
                     bt.logging.debug("Setting weights.")
@@ -683,7 +685,7 @@ class Validator:
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
             else:
-                bt.logging.debug(f"Skipping setting weights. Last set at {self.set_weights_last}")
+                bt.logging.debug(f"Skipping setting weights. Only set weights at 20-minute marks.")
                 # sleep for 1 minute before checking again
                 time.sleep(60)
 
