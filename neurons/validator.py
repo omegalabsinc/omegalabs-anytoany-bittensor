@@ -22,14 +22,19 @@ import os
 import math
 import time
 import torch
+import numpy as np
 import shutil
 from subprocess import Popen, PIPE
 import asyncio
 import argparse
 import typing
 import random
-
 import constants
+
+import bittensor as bt
+import wandb
+from scipy import optimize
+
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
@@ -56,15 +61,6 @@ from neurons.model_scoring import (
     log_gpu_memory,
     get_gpu_memory
 )
-
-import math
-import torch
-import typing
-import constants
-import bittensor as bt
-import wandb
-
-import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
@@ -581,9 +577,58 @@ class Validator:
 
         bt.logging.info("Exiting clean models loop.")
 
+    @staticmethod
+    def adjust_for_vtrust(weights: np.ndarray, consensus: np.ndarray, vtrust_min: float = 0.5):
+        """
+        Interpolate between the current weight and the normalized consensus weights so that the
+        vtrust does not fall below vturst_min, assuming the consensus does not change.
+        """
+        vtrust_loss_desired = 1 - vtrust_min
+
+        # If the predicted vtrust is already above vtrust_min, then just return the current weights.
+        orig_vtrust_loss = np.maximum(0.0, weights - consensus).sum()
+        if orig_vtrust_loss <= vtrust_loss_desired:
+            bt.logging.info("Weights already satisfy vtrust_min. {} >= {}.".format(1 - orig_vtrust_loss, vtrust_min))
+            return weights
+
+        # If maximum vtrust allowable by the current consensus is less that vtrust_min, then choose the smallest lambda
+        # that still maximizes the predicted vtrust. Otherwise, find lambda that achieves vtrust_min.
+        vtrust_loss_min = 1 - np.sum(consensus)
+        if vtrust_loss_min > vtrust_loss_desired:
+            bt.logging.info(
+                "Maximum possible vtrust with current consensus is less than vtrust_min. {} < {}.".format(
+                    1 - vtrust_loss_min, vtrust_min
+                )
+            )
+            vtrust_loss_desired = 1.05 * vtrust_loss_min
+
+        # We could solve this with a LP, but just do rootfinding with scipy.
+        consensus_normalized = consensus / np.sum(consensus)
+
+        def fn(lam: float):
+            new_weights = (1 - lam) * weights + lam * consensus_normalized
+            vtrust_loss = np.maximum(0.0, new_weights - consensus).sum()
+            return vtrust_loss - vtrust_loss_desired
+
+        sol = optimize.root_scalar(fn, bracket=[0, 1], method="brentq")
+        lam_opt = sol.root
+
+        new_weights = (1 - lam_opt) * weights + lam_opt * consensus_normalized
+        vtrust_pred = np.minimum(weights, consensus).sum()
+        bt.logging.info(
+            "Interpolated weights to satisfy vtrust_min. {} -> {}.".format(1 - orig_vtrust_loss, vtrust_pred)
+        )
+        return new_weights
+
     async def try_set_weights(self, ttl: int):
         async def _try_set_weights():
             try:
+                # Fetch latest metagraph
+                metagraph = self.subtensor.metagraph(self.config.netuid)
+                consensus = metagraph.C.cpu().numpy()
+                cpu_weights = self.weights.cpu().numpy()
+                adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
+                self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
                 self.subtensor.set_weights(
                     netuid=self.config.netuid,
