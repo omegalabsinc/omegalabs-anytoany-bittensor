@@ -671,19 +671,21 @@ class Validator:
             console = Console()
             console.print(table)
 
-        # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
-        if dt.datetime.now() - self.set_weights_last >= dt.timedelta(minutes=set_weights_delay_minutes):
-            self.set_weights_last = dt.datetime.now()
-            try:
-                bt.logging.debug("Setting weights.")
-                asyncio.run(_try_set_weights(), ttl)
-                bt.logging.debug("Finished setting weights.")
-            except asyncio.TimeoutError:
-                bt.logging.error(f"Failed to set weights after {ttl} seconds")
-        else:
-            bt.logging.debug(f"Skipping setting weights. Last set at {self.set_weights_last}")
-            # sleep for 1 minute before checking again
-            time.sleep(60)
+        # Continually loop and set weights every `set_weights_delay_minutes` minutes.
+        while not self.stop_event.is_set():
+            # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
+            if dt.datetime.now() - self.set_weights_last >= dt.timedelta(minutes=set_weights_delay_minutes):
+                self.set_weights_last = dt.datetime.now()
+                try:
+                    bt.logging.debug("Setting weights.")
+                    asyncio.run(_try_set_weights(), ttl)
+                    bt.logging.debug("Finished setting weights.")
+                except asyncio.TimeoutError:
+                    bt.logging.error(f"Failed to set weights after {ttl} seconds")
+            else:
+                bt.logging.debug(f"Skipping setting weights. Last set at {self.set_weights_last}")
+                # sleep for 1 minute before checking again
+                time.sleep(60)
 
 
     async def try_sync_metagraph(self, ttl: int):
