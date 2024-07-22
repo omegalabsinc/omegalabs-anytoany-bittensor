@@ -688,8 +688,9 @@ class Validator:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
             else:
                 bt.logging.debug(f"Skipping setting weights. Only set weights at 20-minute marks.")
-                # sleep for 1 minute before checking again
-                time.sleep(60)
+
+            # sleep for 1 minute before checking again
+            time.sleep(60)
 
 
     async def try_sync_metagraph(self, ttl: int):
