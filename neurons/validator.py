@@ -468,7 +468,7 @@ class Validator:
         if not self.config.dont_set_weights and not self.config.offline:
             self.weight_thread = threading.Thread(
                 target=self.try_set_weights,
-                args=(300),
+                args=(300,),
                 daemon=True,
             )
             self.weight_thread.start()
