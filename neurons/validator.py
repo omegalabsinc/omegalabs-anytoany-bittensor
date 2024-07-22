@@ -465,6 +465,7 @@ class Validator:
         self.clean_thread.start()
 
         # == Initialize the weight setting thread ==
+        self.set_weights_last = dt.datetime.now()
         if not self.config.dont_set_weights and not self.config.offline:
             self.weight_thread = threading.Thread(
                 target=self.try_set_weights,
@@ -637,7 +638,7 @@ class Validator:
         )
         return new_weights
 
-    async def try_set_weights(self, ttl: int, set_weights_delay_minutes: int):
+    def try_set_weights(self, ttl: int, set_weights_delay_minutes: int):
         async def _try_set_weights():
             try:
                 # Fetch latest metagraph
@@ -675,7 +676,7 @@ class Validator:
             self.set_weights_last = dt.datetime.now()
             try:
                 bt.logging.debug("Setting weights.")
-                await asyncio.wait_for(_try_set_weights(), ttl)
+                asyncio.run(_try_set_weights(), ttl)
                 bt.logging.debug("Finished setting weights.")
             except asyncio.TimeoutError:
                 bt.logging.error(f"Failed to set weights after {ttl} seconds")
