@@ -634,13 +634,16 @@ class Validator:
                     netuid=self.config.netuid,
                     wallet=self.wallet,
                     uids=self.metagraph.uids,
-                    weights=self.weights,
+                    weights=adjusted_weights,
                     wait_for_inclusion=False,
-                    wait_for_finalization=True,
                     version_key=constants.weights_version_key,
                 )
-            except:
-                pass
+                weights_report = {"weights": {}}
+                for uid, score in enumerate(self.weights):
+                    weights_report["weights"][uid] = score
+                bt.logging.debug("weights_report", weights=weights_report)
+            except Exception as e:
+                bt.logging.error(f"failed to set weights {e}")
             ws, ui = self.weights.topk(len(self.weights))
             table = Table(title="All Weights")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
