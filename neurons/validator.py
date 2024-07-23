@@ -687,6 +687,8 @@ class Validator:
                     bt.logging.debug("Setting weights.")
                     _try_set_weights()
                     bt.logging.debug("Finished setting weights.")
+                    if self.config.immediate:
+                        time.sleep(3600)
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
             else:
