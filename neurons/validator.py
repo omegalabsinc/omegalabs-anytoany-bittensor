@@ -178,7 +178,7 @@ class Validator:
         parser.add_argument(
             "--immediate",
             action="store_true",
-            help="Triggers setting weights immediately. NOT RECOMMENDED FOR PRODUCTION",
+            help="Triggers setting weights immediately. NOT RECOMMENDED FOR PRODUCTION. This is used internally by SN21 devs for faster testing.",
         )
         parser.add_argument(
             "--offline",
