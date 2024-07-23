@@ -178,7 +178,7 @@ class Validator:
         parser.add_argument(
             "--immediate",
             action="store_true",
-            help="Triggers run step immediately. NOT RECOMMENDED FOR PRODUCTION",
+            help="Triggers setting weights immediately. NOT RECOMMENDED FOR PRODUCTION",
         )
         parser.add_argument(
             "--offline",
