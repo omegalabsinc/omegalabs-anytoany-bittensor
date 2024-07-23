@@ -22,14 +22,19 @@ import os
 import math
 import time
 import torch
+import numpy as np
 import shutil
 from subprocess import Popen, PIPE
 import asyncio
 import argparse
 import typing
 import random
-
 import constants
+
+import bittensor as bt
+import wandb
+from scipy import optimize
+
 from model.data import ModelMetadata
 from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
@@ -56,15 +61,6 @@ from neurons.model_scoring import (
     log_gpu_memory,
     get_gpu_memory
 )
-
-import math
-import torch
-import typing
-import constants
-import bittensor as bt
-import wandb
-
-import os
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
@@ -178,6 +174,11 @@ class Validator:
             "--dont_set_weights",
             action="store_true",
             help="Validator does not set weights on the chain.",
+        )
+        parser.add_argument(
+            "--immediate",
+            action="store_true",
+            help="Triggers setting weights immediately. NOT RECOMMENDED FOR PRODUCTION. This is used internally by SN21 devs for faster testing.",
         )
         parser.add_argument(
             "--offline",
@@ -462,6 +463,15 @@ class Validator:
         )
         self.clean_thread.start()
 
+        # == Initialize the weight setting thread ==
+        if not self.config.dont_set_weights and not self.config.offline:
+            self.weight_thread = threading.Thread(
+                target=self.try_set_weights,
+                args=(300,),
+                daemon=True,
+            )
+            self.weight_thread.start()
+
         self.last_update_check = dt.datetime.now()
         self.update_check_interval = 1800  # 30 minutes
         if self.config.auto_update:
@@ -474,6 +484,8 @@ class Validator:
             self.stop_event.set()
             self.update_thread.join()
             self.clean_thread.join()
+            if not self.config.dont_set_weights and not self.config.offline:
+                self.weight_thread.join()
 
     def is_model_old_enough(self, model_metadata: ModelMetadata):
         """
@@ -581,21 +593,73 @@ class Validator:
 
         bt.logging.info("Exiting clean models loop.")
 
-    async def try_set_weights(self, ttl: int):
-        async def _try_set_weights():
+    @staticmethod
+    def adjust_for_vtrust(weights: np.ndarray, consensus: np.ndarray, vtrust_min: float = 0.5):
+        """
+        Interpolate between the current weight and the normalized consensus weights so that the
+        vtrust does not fall below vturst_min, assuming the consensus does not change.
+        """
+        vtrust_loss_desired = 1 - vtrust_min
+
+        # If the predicted vtrust is already above vtrust_min, then just return the current weights.
+        orig_vtrust_loss = np.maximum(0.0, weights - consensus).sum()
+        if orig_vtrust_loss <= vtrust_loss_desired:
+            bt.logging.info("Weights already satisfy vtrust_min. {} >= {}.".format(1 - orig_vtrust_loss, vtrust_min))
+            return weights
+
+        # If maximum vtrust allowable by the current consensus is less that vtrust_min, then choose the smallest lambda
+        # that still maximizes the predicted vtrust. Otherwise, find lambda that achieves vtrust_min.
+        vtrust_loss_min = 1 - np.sum(consensus)
+        if vtrust_loss_min > vtrust_loss_desired:
+            bt.logging.info(
+                "Maximum possible vtrust with current consensus is less than vtrust_min. {} < {}.".format(
+                    1 - vtrust_loss_min, vtrust_min
+                )
+            )
+            vtrust_loss_desired = 1.05 * vtrust_loss_min
+
+        # We could solve this with a LP, but just do rootfinding with scipy.
+        consensus_normalized = consensus / np.sum(consensus)
+
+        def fn(lam: float):
+            new_weights = (1 - lam) * weights + lam * consensus_normalized
+            vtrust_loss = np.maximum(0.0, new_weights - consensus).sum()
+            return vtrust_loss - vtrust_loss_desired
+
+        sol = optimize.root_scalar(fn, bracket=[0, 1], method="brentq")
+        lam_opt = sol.root
+
+        new_weights = (1 - lam_opt) * weights + lam_opt * consensus_normalized
+        vtrust_pred = np.minimum(weights, consensus).sum()
+        bt.logging.info(
+            "Interpolated weights to satisfy vtrust_min. {} -> {}.".format(1 - orig_vtrust_loss, vtrust_pred)
+        )
+        return new_weights
+
+    def try_set_weights(self, ttl: int):
+        def _try_set_weights():
             try:
+                # Fetch latest metagraph
+                metagraph = self.subtensor.metagraph(self.config.netuid)
+                consensus = metagraph.C.cpu().numpy()
+                cpu_weights = self.weights.cpu().numpy()
+                adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
+                self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
                 self.subtensor.set_weights(
                     netuid=self.config.netuid,
                     wallet=self.wallet,
                     uids=self.metagraph.uids,
-                    weights=self.weights,
+                    weights=adjusted_weights,
                     wait_for_inclusion=False,
-                    wait_for_finalization=True,
                     version_key=constants.weights_version_key,
                 )
-            except:
-                pass
+                weights_report = {"weights": {}}
+                for uid, score in enumerate(self.weights):
+                    weights_report["weights"][uid] = score
+                bt.logging.debug(weights_report)
+            except Exception as e:
+                bt.logging.error(f"failed to set weights {e}")
             ws, ui = self.weights.topk(len(self.weights))
             table = Table(title="All Weights")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
@@ -605,12 +669,27 @@ class Validator:
             console = Console()
             console.print(table)
 
-        try:
-            bt.logging.debug("Setting weights.")
-            await asyncio.wait_for(_try_set_weights(), ttl)
-            bt.logging.debug("Finished setting weights.")
-        except asyncio.TimeoutError:
-            bt.logging.error(f"Failed to set weights after {ttl} seconds")
+        # Continually loop and set weights at the 20-minute mark
+        while not self.stop_event.is_set():
+            current_time = dt.datetime.utcnow()
+            minutes = current_time.minute
+            
+            # Check if we're at a 20-minute mark for setting weights
+            if minutes % 20 == 0 or self.config.immediate:
+                try:
+                    bt.logging.debug("Setting weights.")
+                    _try_set_weights()
+                    bt.logging.debug("Finished setting weights.")
+                    if self.config.immediate:
+                        time.sleep(3600)
+                except asyncio.TimeoutError:
+                    bt.logging.error(f"Failed to set weights after {ttl} seconds")
+            else:
+                bt.logging.debug(f"Skipping setting weights. Only set weights at 20-minute marks.")
+
+            # sleep for 1 minute before checking again
+            time.sleep(60)
+
 
     async def try_sync_metagraph(self, ttl: int):
         def sync_metagraph(endpoint):
@@ -996,8 +1075,6 @@ class Validator:
                     )
                     self.global_step += 1
 
-                if not self.config.dont_set_weights and not self.config.offline:
-                    await self.try_set_weights(ttl=300)
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
 
