@@ -177,6 +177,11 @@ class Validator:
             help="Validator does not set weights on the chain.",
         )
         parser.add_argument(
+            "--immediate",
+            action="store_true",
+            help="Triggers run step immediately. NOT RECOMMENDED FOR PRODUCTION",
+        )
+        parser.add_argument(
             "--offline",
             action="store_true",
             help="Does not launch a wandb run, does not set weights, does not check that your key is registered.",
@@ -639,7 +644,7 @@ class Validator:
         return new_weights
 
     def try_set_weights(self, ttl: int):
-        async def _try_set_weights():
+        def _try_set_weights():
             try:
                 # Fetch latest metagraph
                 metagraph = self.subtensor.metagraph(self.config.netuid)
@@ -677,12 +682,10 @@ class Validator:
             minutes = current_time.minute
             
             # Check if we're at a 20-minute mark for setting weights
-            if minutes % 20 == 0:
-                self.set_weights_last = dt.datetime.now()
+            if minutes % 20 == 0 or self.config.immediate:
                 try:
                     bt.logging.debug("Setting weights.")
-                    partial = functools.partial(_try_set_weights)
-                    utils.run_in_subprocess(partial, ttl)
+                    _try_set_weights()
                     bt.logging.debug("Finished setting weights.")
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
