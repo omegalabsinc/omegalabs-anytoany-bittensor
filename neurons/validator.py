@@ -46,7 +46,6 @@ from datasets import disable_caching
 import traceback
 import threading
 import multiprocessing
-import functools
 from rich.table import Table
 from rich.console import Console
 
@@ -185,12 +184,6 @@ class Validator:
             "--offline",
             action="store_true",
             help="Does not launch a wandb run, does not set weights, does not check that your key is registered.",
-        )
-        parser.add_argument(
-            "--set_weights_delay_minutes",
-            type=int,
-            default=20,
-            help="Period between attempting to set weights",
         )
         parser.add_argument(
             "--model_dir",
@@ -676,7 +669,7 @@ class Validator:
             console = Console()
             console.print(table)
 
-        # Continually loop and set weights every `set_weights_delay_minutes` minutes.
+        # Continually loop and set weights at the 20-minute mark
         while not self.stop_event.is_set():
             current_time = dt.datetime.utcnow()
             minutes = current_time.minute
@@ -1082,8 +1075,6 @@ class Validator:
                     )
                     self.global_step += 1
 
-                #if not self.config.dont_set_weights and not self.config.offline:
-                    #await self.try_set_weights(ttl=300)
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
 
