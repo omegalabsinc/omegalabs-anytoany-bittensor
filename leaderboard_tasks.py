@@ -33,6 +33,16 @@ metadata_store = ChainModelMetadataStore(
     subtensor, NETUID, None
 )
 
+async def resync_metagraph():
+    """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
+    print("resync_metagraph()")
+    try:
+        # Sync the metagraph.
+        metagraph.sync(subtensor=subtensor)
+    # In case of unforeseen errors, log the error and continue operations.
+    except Exception as err:
+        print("Error during metagraph sync", str(err))
+
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
 
@@ -130,6 +140,8 @@ def get_uid_rank(metagraph, uids: typing.List[int] = None, uid_to_rank: int = No
     return None
 
 async def pull_and_cache_miner_info():
+    await resync_metagraph()
+
     uids = get_uids()
     
     model_info = []
@@ -149,8 +161,14 @@ async def pull_and_cache_miner_info():
             "rank": model_rank
         })
 
-    with open(JSON_FILE, "w") as f:
-        json.dump(model_info, f)
+    try:
+        with open(JSON_FILE, "w") as f:
+            json.dump(model_info, f)
+            f.flush()  # Ensure data is written to disk
+            os.fsync(f.fileno())  # Ensure data is written to disk
+        print("Leaderboard data written successfully to JSON file")
+    except Exception as e:
+        print(f"Error writing to {JSON_FILE}: {e}")
     
     await asyncio.sleep(1)
     return True
