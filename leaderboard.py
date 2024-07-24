@@ -216,7 +216,7 @@ async def main():
             model_names = list(models.keys())
 
             # Define the partial model name you're looking for
-            partial_model_name = "UID 31"
+            partial_model_name = ""
 
             # Find the index of the first model name that contains the partial name
             model_index = None
