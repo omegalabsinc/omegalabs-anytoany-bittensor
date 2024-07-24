@@ -3,6 +3,7 @@ from tempfile import TemporaryDirectory
 import time
 from typing import List, Optional
 import traceback
+from datetime import datetime, timedelta
 
 import torch
 import ulid
@@ -26,7 +27,7 @@ CONFIG_FILE = "training_config.yml"
 BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
 
 CACHE_DIR = ".checkpoints"
-
+CACHE_EXPIRY_HOURS = 24
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
@@ -70,6 +71,13 @@ def load_ckpt_from_hf(hf_repo_id: str) -> InferenceRecipe:
         inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg
 
+def is_file_outdated(file_path: str, expiry_hours: int) -> bool:
+    """Check if the file is older than the specified expiry time."""
+    if not os.path.exists(file_path):
+        return True
+    file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+    return datetime.now() - file_mod_time > timedelta(hours=expiry_hours)
+
 def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     hf_api = huggingface_hub.HfApi()
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
@@ -84,10 +92,15 @@ def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     config_path = os.path.join(repo_cache_dir, CONFIG_FILE)
     ckpt_path = os.path.join(repo_cache_dir, ckpt_files[0])
 
-    # Download files if they don't exist in the repository's cache directory
-    if not os.path.exists(config_path):
+    # Check if the files are outdated
+    if is_file_outdated(config_path, CACHE_EXPIRY_HOURS):
+        if os.path.exists(config_path):
+            os.remove(config_path)
         config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=repo_cache_dir)
-    if not os.path.exists(ckpt_path):
+
+    if is_file_outdated(ckpt_path, CACHE_EXPIRY_HOURS):
+        if os.path.exists(ckpt_path):
+            os.remove(ckpt_path)
         ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=repo_cache_dir)
 
     train_cfg = OmegaConf.load(config_path)
