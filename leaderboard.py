@@ -4,15 +4,25 @@ import asyncio
 import os
 import time
 import json
+import tempfile
 
 import streamlit as st
 import pandas as pd
 import threading
+from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+#from moviepy.editor import VideoFileClip, concatenate_videoclips
 
-from neurons.model_scoring import get_caption_from_model
+from neurons.model_scoring import get_caption_from_model, get_text_for_video_from_model
 
 JSON_FILE = "leaderboard.json"
 CACHE_FILE = "omega_dataset_examples.json"
+mm_question = """Intructions:
+              1) Extract from this document key facts.
+              2) Extract date of documents
+              3) Dont show names or surnames. refers as subject Mr X or Mrs X
+              4) Extract Postal Address
+              6) If the Language is not English , respond in English together with the document language
+            """
 
 class CountingLock:
     def __init__(self):
@@ -90,6 +100,25 @@ def seconds_to_mmss(seconds):
     minutes = seconds // 60
     seconds = seconds % 60
     return f"{minutes:02}:{seconds:02}"
+
+# Function to load the model from Hugging Face
+def load_model_from_hf(model_name: str):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+    return pipeline("text-generation", model=model, tokenizer=tokenizer)
+
+# Function to get chat response
+def get_chat_response(pipeline, prompt: str) -> str:
+    response = pipeline(prompt, max_length=300, num_return_sequences=1)
+    return response[0]['generated_text']
+
+#def stitch_videos(video_files):
+#    clips = [VideoFileClip(file.name) for file in video_files]
+#    final_clip = concatenate_videoclips(clips)
+#    
+#    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmpfile:
+#        final_clip.write_videofile(tmpfile.name, codec="libx264")
+#        return tmpfile.name
 
 async def main():
     st.set_page_config(
@@ -206,10 +235,67 @@ async def main():
     st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
     st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["Model Demos", "Leaderboard"])
+    tab1, tab2, tab3 = st.tabs(["MM Chat", "Model Demos", "Leaderboard"])
 
-    # Main column for model demo
+    # Main column for chat
     with tab1:
+        st.title("📝 OMEGA Multi-Modal Chat")
+
+        if "user_prompt_history" not in st.session_state:
+            st.session_state["user_prompt_history"] = []
+        if "chat_answers_history" not in st.session_state:
+            st.session_state["chat_answers_history"] = []
+        if "chat_history" not in st.session_state:
+            st.session_state["chat_history"] = []
+        if "initialized" not in st.session_state:
+            st.session_state["initialized"] = "False"
+
+        uploaded_files = st.file_uploader(
+            "Upload the file to start a conversation",
+            type=("mp4", "avi", "mov", "mpg", "mpeg", "wmv", "flv", "webm"),
+            accept_multiple_files=False,
+        )
+
+        content = []
+
+        #mm_chat_pipeline = load_model_from_hf("briggers/omega_a2a_test4")
+        prompt = st.chat_input("Enter your questions here", disabled=not input)
+        if uploaded_files:
+            if st.session_state["initialized"] == "False":
+                for uploaded_file in uploaded_files:
+                    #im_bytes = uploaded_file.read()
+                    #im_b64 = base64.b64encode(im_bytes).decode("utf8")
+                    #content.append(im_b64)
+                    response = get_text_for_video_from_model("briggers/omega_a2a_test4", uploaded_file)
+
+                #prompt1 = [f"""{mm_question} """] + content
+                #response = get_chat_response(mm_chat_pipeline, prompt1)
+                #response = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
+
+                st.session_state["chat_answers_history"].append(response)
+                st.session_state["user_prompt_history"].append(mm_question)
+                st.session_state["chat_history"].append((mm_question, response))
+                st.session_state["initialized"] = "True"
+
+            elif st.session_state["initialized"] == "True":
+                prompt = [f"""{prompt} """]
+                #response = get_chat_response(mm_chat_pipeline, prompt)
+                st.session_state["chat_answers_history"].append(response)
+                st.session_state["user_prompt_history"].append(prompt[0])
+                st.session_state["chat_history"].append((prompt[0], response))
+
+            if st.session_state["chat_answers_history"]:
+                for i, j in zip(
+                    st.session_state["chat_answers_history"],
+                    st.session_state["user_prompt_history"],
+                ):
+                    message1 = st.chat_message("user")
+                    message1.write(j)
+                    message2 = st.chat_message("assistant")
+                    message2.write(i)
+    
+    # Main column for model demo
+    with tab2:
         st.header("Model Demo")
         tcol1, tcol2 = st.columns([0.4, 0.6])
         with tcol1:

@@ -153,6 +153,17 @@ def get_caption_from_model(hf_repo_id, video_emb):
     
     return generated_caption
 
+def get_text_for_video_from_model(hf_repo_id, video_path):
+    inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
+    video_emb = inference_recipe.embed_only_video(video_path)
+    generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=video_emb)
+
+    # Unload model from GPU memory
+    #del inference_recipe
+    #torch.cuda.empty_cache()
+    
+    return generated_caption
+
 if __name__ == "__main__":
     hf_repo_id = "salmanshahid/omega_a2a_test"
     mini_batch = pull_latest_omega_dataset()

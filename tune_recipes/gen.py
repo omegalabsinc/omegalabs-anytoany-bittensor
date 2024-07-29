@@ -6,7 +6,7 @@
 import itertools
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, BinaryIO
 
 import torch
 from torch import nn
@@ -19,6 +19,7 @@ from torchtune.models import convert_weights
 from torchtune.data import Message
 
 from models.tokenizer import START_IMAGE, END_IMAGE, START_AUDIO, END_AUDIO, START_VIDEO, END_VIDEO
+from imagebind import data
 from imagebind.models.imagebind_model import ModalityType
 from diffusers import DiffusionPipeline
 
@@ -154,6 +155,14 @@ class InferenceRecipe:
                 }
             in_mm_embed = in_mm_embed or tok in self._mm_ids_start
         return context
+    
+    @torch.no_grad()
+    def embed_only_video(self, video_file: BinaryIO) -> List[float]:
+        video_filepaths = [video_file.name]
+        embeddings = self._embed_model({
+            ModalityType.VISION: data.load_and_transform_video_data(video_filepaths, self._device)
+        })
+        return embeddings[ModalityType.VISION]
 
     @torch.no_grad()
     def generate(self, cfg: DictConfig, video_ib_embed: List[float]):
