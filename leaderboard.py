@@ -263,9 +263,6 @@ async def main():
         if uploaded_files:
             if st.session_state["initialized"] == "False":
                 for uploaded_file in uploaded_files:
-                    #im_bytes = uploaded_file.read()
-                    #im_b64 = base64.b64encode(im_bytes).decode("utf8")
-                    #content.append(im_b64)
                     response = get_text_for_video_from_model("briggers/omega_a2a_test4", uploaded_file)
 
                 #prompt1 = [f"""{mm_question} """] + content

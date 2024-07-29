@@ -1,4 +1,5 @@
 import os
+import io
 from tempfile import TemporaryDirectory
 import time
 from typing import List, Optional
@@ -14,8 +15,6 @@ from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 from imagebind.models.imagebind_model import ModalityType
 
 from tune_recipes.gen import InferenceRecipe
-
-import streamlit as st
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -155,7 +154,12 @@ def get_caption_from_model(hf_repo_id, video_emb):
 
 def get_text_for_video_from_model(hf_repo_id, video_path):
     inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
-    video_emb = inference_recipe.embed_only_video(video_path)
+
+    file_content = video_path.read()
+    # Create a BytesIO object, which is compatible with BinaryIO
+    file_binary = io.BytesIO(file_content)
+
+    video_emb = inference_recipe.embed_only_video(file_binary)
     generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=video_emb)
 
     # Unload model from GPU memory
