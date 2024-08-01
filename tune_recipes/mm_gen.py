@@ -1,0 +1,285 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+import itertools
+import sys
+import time
+from typing import Any, Dict, List, BinaryIO
+
+import torch
+from torch import nn
+from omegaconf import DictConfig
+from PIL import Image
+
+from torchtune import config, utils
+from torchtune.utils._generation import sample
+from torchtune.models import convert_weights
+from torchtune.data import Message
+
+from models.tokenizer import START_IMAGE, END_IMAGE, START_AUDIO, END_AUDIO, START_VIDEO, END_VIDEO
+from imagebind import data
+from imagebind.models.imagebind_model import ModalityType
+from diffusers import DiffusionPipeline
+
+from models import add_proj_convert_weights, _BASE_TRAINABLE
+
+log = utils.get_logger("DEBUG")
+add_proj_convert_weights()
+
+
+class InferenceRecipe:
+    """
+    Recipe for generating tokens from a dense Transformer-based LLM.
+
+    Currently this recipe supports single-GPU generation only. Speculative
+    decoding is not supported.
+
+    For more details on how to use this recipe for generation, please see our
+    tutorial: https://pytorch.org/torchtune/main/tutorials/e2e_flow.html#generation
+
+    For using this recipe with a quantized model, please the following section of
+    the above tutorial:
+    https://pytorch.org/torchtune/main/tutorials/e2e_flow.html#speeding-up-generation-using-quantization
+    """
+
+    def __init__(self, cfg: DictConfig) -> None:
+        self._device = utils.get_device(device=cfg.device)
+        self._dtype = utils.get_dtype(dtype=cfg.dtype)
+        self._quantizer = config.instantiate(cfg.inference.quantizer)
+        self._quantization_mode = utils.get_quantizer_mode(self._quantizer)
+        self.prompt_template = cfg.inference.prompt_template
+        perception_tokens = cfg.model.perception_tokens
+        self._perception_tokens = ("0 " * perception_tokens)[:perception_tokens]
+        utils.set_seed(seed=cfg.seed)
+
+    def setup(self, cfg: DictConfig) -> None:
+        checkpointer = config.instantiate(cfg.checkpointer)
+        if self._quantization_mode is None:
+            ckpt_dict = checkpointer.load_checkpoint()
+        else:
+            # weights_only needs to be False when loading a quantized model
+            # currently loading a quantized model is only supported with the
+            # FullModelTorchTuneCheckpointer
+            ckpt_dict = checkpointer.load_checkpoint(weights_only=False)
+
+        self._model = self._setup_model(
+            model_cfg=cfg.model,
+            model_state_dict=ckpt_dict[utils.MODEL_KEY],
+        )
+        self._embed_model = self._setup_embed_model(model_cfg=DictConfig({"_component_": "models.imagebind_huge"}))
+        self._tokenizer = config.instantiate(cfg.tokenizer)
+        self._mm_ids_start = self._tokenizer.encode(START_IMAGE + START_AUDIO + START_VIDEO, add_eos=False, add_bos=False)
+        self._mm_ids_end = self._tokenizer.encode(END_IMAGE + END_AUDIO + END_VIDEO, add_eos=False, add_bos=False)
+        self.use_clip = cfg.model.use_clip
+        if self.use_clip:
+            self._clip_pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-unclip-small", torch_dtype=self._dtype).to(self._device)
+
+    def _setup_model(
+        self,
+        model_cfg: DictConfig,
+        model_state_dict: Dict[str, Any],
+    ) -> nn.Module:
+        with utils.set_default_dtype(self._dtype), self._device:
+            model = config.instantiate(model_cfg)
+
+        if self._quantization_mode is not None:
+            model = self._quantizer.quantize(model)
+            model = model.to(device=self._device, dtype=self._dtype)
+
+        model.load_state_dict(model_state_dict)
+
+        # Validate model was loaded in with the expected dtype.
+        utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
+        log.info(f"Model is initialized with precision {self._dtype}.")
+
+        # Ensure the cache is setup on the right device
+        with self._device:
+            model.setup_caches(max_batch_size=1, dtype=self._dtype)
+
+        return model
+
+    def _setup_embed_model(
+        self,
+        model_cfg: DictConfig,
+    ) -> nn.Module:
+        with utils.set_default_dtype(self._dtype), self._device:
+            model = config.instantiate(model_cfg)
+
+#         if self._quantization_mode is not None:
+#             model = self._quantizer.quantize(model)
+#             model = model.to(device=self._device, dtype=self._dtype)
+
+        # Validate model was loaded in with the expected dtype.
+        utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
+        log.info(f"Embed model is initialized with precision {self._dtype}.")
+
+#         # Ensure the cache is setup on the right device
+#         with self._device:
+#             model.setup_caches(max_batch_size=1, dtype=self._dtype)
+
+        return model
+
+
+    def mm_process_prompt(self, prompt):
+        return (
+            prompt
+                .replace("{image}", f"{START_IMAGE}{self._perception_tokens}{END_IMAGE}")
+                .replace("{audio}", f"{START_AUDIO}{self._perception_tokens}{END_AUDIO}")
+                .replace("{video}", f"{START_VIDEO}{self._perception_tokens}{END_VIDEO}")
+            )
+
+    def get_image_embed(self, image_path):
+        with torch.no_grad():
+            img = Image.open(image_path).convert('RGB')
+            img = self._embed_model.transform_from_pil(img).unsqueeze(0).to(device=self._device, dtype=self._dtype)
+            return self._embed_model({ModalityType.VISION: img})[ModalityType.VISION].squeeze(0)
+
+    def get_clip_embed(self, image_path):
+        with torch.no_grad():
+            image = Image.open(image_path).convert('RGB')
+            img = self._clip_pipe.feature_extractor(images=image, return_tensors="pt").pixel_values
+            img = img.to(device=self._device, dtype=self._dtype)
+            return self._clip_pipe.image_encoder(img).image_embeds.squeeze(0)
+
+    def extract_mm_context(self, embeddings, tokens):
+        context = {}
+        in_mm_embed = False
+        embed_index = 0
+        
+        for idx, tok in enumerate(tokens):
+            if tok in self._mm_ids_end:
+                in_mm_embed = False
+                embed_index += 1  # Move to the next embedding
+            
+            if in_mm_embed and embed_index < len(embeddings):
+                embed_type, embed_value = next(iter(embeddings[embed_index].items()))
+                context[idx] = {
+                    "ib_embed": torch.tensor(embed_value, dtype=self._dtype, device=self._device),
+                    #"embed_type": embed_type
+                }
+            
+            if tok in self._mm_ids_start:
+                in_mm_embed = True
+        
+        return context
+    
+    def embed_only_video(self, video_file: BinaryIO) -> List[float]:
+        with torch.no_grad():
+            video_filepaths = [video_file.name]
+            print("device:", self._device)
+            embeddings = self._embed_model({
+                ModalityType.VISION: data.load_and_transform_video_data(video_filepaths, self._device)
+            })
+            return embeddings[ModalityType.VISION]
+
+    @torch.no_grad()
+    def generate_from_any(self, cfg: DictConfig, prompt, embeddings: List[Dict[str, List[float]]]) -> str:
+        # embeddings: [{"image", [float]}, {"audio", [float]}, {"video", [float]}]
+        # prompt example: "Video:\n{video}\nCaption the previous video."
+        
+        mm_prompt = ""
+        for embed in embeddings:
+            embed_type, embed_list = next(iter(embed.items()))
+            
+            if embed_type not in ("image", "audio", "video"):
+                raise ValueError(f"Unknown embed type: {embed_type}")
+            
+            mm_prompt += f"{embed_type}: {{{embed_type}}}\n"
+
+        # combine the prompt with the mm_prompt
+        prompt = mm_prompt + prompt
+        print("\n-------------------------\nprompt:\n-------------------------\n", prompt, "\n-------------------------\n")
+
+        messages = [
+            Message(
+                role="user",
+                content=self.mm_process_prompt(prompt),
+            ),
+            Message(
+                role="assistant",
+                content="",
+            )
+        ]
+
+        tokens, mask = self._tokenizer.tokenize_messages(messages)
+        tokens = tokens[:-2] # strip eot and eos
+        mm_context = [self.extract_mm_context(embeddings, tokens)] # context should be a list, batch-id indexed
+        prompt = torch.tensor(tokens, dtype=torch.int, device=self._device)
+
+        self._model.tok_embeddings.set_context(mm_context)
+        self._model.output.set_context(mm_context)
+
+        bos_id = self._tokenizer.tt_model.encode("<|begin_of_text|>", allowed_special="all")[0]
+        allowed_id = self._tokenizer.tt_model.encode(f"<|eot_id|>{START_IMAGE}{END_IMAGE}{START_AUDIO}{END_AUDIO}{START_VIDEO}{END_VIDEO}", allowed_special="all")
+        disallowed_tokens = list(set(range(bos_id, bos_id + 256)) - set(allowed_id))
+        # self._model.output.weight.data[disallowed_tokens, :] = 0
+
+        def custom_generate_next_token(model, input_pos, x, temperature=1.0, top_k=None):
+            model.tok_embeddings.set_context([])
+            model.output.set_context([])
+            # x: [1, s]
+            # input_pos: [s]
+            logits = model(x, input_pos)
+            # logits: [1, s, v] where v is vocab_size
+            # for sampling we extract the logits for the
+            # last token and convert to shape: [v]
+            logits = logits[0, -1]
+            # logits[disallowed_tokens] = float("-inf")
+            # sample the next token
+            token = sample(logits, temperature, top_k)
+            if token in disallowed_tokens:
+                return torch.tensor([self._tokenizer.eos_id]).to(x)
+            return token
+
+        # since quantized model uses torch.compile to get speedup, it needs a warm up / prefill run
+        # to get the accurate performance measurement
+        if self._quantization_mode is not None:
+            log.info("Starting compilation to improve generation performance ...")
+            custom_generate_next_token = torch.compile(
+                custom_generate_next_token, mode="max-autotune", fullgraph=True
+            )
+            t0 = time.perf_counter()
+            _ = utils.generate(
+                model=self._model,
+                prompt=prompt,
+                max_generated_tokens=2,
+                temperature=cfg.temperature,
+                top_k=cfg.top_k,
+                eos_id=self._tokenizer.eos_id,
+                custom_generate_next_token=custom_generate_next_token,
+            )
+            t = time.perf_counter() - t0
+            log.info(f"Warmup run for quantized model takes: {t:.02f} sec")
+
+        t0 = time.perf_counter()
+        generated_tokens = utils.generate(
+            model=self._model,
+            prompt=prompt,
+            max_generated_tokens=cfg.max_new_tokens,
+            temperature=cfg.temperature,
+            top_k=cfg.top_k,
+            eos_id=self._tokenizer.eos_id,
+            custom_generate_next_token=custom_generate_next_token,
+        )
+        t = time.perf_counter() - t0
+
+        cleaned_tokens = [t for t in generated_tokens[len(prompt):] if t not in disallowed_tokens + allowed_id]
+        mm_response = self._tokenizer.decode(cleaned_tokens)
+
+        log.debug(f"Generated response: {mm_response} in {t:.02f} sec")
+
+        return mm_response
+
+
+@config.parse
+def main(cfg: DictConfig) -> None:
+    config.log_config(recipe_name="InferenceRecipe", cfg=cfg)
+    recipe = InferenceRecipe(cfg=cfg)
+    recipe.setup(cfg=cfg)
+    recipe.generate(cfg=cfg)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

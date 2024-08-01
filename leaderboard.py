@@ -1,18 +1,24 @@
-# pip install streamlit datasets huggingface-hub ulid-py bittensor
+# pip install streamlit datasets huggingface-hub ulid-py bittensor google-cloud-storage
 
 import asyncio
 import os
 import time
 import json
+import requests
+import random
 import tempfile
 
 import streamlit as st
 import pandas as pd
 import threading
-from transformers import pipeline, AutoModelForCausalLM, AutoTokenizer
+from urllib.parse import urlparse
 #from moviepy.editor import VideoFileClip, concatenate_videoclips
 
-from neurons.model_scoring import get_caption_from_model, get_text_for_video_from_model
+from neurons.mm_model_scoring import get_caption_from_model, get_mm_response
+from tune_recipes.imagebind_api import embed_modality
+
+PUBLIC_IP = "38.147.83.14"
+PUBLIC_PORT = 27651
 
 JSON_FILE = "leaderboard.json"
 CACHE_FILE = "omega_dataset_examples.json"
@@ -101,17 +107,6 @@ def seconds_to_mmss(seconds):
     seconds = seconds % 60
     return f"{minutes:02}:{seconds:02}"
 
-# Function to load the model from Hugging Face
-def load_model_from_hf(model_name: str):
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForCausalLM.from_pretrained(model_name)
-    return pipeline("text-generation", model=model, tokenizer=tokenizer)
-
-# Function to get chat response
-def get_chat_response(pipeline, prompt: str) -> str:
-    response = pipeline(prompt, max_length=300, num_return_sequences=1)
-    return response[0]['generated_text']
-
 #def stitch_videos(video_files):
 #    clips = [VideoFileClip(file.name) for file in video_files]
 #    final_clip = concatenate_videoclips(clips)
@@ -119,6 +114,151 @@ def get_chat_response(pipeline, prompt: str) -> str:
 #    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmpfile:
 #        final_clip.write_videofile(tmpfile.name, codec="libx264")
 #        return tmpfile.name
+
+# Replace with your actual API key
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+PEXELS_API_URL = "https://api.pexels.com/videos/popular"
+
+def fetch_videos(per_page=12):
+    headers = {"Authorization": PEXELS_API_KEY}
+    params = {"per_page": per_page, "page": st.session_state["pexel_page"]}
+    response = requests.get(PEXELS_API_URL, headers=headers, params=params)
+    response_obj = response.json()
+    #print(response_obj)
+    if "videos" not in response_obj:
+        return []
+    return response_obj["videos"]
+
+def display_video_grid(videos, cols=3):
+    # CSS to style the videos, captions, and buttons
+    st.markdown("""
+    <style>
+    .video-container {
+        width: 300px;
+        margin-bottom: 10px;  /* Reduced margin */
+        position: relative;
+        padding: 5px;
+    }
+    .video-player {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+    }
+    .video-caption {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        color: #fff;
+        padding: 5px;
+        font-size: 12px;
+        text-align: center;
+    }
+    .video-caption a {
+        color: #fff;
+        text-decoration: underline;
+    }
+    .select-button {
+        margin-top: 5px;  /* Reduced space between caption and button */
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    for i in range(0, len(videos), cols):
+        columns = st.columns(cols)
+        for col, video in zip(columns, videos[i:i+cols]):
+            with col:
+                sd_video = next((file for file in video["video_files"] if file["quality"] == "sd"), None)
+                if sd_video:
+                    video_url = sd_video["link"]
+                    author_name = video["user"]["name"]
+                    author_url = video["user"]["url"]
+                    
+                    video_html = f"""
+                    <div class="video-container">
+                        <video class="video-player" controls>
+                            <source src="{video_url}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="video-caption">
+                            Video by <a href="{author_url}" target="_blank">{author_name}</a> on Pexels
+                        </div>
+                    </div>
+                    """
+                    st.markdown(video_html, unsafe_allow_html=True)
+                    
+                    # Center the button
+                    with st.container():
+                        col1, col2, col3 = st.columns([1,2,1])
+                        with col2:
+                            if st.button("Select Video", key=f"select-{video['id']}", help="Click to select this video"):
+                                return video_url
+                else:
+                    st.warning("No SD quality video found for this item.")
+    return None
+
+
+from google.cloud import storage
+from google.cloud.exceptions import NotFound
+GCS_BUCKET_NAME = "omega-a2a-mm-chat"
+def gcs_upload_blob(source_file_name, destination_blob_name):
+    """Uploads a file to the bucket if it doesn't exist, otherwise returns the existing URL."""
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(destination_blob_name)
+
+    # Check if the blob already exists
+    try:
+        blob.reload()
+    except NotFound:
+        # If we reach here, the blob doesn't exist, so we upload it
+        blob.upload_from_filename(source_file_name)
+
+    # Generate the public URL
+    url = f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{destination_blob_name}"
+    return url
+
+def get_file_type_from_url(url):
+    parsed_url = urlparse(url)
+    filename = os.path.basename(parsed_url.path)
+    _, extension = os.path.splitext(filename)
+    extension = extension.lower()
+
+    if extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+        return 'image'
+    elif extension in ['.mp3', '.wav', '.ogg', '.flac']:
+        return 'audio'
+    elif extension in ['.mp4', '.avi', '.mov', '.wmv']:
+        return 'video'
+    else:
+        return 'unknown'
+
+def process_file(uploaded_file):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_file_path = tmp_file.name
+
+        url = gcs_upload_blob(tmp_file_path, uploaded_file.name)
+
+        if url:
+            try:
+                embedding = embed_modality(url)
+                embed_type = get_file_type_from_url(url)
+                
+                if embedding is not None:
+                    st.session_state.embeddings.append({embed_type: embedding})
+                    st.session_state.processed_files.add(uploaded_file.name)
+                    return f"Successfully processed {uploaded_file.name}"
+                else:
+                    return f"Issue processing {uploaded_file.name}"
+            except Exception as e:
+                return f"Error processing {uploaded_file.name}: {str(e)}"
+    finally:
+        os.unlink(tmp_file_path)
+
+    return f"Failed to process {uploaded_file.name}"
+
 
 async def main():
     st.set_page_config(
@@ -247,50 +387,52 @@ async def main():
             st.session_state["chat_answers_history"] = []
         if "chat_history" not in st.session_state:
             st.session_state["chat_history"] = []
-        if "initialized" not in st.session_state:
-            st.session_state["initialized"] = "False"
-
-        uploaded_files = st.file_uploader(
-            "Upload the file to start a conversation",
-            type=("mp4", "avi", "mov", "mpg", "mpeg", "wmv", "flv", "webm"),
-            accept_multiple_files=False,
-        )
-
+        if "embeddings" not in st.session_state:
+            st.session_state["embeddings"] = []
+        if "processed_files" not in st.session_state:
+            st.session_state.processed_files = set()
+        
         content = []
-
-        #mm_chat_pipeline = load_model_from_hf("briggers/omega_a2a_test4")
-        prompt = st.chat_input("Enter your questions here", disabled=not input)
+        uploaded_files = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
+        # Process uploaded files
         if uploaded_files:
-            if st.session_state["initialized"] == "False":
-                for uploaded_file in uploaded_files:
-                    response = get_text_for_video_from_model("briggers/omega_a2a_test4", uploaded_file)
+            for uploaded_file in uploaded_files:
+                if uploaded_file.name not in st.session_state.processed_files:
+                    result = process_file(uploaded_file)
+                    st.write(result)
 
-                #prompt1 = [f"""{mm_question} """] + content
-                #response = get_chat_response(mm_chat_pipeline, prompt1)
-                #response = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
+        prompt = st.chat_input("Enter your questions here", disabled=not input)
 
-                st.session_state["chat_answers_history"].append(response)
-                st.session_state["user_prompt_history"].append(mm_question)
-                st.session_state["chat_history"].append((mm_question, response))
-                st.session_state["initialized"] = "True"
+        if prompt:
+            st.session_state.user_prompt_history.append(prompt)
+            
+            # Process user input
+            with st.spinner("Generating response..."):
+                if mutex.locked():
+                    st.write("Waiting to generate response...")
+                    while mutex.locked():
+                        time.sleep(0.1)
 
-            elif st.session_state["initialized"] == "True":
-                prompt = [f"""{prompt} """]
-                #response = get_chat_response(mm_chat_pipeline, prompt)
-                st.session_state["chat_answers_history"].append(response)
-                st.session_state["user_prompt_history"].append(prompt[0])
-                st.session_state["chat_history"].append((prompt[0], response))
+                with mutex:
+                    try:
+                        mm_response = get_mm_response("briggers/omega_a2a_test4", prompt, st.session_state.embeddings)
+                        if mm_response is None:
+                            st.error("Issue processing your prompt, please try again.")
+                        else:
+                            st.session_state["chat_answers_history"].append(mm_response)
+                        
+                    except Exception as e:
+                        st.error(f"Error generating response: {str(e)}")
 
-            if st.session_state["chat_answers_history"]:
-                for i, j in zip(
-                    st.session_state["chat_answers_history"],
-                    st.session_state["user_prompt_history"],
-                ):
-                    message1 = st.chat_message("user")
-                    message1.write(j)
-                    message2 = st.chat_message("assistant")
-                    message2.write(i)
-    
+        # Display chat history
+        if st.session_state.chat_answers_history:
+            for user_msg, bot_msg in zip(st.session_state.user_prompt_history, st.session_state.chat_answers_history):
+                message1 = st.chat_message("user")
+                message1.write(user_msg)
+                message2 = st.chat_message("assistant")
+                message2.write(bot_msg)
+
+       
     # Main column for model demo
     with tab2:
         st.header("Model Demo")

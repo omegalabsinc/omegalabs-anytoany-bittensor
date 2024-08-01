@@ -14,10 +14,7 @@ from datasets import load_dataset, Dataset
 from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 from imagebind.models.imagebind_model import ModalityType
 
-from tune_recipes.gen import InferenceRecipe
-from tune_recipes.imagebind_api import embed_modality
-
-import asyncio
+from tune_recipes.mm_gen import InferenceRecipe
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -153,32 +150,24 @@ def get_caption_from_model(hf_repo_id, video_emb):
     
     return generated_caption
 
-def get_text_for_video_from_model(hf_repo_id, video_path):
+def get_mm_response(hf_repo_id, prompt, embeddings):
     inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
 
-    """
-    # Create a temporary file
-    with NamedTemporaryFile(delete=False, suffix='.mp4') as temp_file:
-        # Write the content of the uploaded file to the temporary file
-        temp_file.write(uploaded_video.getvalue())
-        temp_file_path = temp_file.name
-
-    video_path = open(temp_file_path, 'rb')
-    """
-    #video_emb = inference_recipe.embed_only_video(temp_file)
-    #video_emb = torch.tensor(video_emb).to(next(inference_recipe.parameters()).device).type(next(inference_recipe.parameters()).dtype)
-
-    video_emb = embed_modality(video_path)
-    if video_emb is None:
-        return None
+    """ Example embeddings:
+    embeddings = [
+        {"video": [float]},
+        {"video": [float]},
+        {"audio": [float]}
+    ] """
+    print("embeddings:\n", embeddings)
     
-    generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=video_emb)
+    mm_response = inference_recipe.generate_from_any(cfg=config, prompt=prompt, embeddings=embeddings)
 
     # Unload model from GPU memory
     #del inference_recipe
     #torch.cuda.empty_cache()
     
-    return generated_caption
+    return mm_response
 
 if __name__ == "__main__":
     hf_repo_id = "salmanshahid/omega_a2a_test"
