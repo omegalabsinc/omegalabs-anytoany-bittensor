@@ -1,4 +1,4 @@
-# pip install streamlit datasets huggingface-hub ulid-py bittensor google-cloud-storage
+# pip install streamlit datasets huggingface-hub ulid-py bittensor replicate google-cloud-storage
 
 import asyncio
 import os
