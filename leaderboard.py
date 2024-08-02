@@ -1,18 +1,34 @@
-# pip install streamlit datasets huggingface-hub ulid-py bittensor
+# pip install streamlit datasets huggingface-hub ulid-py bittensor google-cloud-storage
 
 import asyncio
 import os
 import time
 import json
+import requests
+import random
+import tempfile
 
 import streamlit as st
 import pandas as pd
 import threading
+from urllib.parse import urlparse
+#from moviepy.editor import VideoFileClip, concatenate_videoclips
 
-from neurons.model_scoring import get_caption_from_model
+from neurons.mm_model_scoring import get_caption_from_model, get_mm_response
+from tune_recipes.imagebind_api import embed_modality
+
+PUBLIC_IP = "38.147.83.14"
+PUBLIC_PORT = 27651
 
 JSON_FILE = "leaderboard.json"
 CACHE_FILE = "omega_dataset_examples.json"
+mm_question = """Intructions:
+              1) Extract from this document key facts.
+              2) Extract date of documents
+              3) Dont show names or surnames. refers as subject Mr X or Mrs X
+              4) Extract Postal Address
+              6) If the Language is not English , respond in English together with the document language
+            """
 
 class CountingLock:
     def __init__(self):
@@ -90,6 +106,159 @@ def seconds_to_mmss(seconds):
     minutes = seconds // 60
     seconds = seconds % 60
     return f"{minutes:02}:{seconds:02}"
+
+#def stitch_videos(video_files):
+#    clips = [VideoFileClip(file.name) for file in video_files]
+#    final_clip = concatenate_videoclips(clips)
+#    
+#    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmpfile:
+#        final_clip.write_videofile(tmpfile.name, codec="libx264")
+#        return tmpfile.name
+
+# Replace with your actual API key
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
+PEXELS_API_URL = "https://api.pexels.com/videos/popular"
+
+def fetch_videos(per_page=12):
+    headers = {"Authorization": PEXELS_API_KEY}
+    params = {"per_page": per_page, "page": st.session_state["pexel_page"]}
+    response = requests.get(PEXELS_API_URL, headers=headers, params=params)
+    response_obj = response.json()
+    #print(response_obj)
+    if "videos" not in response_obj:
+        return []
+    return response_obj["videos"]
+
+def display_video_grid(videos, cols=3):
+    # CSS to style the videos, captions, and buttons
+    st.markdown("""
+    <style>
+    .video-container {
+        width: 300px;
+        margin-bottom: 10px;  /* Reduced margin */
+        position: relative;
+        padding: 5px;
+    }
+    .video-player {
+        width: 100%;
+        height: 200px;
+        object-fit: cover;
+    }
+    .video-caption {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        color: #fff;
+        padding: 5px;
+        font-size: 12px;
+        text-align: center;
+    }
+    .video-caption a {
+        color: #fff;
+        text-decoration: underline;
+    }
+    .select-button {
+        margin-top: 5px;  /* Reduced space between caption and button */
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    for i in range(0, len(videos), cols):
+        columns = st.columns(cols)
+        for col, video in zip(columns, videos[i:i+cols]):
+            with col:
+                sd_video = next((file for file in video["video_files"] if file["quality"] == "sd"), None)
+                if sd_video:
+                    video_url = sd_video["link"]
+                    author_name = video["user"]["name"]
+                    author_url = video["user"]["url"]
+                    
+                    video_html = f"""
+                    <div class="video-container">
+                        <video class="video-player" controls>
+                            <source src="{video_url}" type="video/mp4">
+                            Your browser does not support the video tag.
+                        </video>
+                        <div class="video-caption">
+                            Video by <a href="{author_url}" target="_blank">{author_name}</a> on Pexels
+                        </div>
+                    </div>
+                    """
+                    st.markdown(video_html, unsafe_allow_html=True)
+                    
+                    # Center the button
+                    with st.container():
+                        col1, col2, col3 = st.columns([1,2,1])
+                        with col2:
+                            if st.button("Select Video", key=f"select-{video['id']}", help="Click to select this video"):
+                                return video_url
+                else:
+                    st.warning("No SD quality video found for this item.")
+    return None
+
+
+from google.cloud import storage
+from google.cloud.exceptions import NotFound
+GCS_BUCKET_NAME = "omega-a2a-mm-chat"
+def gcs_upload_blob(source_file_name, destination_blob_name):
+    """Uploads a file to the bucket if it doesn't exist, otherwise returns the existing URL."""
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(destination_blob_name)
+
+    # Check if the blob already exists
+    try:
+        blob.reload()
+    except NotFound:
+        # If we reach here, the blob doesn't exist, so we upload it
+        blob.upload_from_filename(source_file_name)
+
+    # Generate the public URL
+    url = f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{destination_blob_name}"
+    return url
+
+def get_file_type_from_url(url):
+    parsed_url = urlparse(url)
+    filename = os.path.basename(parsed_url.path)
+    _, extension = os.path.splitext(filename)
+    extension = extension.lower()
+
+    if extension in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+        return 'image'
+    elif extension in ['.mp3', '.wav', '.ogg', '.flac']:
+        return 'audio'
+    elif extension in ['.mp4', '.avi', '.mov', '.wmv']:
+        return 'video'
+    else:
+        return 'unknown'
+
+def process_file(uploaded_file):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_file_path = tmp_file.name
+
+        url = gcs_upload_blob(tmp_file_path, uploaded_file.name)
+
+        if url:
+            try:
+                embed_type = get_file_type_from_url(url)
+                embedding = embed_modality(url, embed_type)
+                
+                if embedding is not None:
+                    st.session_state.embeddings.append({embed_type: embedding})
+                    st.session_state.processed_files.add(uploaded_file.name)
+                    return f"Successfully processed {uploaded_file.name}"
+                else:
+                    return f"Issue processing {uploaded_file.name}"
+            except Exception as e:
+                return f"Error processing {uploaded_file.name}: {str(e)}"
+    finally:
+        os.unlink(tmp_file_path)
+
+    return f"Failed to process {uploaded_file.name}"
+
 
 async def main():
     st.set_page_config(
@@ -200,16 +369,99 @@ async def main():
     """, unsafe_allow_html=True)
 
     # Center the title
-    st.markdown('<h1 class="centered-title">OMEGA Any-to-Any Leaderboard</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="centered-title">OMEGA Any-to-Any Demo</h1>', unsafe_allow_html=True)
     
-    st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+    st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any multi-modal chat, model demos, and leaderboard. This streamlit showcases a multi-modal chat and video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+    st.markdown('<p class="intro-text">On the "MM Chat" tab, upload video, audio, and/or image files and chat with our model to demonstrate how it understands multiple modalities.', unsafe_allow_html=True)
     st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
     st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["Model Demos", "Leaderboard"])
+    tab1, tab2, tab3 = st.tabs(["Multi-Modal Chat", "Model Demos", "Leaderboard"])
 
-    # Main column for model demo
+    # Main column for chat
     with tab1:
+        st.title("📝 OMEGA Multi-Modal Chat")
+
+        if "user_prompt_history" not in st.session_state:
+            st.session_state["user_prompt_history"] = []
+        if "chat_answers_history" not in st.session_state:
+            st.session_state["chat_answers_history"] = []
+        if "chat_history" not in st.session_state:
+            st.session_state["chat_history"] = []
+        if "embeddings" not in st.session_state:
+            st.session_state["embeddings"] = []
+        if "processed_files" not in st.session_state:
+            st.session_state.processed_files = set()
+
+        # Create a container for chat history
+        chat_container = st.container()
+
+        # Create a container for file upload and user input
+        input_container = st.container()
+        
+        # Inside the input container, add file uploader and chat input
+        with input_container:
+            st.divider()
+            uploaded_file = st.file_uploader("Upload audio, video, or image files", type=["mp4", "mov", "avi", "mp3", "wav", "png", "jpg", "jpeg"], accept_multiple_files=False)
+            # Process uploaded files
+            if uploaded_file:
+                #for uploaded_file in uploaded_files:
+                with st.spinner(f"Processing {uploaded_file.name}..."):
+                    if uploaded_file.name not in st.session_state.processed_files:
+                        result = process_file(uploaded_file)
+                        st.write(result)
+
+            prompt = st.chat_input("Enter your questions here", disabled=not input)
+
+            files_container = st.container()
+            with files_container:
+                # Display processed files
+                if st.session_state.processed_files:
+                    st.divider()
+                    st.subheader("Processed Files")
+                    for file_name in st.session_state.processed_files:
+                        st.text(f"Processed: {file_name}")
+
+            if prompt:
+                st.session_state.user_prompt_history.append(prompt)
+                
+                # Process user input
+                with st.spinner("Generating response..."):
+                    if mutex.locked():
+                        st.write("Waiting to generate response...")
+                        while mutex.locked():
+                            time.sleep(0.1)
+
+                    with mutex:
+                        try:
+                            history_limit = 5  # for example, last 5 exchanges
+                            limited_history = st.session_state.chat_history[-history_limit*2:]  # *2 because each exchange has 2 messages
+                            assistant = "\n".join([
+                                f"Human: {msg}" if i % 2 == 0 else f"Assistant: {msg}"
+                                for i, msg in enumerate(limited_history)
+                            ])
+
+                            mm_response = get_mm_response("briggers/omega_a2a_test4", prompt, st.session_state.embeddings, assistant)
+                            if mm_response is None:
+                                st.error("Issue processing your prompt, please try again.")
+                            else:
+                                st.session_state["chat_answers_history"].append(mm_response)
+                            
+                        except Exception as e:
+                            st.error(f"Error generating response: {str(e)}")
+
+        # Display chat history in the chat container
+        with chat_container:
+            if st.session_state.chat_answers_history:
+                for user_msg, bot_msg in zip(st.session_state.user_prompt_history, st.session_state.chat_answers_history):
+                    message1 = st.chat_message("user")
+                    message1.write(user_msg)
+                    message2 = st.chat_message("assistant")
+                    message2.write(bot_msg)
+
+       
+    # Main column for model demo
+    with tab2:
         st.header("Model Demo")
         tcol1, tcol2 = st.columns([0.4, 0.6])
         with tcol1:

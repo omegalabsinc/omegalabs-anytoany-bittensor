@@ -143,42 +143,69 @@ class InferenceRecipe:
             img = img.to(device=self._device, dtype=self._dtype)
             return self._clip_pipe.image_encoder(img).image_embeds.squeeze(0)
 
-    def extract_mm_context(self, video_ib_embed, tokens):
+    def extract_mm_context(self, embeddings, tokens):
         context = {}
         in_mm_embed = False
+        embed_index = 0
+        
         for idx, tok in enumerate(tokens):
-            in_mm_embed = in_mm_embed and not tok in self._mm_ids_end
-            if in_mm_embed:
-                #tokens[idx] # to support multiple embeds: get the value, match it up with the sample embed
+            if tok in self._mm_ids_end:
+                in_mm_embed = False
+                embed_index += 1  # Move to the next embedding
+            
+            if in_mm_embed and embed_index < len(embeddings):
+                embed_type, embed_value = next(iter(embeddings[embed_index].items()))
                 context[idx] = {
-                    "ib_embed": torch.tensor(video_ib_embed, dtype=self._dtype, device=self._device),
+                    "ib_embed": torch.tensor(embed_value, dtype=self._dtype, device=self._device),
+                    #"embed_type": embed_type
                 }
-            in_mm_embed = in_mm_embed or tok in self._mm_ids_start
+            
+            if tok in self._mm_ids_start:
+                in_mm_embed = True
+        
         return context
     
-    @torch.no_grad()
     def embed_only_video(self, video_file: BinaryIO) -> List[float]:
-        video_filepaths = [video_file.name]
-        embeddings = self._embed_model({
-            ModalityType.VISION: data.load_and_transform_video_data(video_filepaths, self._device)
-        })
-        return embeddings[ModalityType.VISION]
+        with torch.no_grad():
+            video_filepaths = [video_file.name]
+            print("device:", self._device)
+            embeddings = self._embed_model({
+                ModalityType.VISION: data.load_and_transform_video_data(video_filepaths, self._device)
+            })
+            return embeddings[ModalityType.VISION]
 
     @torch.no_grad()
-    def generate(self, cfg: DictConfig, video_ib_embed: List[float]):
+    def generate_from_any(self, cfg: DictConfig, prompt, embeddings: List[Dict[str, List[float]]], assistant: str = "") -> str:
+        # embeddings: [{"image", [float]}, {"audio", [float]}, {"video", [float]}]
+        # prompt example: "Video:\n{video}\nCaption the previous video."
+        
+        mm_prompt = ""
+        for embed in embeddings:
+            embed_type, embed_list = next(iter(embed.items()))
+            
+            if embed_type not in ("image", "audio", "video"):
+                raise ValueError(f"Unknown embed type: {embed_type}")
+            
+            mm_prompt += f"{embed_type}: {{{embed_type}}}\n"
+
+        # combine the prompt with the mm_prompt
+        prompt = mm_prompt + prompt
+        print("\n-------------------------\nprompt:\n-------------------------\n", prompt, "\n-------------------------\n")
+
         messages = [
             Message(
                 role="user",
-                content=self.mm_process_prompt(self.prompt_template),
+                content=self.mm_process_prompt(prompt),
             ),
             Message(
                 role="assistant",
-                content="",
+                content=assistant,
             )
         ]
+
         tokens, mask = self._tokenizer.tokenize_messages(messages)
         tokens = tokens[:-2] # strip eot and eos
-        mm_context = [self.extract_mm_context(video_ib_embed, tokens)] # context should be a list, batch-id indexed
+        mm_context = [self.extract_mm_context(embeddings, tokens)] # context should be a list, batch-id indexed
         prompt = torch.tensor(tokens, dtype=torch.int, device=self._device)
 
         self._model.tok_embeddings.set_context(mm_context)
@@ -239,11 +266,11 @@ class InferenceRecipe:
         t = time.perf_counter() - t0
 
         cleaned_tokens = [t for t in generated_tokens[len(prompt):] if t not in disallowed_tokens + allowed_id]
-        caption = self._tokenizer.decode(cleaned_tokens)
+        mm_response = self._tokenizer.decode(cleaned_tokens)
 
-        log.debug(f"Generated caption: {caption} in {t:.02f} sec")
+        log.debug(f"Generated response: {mm_response} in {t:.02f} sec")
 
-        return caption
+        return mm_response
 
 
 @config.parse
