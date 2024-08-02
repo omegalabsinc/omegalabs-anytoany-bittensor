@@ -17,18 +17,8 @@ from urllib.parse import urlparse
 from neurons.mm_model_scoring import get_caption_from_model, get_mm_response
 from tune_recipes.imagebind_api import embed_modality
 
-PUBLIC_IP = "38.147.83.14"
-PUBLIC_PORT = 27651
-
 JSON_FILE = "leaderboard.json"
 CACHE_FILE = "omega_dataset_examples.json"
-mm_question = """Intructions:
-              1) Extract from this document key facts.
-              2) Extract date of documents
-              3) Dont show names or surnames. refers as subject Mr X or Mrs X
-              4) Extract Postal Address
-              6) If the Language is not English , respond in English together with the document language
-            """
 
 class CountingLock:
     def __init__(self):
@@ -114,89 +104,6 @@ def seconds_to_mmss(seconds):
 #    with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmpfile:
 #        final_clip.write_videofile(tmpfile.name, codec="libx264")
 #        return tmpfile.name
-
-# Replace with your actual API key
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
-PEXELS_API_URL = "https://api.pexels.com/videos/popular"
-
-def fetch_videos(per_page=12):
-    headers = {"Authorization": PEXELS_API_KEY}
-    params = {"per_page": per_page, "page": st.session_state["pexel_page"]}
-    response = requests.get(PEXELS_API_URL, headers=headers, params=params)
-    response_obj = response.json()
-    #print(response_obj)
-    if "videos" not in response_obj:
-        return []
-    return response_obj["videos"]
-
-def display_video_grid(videos, cols=3):
-    # CSS to style the videos, captions, and buttons
-    st.markdown("""
-    <style>
-    .video-container {
-        width: 300px;
-        margin-bottom: 10px;  /* Reduced margin */
-        position: relative;
-        padding: 5px;
-    }
-    .video-player {
-        width: 100%;
-        height: 200px;
-        object-fit: cover;
-    }
-    .video-caption {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        color: #fff;
-        padding: 5px;
-        font-size: 12px;
-        text-align: center;
-    }
-    .video-caption a {
-        color: #fff;
-        text-decoration: underline;
-    }
-    .select-button {
-        margin-top: 5px;  /* Reduced space between caption and button */
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    for i in range(0, len(videos), cols):
-        columns = st.columns(cols)
-        for col, video in zip(columns, videos[i:i+cols]):
-            with col:
-                sd_video = next((file for file in video["video_files"] if file["quality"] == "sd"), None)
-                if sd_video:
-                    video_url = sd_video["link"]
-                    author_name = video["user"]["name"]
-                    author_url = video["user"]["url"]
-                    
-                    video_html = f"""
-                    <div class="video-container">
-                        <video class="video-player" controls>
-                            <source src="{video_url}" type="video/mp4">
-                            Your browser does not support the video tag.
-                        </video>
-                        <div class="video-caption">
-                            Video by <a href="{author_url}" target="_blank">{author_name}</a> on Pexels
-                        </div>
-                    </div>
-                    """
-                    st.markdown(video_html, unsafe_allow_html=True)
-                    
-                    # Center the button
-                    with st.container():
-                        col1, col2, col3 = st.columns([1,2,1])
-                        with col2:
-                            if st.button("Select Video", key=f"select-{video['id']}", help="Click to select this video"):
-                                return video_url
-                else:
-                    st.warning("No SD quality video found for this item.")
-    return None
-
 
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
@@ -529,7 +436,7 @@ async def main():
             
                             
     # tab for leaderboard
-    with tab2:
+    with tab3:
         st.header("Leaderboard")
 
         # Prepare data for the table
