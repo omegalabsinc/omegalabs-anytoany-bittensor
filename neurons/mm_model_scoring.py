@@ -142,7 +142,8 @@ def get_model_score(hf_repo_id, mini_batch):
 
 def get_caption_from_model(hf_repo_id, video_emb):
     inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
-    generated_caption = inference_recipe.generate(cfg=config, video_ib_embed=[video_emb])
+    prompt = "Generate a caption for this video"
+    generated_caption = inference_recipe.generate_from_any(cfg=config, prompt=prompt, embeddings=[{"video": video_emb}])
 
     # Unload model from GPU memory
     del inference_recipe

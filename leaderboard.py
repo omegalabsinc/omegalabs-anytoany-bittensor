@@ -376,7 +376,7 @@ async def main():
     st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
     st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["MM Chat", "Model Demos", "Leaderboard"])
+    tab1, tab2, tab3 = st.tabs(["Multi-Modal Chat", "Model Demos", "Leaderboard"])
 
     # Main column for chat
     with tab1:
@@ -416,10 +416,11 @@ async def main():
             files_container = st.container()
             with files_container:
                 # Display processed files
-                st.divider()
-                st.subheader("Processed Files")
-                for file_name in st.session_state.processed_files:
-                    st.text(f"Processed: {file_name}")
+                if st.session_state.processed_files:
+                    st.divider()
+                    st.subheader("Processed Files")
+                    for file_name in st.session_state.processed_files:
+                        st.text(f"Processed: {file_name}")
 
             if prompt:
                 st.session_state.user_prompt_history.append(prompt)
