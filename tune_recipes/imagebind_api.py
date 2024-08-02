@@ -7,7 +7,13 @@ import time
 import replicate
 from replicate.exceptions import ModelError, ReplicateError
 
-def embed_modality(f, modality="video", timeout=60):
+def embed_modality(f, modality=None, timeout=60):
+    if modality is None:
+        print("Modality is required.")
+        return None
+    elif modality == "image":
+        modality = "vision"
+    
     start = time.time()
     print(f"input is {f}")
 

@@ -175,7 +175,7 @@ class InferenceRecipe:
             return embeddings[ModalityType.VISION]
 
     @torch.no_grad()
-    def generate_from_any(self, cfg: DictConfig, prompt, embeddings: List[Dict[str, List[float]]]) -> str:
+    def generate_from_any(self, cfg: DictConfig, prompt, embeddings: List[Dict[str, List[float]]], assistant: str = "") -> str:
         # embeddings: [{"image", [float]}, {"audio", [float]}, {"video", [float]}]
         # prompt example: "Video:\n{video}\nCaption the previous video."
         
@@ -199,7 +199,7 @@ class InferenceRecipe:
             ),
             Message(
                 role="assistant",
-                content="",
+                content=assistant,
             )
         ]
 

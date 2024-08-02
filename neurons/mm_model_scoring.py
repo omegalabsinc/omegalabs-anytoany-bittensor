@@ -150,7 +150,7 @@ def get_caption_from_model(hf_repo_id, video_emb):
     
     return generated_caption
 
-def get_mm_response(hf_repo_id, prompt, embeddings):
+def get_mm_response(hf_repo_id, prompt, embeddings, assistant = ""):
     inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
 
     """ Example embeddings:
@@ -159,9 +159,10 @@ def get_mm_response(hf_repo_id, prompt, embeddings):
         {"video": [float]},
         {"audio": [float]}
     ] """
-    print("embeddings:\n", embeddings)
+    #print("embeddings:\n", embeddings)
     
-    mm_response = inference_recipe.generate_from_any(cfg=config, prompt=prompt, embeddings=embeddings)
+    # pass the prompt and embeddings to the model. we reverse the embeddings so newest embeddings are first
+    mm_response = inference_recipe.generate_from_any(cfg=config, prompt=prompt, embeddings=embeddings[::-1], assistant=assistant)
 
     # Unload model from GPU memory
     #del inference_recipe

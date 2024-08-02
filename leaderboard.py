@@ -243,8 +243,8 @@ def process_file(uploaded_file):
 
         if url:
             try:
-                embedding = embed_modality(url)
                 embed_type = get_file_type_from_url(url)
+                embedding = embed_modality(url, embed_type)
                 
                 if embedding is not None:
                     st.session_state.embeddings.append({embed_type: embedding})
@@ -369,9 +369,10 @@ async def main():
     """, unsafe_allow_html=True)
 
     # Center the title
-    st.markdown('<h1 class="centered-title">OMEGA Any-to-Any Leaderboard</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="centered-title">OMEGA Any-to-Any Demo</h1>', unsafe_allow_html=True)
     
-    st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any model demos and leaderboard. This streamlit showcases video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+    st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any multi-modal chat, model demos, and leaderboard. This streamlit showcases a multi-modal chat and video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+    st.markdown('<p class="intro-text">On the "MM Chat" tab, upload video, audio, and/or image files and chat with our model to demonstrate how it understands multiple modalities.', unsafe_allow_html=True)
     st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
     st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
@@ -391,46 +392,71 @@ async def main():
             st.session_state["embeddings"] = []
         if "processed_files" not in st.session_state:
             st.session_state.processed_files = set()
+
+        # Create a container for chat history
+        chat_container = st.container()
+
+        # Create a container for file upload and user input
+        input_container = st.container()
         
-        content = []
-        uploaded_files = st.file_uploader("Choose a video file", type=["mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
-        # Process uploaded files
-        if uploaded_files:
-            for uploaded_file in uploaded_files:
-                if uploaded_file.name not in st.session_state.processed_files:
-                    result = process_file(uploaded_file)
-                    st.write(result)
+        # Inside the input container, add file uploader and chat input
+        with input_container:
+            st.divider()
+            uploaded_file = st.file_uploader("Upload audio, video, or image files", type=["mp4", "mov", "avi", "mp3", "wav", "png", "jpg", "jpeg"], accept_multiple_files=False)
+            # Process uploaded files
+            if uploaded_file:
+                #for uploaded_file in uploaded_files:
+                with st.spinner(f"Processing {uploaded_file.name}..."):
+                    if uploaded_file.name not in st.session_state.processed_files:
+                        result = process_file(uploaded_file)
+                        st.write(result)
 
-        prompt = st.chat_input("Enter your questions here", disabled=not input)
+            prompt = st.chat_input("Enter your questions here", disabled=not input)
 
-        if prompt:
-            st.session_state.user_prompt_history.append(prompt)
-            
-            # Process user input
-            with st.spinner("Generating response..."):
-                if mutex.locked():
-                    st.write("Waiting to generate response...")
-                    while mutex.locked():
-                        time.sleep(0.1)
+            files_container = st.container()
+            with files_container:
+                # Display processed files
+                st.divider()
+                st.subheader("Processed Files")
+                for file_name in st.session_state.processed_files:
+                    st.text(f"Processed: {file_name}")
 
-                with mutex:
-                    try:
-                        mm_response = get_mm_response("briggers/omega_a2a_test4", prompt, st.session_state.embeddings)
-                        if mm_response is None:
-                            st.error("Issue processing your prompt, please try again.")
-                        else:
-                            st.session_state["chat_answers_history"].append(mm_response)
-                        
-                    except Exception as e:
-                        st.error(f"Error generating response: {str(e)}")
+            if prompt:
+                st.session_state.user_prompt_history.append(prompt)
+                
+                # Process user input
+                with st.spinner("Generating response..."):
+                    if mutex.locked():
+                        st.write("Waiting to generate response...")
+                        while mutex.locked():
+                            time.sleep(0.1)
 
-        # Display chat history
-        if st.session_state.chat_answers_history:
-            for user_msg, bot_msg in zip(st.session_state.user_prompt_history, st.session_state.chat_answers_history):
-                message1 = st.chat_message("user")
-                message1.write(user_msg)
-                message2 = st.chat_message("assistant")
-                message2.write(bot_msg)
+                    with mutex:
+                        try:
+                            history_limit = 5  # for example, last 5 exchanges
+                            limited_history = st.session_state.chat_history[-history_limit*2:]  # *2 because each exchange has 2 messages
+                            assistant = "\n".join([
+                                f"Human: {msg}" if i % 2 == 0 else f"Assistant: {msg}"
+                                for i, msg in enumerate(limited_history)
+                            ])
+
+                            mm_response = get_mm_response("briggers/omega_a2a_test4", prompt, st.session_state.embeddings, assistant)
+                            if mm_response is None:
+                                st.error("Issue processing your prompt, please try again.")
+                            else:
+                                st.session_state["chat_answers_history"].append(mm_response)
+                            
+                        except Exception as e:
+                            st.error(f"Error generating response: {str(e)}")
+
+        # Display chat history in the chat container
+        with chat_container:
+            if st.session_state.chat_answers_history:
+                for user_msg, bot_msg in zip(st.session_state.user_prompt_history, st.session_state.chat_answers_history):
+                    message1 = st.chat_message("user")
+                    message1.write(user_msg)
+                    message2 = st.chat_message("assistant")
+                    message2.write(bot_msg)
 
        
     # Main column for model demo
