@@ -506,6 +506,24 @@ class Validator:
                 f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
             )
         return is_old_enough
+    
+    def is_model_unique(self, hotkey: str, model_metadata: ModelMetadata):
+        """
+        Determines if a model is unique based on its hash.
+
+        Parameters:
+            model_metadata (ModelMetadata): The metadata of the model to evaluate.
+
+        Returns:
+            bool: True if the model is unique, False otherwise.
+        """
+        model_hash = model_metadata.id.hash
+        is_unique = self.model_tracker.is_model_unique(hotkey, model_hash, model_metadata.block)
+        if not is_unique:
+            bt.logging.debug(
+                f"Model {model_metadata.id} is not unique. Hash: {model_hash}"
+            )
+        return is_unique
 
     def update_models(self, update_delay_minutes):
         # Track how recently we updated each uid
@@ -546,7 +564,7 @@ class Validator:
                 
                 # Ensure we eval the new model on the next loop.
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
-                if metadata is not None and self.is_model_old_enough(metadata):
+                if metadata is not None and self.is_model_old_enough(metadata) and self.is_model_unique(hotkey, metadata):
                     with self.all_uids_lock:
                         self.all_uids[metadata.id.competition_id].add(next_uid)
                     

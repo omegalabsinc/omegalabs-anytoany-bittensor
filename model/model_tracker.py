@@ -160,3 +160,18 @@ class ModelTracker:
                 self.miner_hotkey_to_last_touched_dict[hotkey] = now
 
             bt.logging.trace(f"Touched All Miners. datetime={now}.")
+
+    def is_model_unique(self, hotkey_to_check: str, hash_to_check: str, block_to_check: int) -> bool:
+        """Check if a model with a given hash is already in use."""
+
+        with self.lock:
+            for hotkey, metadata in self.miner_hotkey_to_model_metadata_dict.items():
+                if hotkey == hotkey_to_check:
+                    continue
+                if metadata.id.hash == hash_to_check and metadata.block < block_to_check:
+                    bt.logging.error(
+                        f"*** Model with hash {hash_to_check} on block {block_to_check} is not unique. Already in use by {hotkey} on block {metadata.block} for model {metadata.id.namespace}/{metadata.id.name}. ***"
+                    )
+                    return False
+            return True
+        
