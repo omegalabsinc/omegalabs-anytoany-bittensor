@@ -506,24 +506,6 @@ class Validator:
                 f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
             )
         return is_old_enough
-    
-    def is_model_unique(self, hotkey: str, model_metadata: ModelMetadata):
-        """
-        Determines if a model is unique based on its hash.
-
-        Parameters:
-            model_metadata (ModelMetadata): The metadata of the model to evaluate.
-
-        Returns:
-            bool: True if the model is unique, False otherwise.
-        """
-        model_hash = model_metadata.id.hash
-        is_unique = self.model_tracker.is_model_unique(hotkey, model_hash, model_metadata.block)
-        if not is_unique:
-            bt.logging.debug(
-                f"Model {model_metadata.id} is not unique. Hash: {model_hash}"
-            )
-        return is_unique
 
     def update_models(self, update_delay_minutes):
         # Track how recently we updated each uid
@@ -564,7 +546,7 @@ class Validator:
                 
                 # Ensure we eval the new model on the next loop.
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
-                if metadata is not None and self.is_model_old_enough(metadata) and self.is_model_unique(hotkey, metadata):
+                if metadata is not None and self.is_model_old_enough(metadata):
                     with self.all_uids_lock:
                         self.all_uids[metadata.id.competition_id].add(next_uid)
                     
@@ -923,7 +905,10 @@ class Validator:
                         score = get_model_score(
                             hf_repo_id,
                             mini_batch=eval_data,
-                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id)
+                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
+                            hotkey=hotkey,
+                            block=model_i_metadata.block,
+                            model_tracker=self.model_tracker
                         )
                         bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:
@@ -951,6 +936,21 @@ class Validator:
                 f"Computed model score for uid: {uid_i}: {score}"
             )
             bt.logging.debug(f"Computed model losses for uid: {uid_i}: {score}")
+
+        # let's loop through the final scores and make sure all model's are not copycats
+        for uid, score in scores_per_uid.items():
+            if score > 0:
+                hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
+                for other_uid, other_score in scores_per_uid.items():
+                    if other_score > 0 and other_uid != uid:
+                        other_hotkey, other_model_metadata = uid_to_hotkey_and_model_metadata[other_uid]
+                        if hotkey in self.model_tracker.miner_hotkey_to_last_touched_dict \
+                            and other_hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict \
+                            and self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey] == self.model_tracker.miner_hotkey_to_model_hash_dict[other_hotkey]:
+
+                            if model_metadata.block > other_model_metadata.block:
+                                bt.logging.info(f"*** Model from {hotkey} on block {model_metadata.block} is a copycat of {other_hotkey} on block {other_model_metadata.block} and will be scored 0. ***")
+                                scores_per_uid[uid] = 0
 
         # Compute wins and win rates per uid.
         wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)

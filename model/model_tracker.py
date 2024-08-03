@@ -4,6 +4,8 @@ import threading
 from typing import Dict, List, Optional, Set
 import pickle
 import bittensor as bt
+import hashlib
+
 from model.data import ModelMetadata
 
 
@@ -20,6 +22,8 @@ class ModelTracker:
         self.miner_hotkey_to_model_metadata_dict: dict[str, ModelMetadata] = dict()
         # Create a dict from miner hotkey to last time it was evaluated/loaded/updated
         self.miner_hotkey_to_last_touched_dict: dict[str, datetime.datetime] = dict()
+        # Create a dict from miner hotkey to model hash.
+        self.miner_hotkey_to_model_hash_dict: dict[str, str] = dict()
 
         # List of overwritten models that may be safe to delete if not curently in use.
         self.old_model_metadata: list[tuple[str, ModelMetadata]] = []
@@ -83,7 +87,7 @@ class ModelTracker:
                 bt.logging.error("Model metadata is not in use!")
 
             if (hotkey, metadata) in self.old_model_metadata:
-                bt.logging.trace("Releasing old model metadata for hotkey: {}", hotkey)
+                bt.logging.trace(f"Releasing old model metadata for hotkey: {hotkey}")
 
             self.model_metadata_in_use.remove(pair)
 
@@ -161,17 +165,51 @@ class ModelTracker:
 
             bt.logging.trace(f"Touched All Miners. datetime={now}.")
 
-    def is_model_unique(self, hotkey_to_check: str, hash_to_check: str, block_to_check: int) -> bool:
-        """Check if a model with a given hash is already in use."""
+    def update_model_hash(self, hotkey: str, new_model_hash: str) -> bool:
+        """
+        Update the model_hash for a given hotkey.
+        
+        Args:
+        hotkey (str): The miner's hotkey.
+        new_model_hash (str): The new model hash to be set.
+        
+        Returns:
+        bool: True if the update was successful, False if the hotkey was not found.
+        """
+        with self.lock:
+            self.miner_hotkey_to_model_hash_dict[hotkey] = new_model_hash
+            return True
+
+    def calculate_file_hash(self, file_path: str) -> str:
+        """Calculate SHA1 hash of a file."""
+        sha1 = hashlib.sha1()
+        with open(file_path, 'rb') as f:
+            while True:
+                data = f.read(65536)  # Read in 64kb chunks
+                if not data:
+                    break
+                sha1.update(data)
+        return sha1.hexdigest()
+
+    def is_model_unique(self, hotkey_to_check: str, block_to_check: int, model_checkpoint_path: str) -> bool:
+        """Check if a model with a given model_hash is already in use."""
+        # generate hash from model_checkpoint_path
+        hash_to_check = self.calculate_file_hash(model_checkpoint_path)
 
         with self.lock:
             for hotkey, metadata in self.miner_hotkey_to_model_metadata_dict.items():
-                if hotkey == hotkey_to_check:
+                if hotkey == hotkey_to_check or hotkey not in self.miner_hotkey_to_model_hash_dict:
                     continue
-                if metadata.id.hash == hash_to_check and metadata.block < block_to_check:
-                    bt.logging.error(
+                
+                if self.miner_hotkey_to_model_hash_dict[hotkey] == hash_to_check and metadata.block < block_to_check:
+                    bt.logging.warning(
                         f"*** Model with hash {hash_to_check} on block {block_to_check} is not unique. Already in use by {hotkey} on block {metadata.block} for model {metadata.id.namespace}/{metadata.id.name}. ***"
                     )
-                    return False
-            return True
+                    # Update the model hash for the hotkey
+                    self.update_model_hash(hotkey_to_check, hash_to_check)
+                    return False, hash_to_check
+                
+            # Update the model hash for the hotkey
+            self.update_model_hash(hotkey_to_check, hash_to_check)
+            return True, hash_to_check
         
