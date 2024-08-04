@@ -104,10 +104,25 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
     return imagebind({ModalityType.TEXT: load_and_transform_text(texts, device)})[ModalityType.TEXT]
 
 
-def get_model_score(hf_repo_id, mini_batch, local_dir):
+def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
     cleanup_gpu_memory()
     log_gpu_memory('before model load')
     inference_recipe, config = load_ckpt_from_hf(hf_repo_id, local_dir)
+
+    # Check if the model is unique. Calculates the model's checkpoint (.pt) file hash for storage.
+    is_model_unique, model_hash = model_tracker.is_model_unique(
+        hotkey, 
+        block, 
+        config.checkpointer.checkpoint_dir + "/" + config.checkpointer.checkpoint_files[0]
+    )
+    if is_model_unique:
+        bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
+    else:
+        bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
+        cleanup_gpu_memory()
+        log_gpu_memory('after model clean-up')
+        return 0
+
     bt.logging.info(f"Scoring {hf_repo_id}...")
     log_gpu_memory('after model load')
     batch_dim = config.batch_size
