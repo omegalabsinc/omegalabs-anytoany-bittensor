@@ -162,8 +162,8 @@ def get_mm_response(hf_repo_id, prompt, embeddings, assistant = ""):
     ] """
     #print("embeddings:\n", embeddings)
     
-    # pass the prompt and embeddings to the model. we reverse the embeddings so newest embeddings are first
-    mm_response = inference_recipe.generate_from_any(cfg=config, prompt=prompt, embeddings=embeddings[::-1], assistant=assistant)
+    # pass the prompt and embeddings to the model.
+    mm_response = inference_recipe.generate_from_any(cfg=config, prompt=prompt, embeddings=embeddings, assistant=assistant)
 
     # Unload model from GPU memory
     #del inference_recipe
