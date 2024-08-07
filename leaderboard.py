@@ -155,7 +155,13 @@ def process_file(uploaded_file):
                 
                 if embedding is not None:
                     st.session_state.embeddings.append({embed_type: embedding})
-                    st.session_state.processed_files.add(uploaded_file.name)
+                    st.session_state.processed_files.append({
+                        'name': uploaded_file.name,
+                        'type': embed_type,
+                        'url': url
+                    })
+                    #st.session_state.processed_files.add(uploaded_file.name)
+                    #st.session_state.processed_file_urls.add(url)
                     return f"Successfully processed {uploaded_file.name}"
                 else:
                     return f"Issue processing {uploaded_file.name}"
@@ -188,7 +194,25 @@ async def main():
     # Custom CSS for centering the title and table data
     st.markdown("""
         <style>
-        section.main > div {max-width:1200px;}
+        [data-testid="stAppViewContainer"] {
+            background-image: url('https://storage.googleapis.com/omega-a2a-mm-chat/omega-background.png');
+            background-size: cover;
+            background-position: center center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }
+
+        [data-testid="stAppViewContainer"]::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            left: 0;
+            background-color: rgba(0, 0, 0, 0.5);  /* Black background with 50% opacity */
+        }
+                
+        section.main > div {max-width:1400px;}
 
         .centered-title {
             text-align: center;
@@ -277,17 +301,78 @@ async def main():
 
     # Center the title
     st.markdown('<h1 class="centered-title">OMEGA Any-to-Any Demo</h1>', unsafe_allow_html=True)
-    
-    st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any multi-modal chat, model demos, and leaderboard. This streamlit showcases a multi-modal chat and video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
-    st.markdown('<p class="intro-text">On the "MM Chat" tab, upload video, audio, and/or image files and chat with our model to demonstrate how it understands multiple modalities.', unsafe_allow_html=True)
-    st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
-    st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
+
+    if 'show_intro' not in st.session_state:
+        st.session_state.show_intro = False
+    def toggle_intro():
+        st.session_state.show_intro = not st.session_state.show_intro
+
+    # Toggle button with icon
+    col1, col2 = st.columns([0.05, 0.95])
+    with col1:
+        st.button("Ω", on_click=toggle_intro, help="Toggle Introduction")
+
+    # Intro text (hidden by default)
+    with col2:
+        if st.session_state.show_intro:
+            st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any multi-modal chat, model demos, and leaderboard. This streamlit showcases a multi-modal chat and video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+            st.markdown('<p class="intro-text">On the "MM Chat" tab, upload video, audio, and/or image files and chat with our model to demonstrate how it understands multiple modalities.', unsafe_allow_html=True)
+            st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
+            st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
+
+    #st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any multi-modal chat, model demos, and leaderboard. This streamlit showcases a multi-modal chat and video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
+    #st.markdown('<p class="intro-text">On the "MM Chat" tab, upload video, audio, and/or image files and chat with our model to demonstrate how it understands multiple modalities.', unsafe_allow_html=True)
+    #st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
+    #st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
     tab1, tab2, tab3 = st.tabs(["Multi-Modal Chat", "Model Demos", "Leaderboard"])
 
     # Main column for chat
     with tab1:
-        st.title("📝 OMEGA Multi-Modal Chat")
+        st.title("Ω OMEGA Multi-Modal Chat")
+
+        tcol1, tcol2 = st.columns([0.4, 0.6])
+        with tcol1:
+            model_names = list(models.keys())[:5]
+            model_names = ["omega-anytoany-test"] + model_names
+
+            # Define the partial model name you're looking for
+            partial_model_name = "omega"
+
+            # Find the index of the first model name that contains the partial name
+            model_index = None
+            for i, name in enumerate(model_names):
+                if partial_model_name in name:
+                    model_index = i
+                    break
+
+            selected_model = st.selectbox(
+                "Select a model", 
+                model_names,
+                index=model_index,
+                placeholder="- Select a model -"
+            )
+
+        with tcol2:
+            if selected_model and selected_model != "- Select a model -":
+                if selected_model == "omega-anytoany-test":
+                    model_path = "briggers/omega_a2a_test4"
+                    model_path_display = "n/a"
+                    model_incentive = "n/a"
+                    model_rank = "n/a"
+                else:
+                    model_path = models[selected_model]['model_path']
+                    model_path_display = model_path
+                    model_incentive = models[selected_model]['incentive']
+                    model_rank = models[selected_model]['rank']
+
+                st.markdown(f"""
+                <p>
+                <strong>Model Path:</strong> <a href="http://huggingface.co/{model_path_display}">{model_path_display}</a><br>
+                <strong>Incentive:</strong> {model_incentive}<br>
+                <strong>Rank:</strong> {model_rank}
+                </p>
+                """, unsafe_allow_html=True)
 
         if "user_prompt_history" not in st.session_state:
             st.session_state["user_prompt_history"] = []
@@ -298,13 +383,36 @@ async def main():
         if "embeddings" not in st.session_state:
             st.session_state["embeddings"] = []
         if "processed_files" not in st.session_state:
-            st.session_state.processed_files = set()
+            st.session_state.processed_files = []
 
-        # Create a container for chat history
-        chat_container = st.container()
+        tcol1, tcol2 = st.columns([0.7, 0.3])
 
-        # Create a container for file upload and user input
-        input_container = st.container()
+        with tcol1:
+            # Create a container for chat history
+            chat_container = st.container()
+
+            # Create a container for file upload and user input
+            input_container = st.container()
+        with tcol2:
+            # Create a container for processed files
+            files_container = st.container()
+            with files_container:
+                # Display processed files
+                if st.session_state.processed_files:
+                    #st.divider()
+                    #st.subheader("Processed Files")
+                    for pf in st.session_state.processed_files:
+                        file_name = pf['name']
+                        file_type = pf['type']
+                        url = pf['url']
+                        if file_type == 'image':
+                            st.image(url, caption=file_name)
+                        elif file_type == 'video':
+                            st.video(url)
+                            st.text(f"{file_name}")
+                        elif file_type == 'audio':
+                            st.audio(url)
+                            st.text(f"{file_name}")
         
         # Inside the input container, add file uploader and chat input
         with input_container:
@@ -314,21 +422,12 @@ async def main():
             if uploaded_file:
                 #for uploaded_file in uploaded_files:
                 with st.spinner(f"Processing {uploaded_file.name}..."):
-                    if uploaded_file.name not in st.session_state.processed_files:
+                    if not any(file_info['name'] == uploaded_file.name for file_info in st.session_state.processed_files):
                         result = process_file(uploaded_file)
                         st.write(result)
+                        st.rerun()
 
             prompt = st.chat_input("Enter your questions here", disabled=not input)
-
-            files_container = st.container()
-            with files_container:
-                # Display processed files
-                if st.session_state.processed_files:
-                    st.divider()
-                    st.subheader("Processed Files")
-                    for file_name in st.session_state.processed_files:
-                        st.text(f"Processed: {file_name}")
-
             if prompt:
                 st.session_state.user_prompt_history.append(prompt)
                 
@@ -348,7 +447,7 @@ async def main():
                                 for i, msg in enumerate(limited_history)
                             ])
 
-                            mm_response = get_mm_response("briggers/omega_a2a_test4", prompt, st.session_state.embeddings, assistant)
+                            mm_response = get_mm_response(model_path, prompt, st.session_state.embeddings, assistant)
                             if mm_response is None:
                                 st.error("Issue processing your prompt, please try again.")
                             else:
@@ -358,13 +457,14 @@ async def main():
                             st.error(f"Error generating response: {str(e)}")
 
         # Display chat history in the chat container
-        with chat_container:
-            if st.session_state.chat_answers_history:
-                for user_msg, bot_msg in zip(st.session_state.user_prompt_history, st.session_state.chat_answers_history):
-                    message1 = st.chat_message("user")
-                    message1.write(user_msg)
-                    message2 = st.chat_message("assistant")
-                    message2.write(bot_msg)
+        with tcol1:
+            with chat_container:
+                if st.session_state.chat_answers_history:
+                    for user_msg, bot_msg in zip(st.session_state.user_prompt_history, st.session_state.chat_answers_history):
+                        message1 = st.chat_message("user")
+                        message1.write(user_msg)
+                        message2 = st.chat_message("assistant")
+                        message2.write(bot_msg)
 
        
     # Main column for model demo
