@@ -1,4 +1,4 @@
-# pip install streamlit datasets huggingface-hub ulid-py bittensor replicate google-cloud-storage
+# pip install streamlit datasets huggingface-hub ulid-py bittensor replicate google-cloud-storage ffmpeg-python
 
 import asyncio
 import os
@@ -12,6 +12,7 @@ import streamlit as st
 import pandas as pd
 import threading
 from urllib.parse import urlparse
+import ffmpeg
 #from moviepy.editor import VideoFileClip, concatenate_videoclips
 
 from neurons.mm_model_scoring import get_caption_from_model, get_mm_response
@@ -140,9 +141,9 @@ def get_file_type_from_url(url):
     else:
         return 'unknown'
 
-def process_file(uploaded_file):
+def process_file(uploaded_file, process_audio=True):
     try:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
 
@@ -155,13 +156,46 @@ def process_file(uploaded_file):
                 
                 if embedding is not None:
                     st.session_state.embeddings.append({embed_type: embedding})
+                    
+                    # Check if the file is a video and we want to process audio from the video
+                    if embed_type == 'video' and process_audio:
+                        # Check for audio stream
+                        probe = ffmpeg.probe(tmp_file_path)
+                        audio_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'audio'), None)
+                        
+                        if audio_stream:
+                            # Extract audio
+                            audio_output = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3').name
+                            (
+                                ffmpeg
+                                .input(tmp_file_path)
+                                .output(audio_output, acodec='libmp3lame', ac=2, ar='44100')
+                                .overwrite_output()
+                                .run(capture_stdout=True, capture_stderr=True)
+                            )
+                            
+                            # Upload extracted audio
+                            audio_url = gcs_upload_blob(audio_output, f"{os.path.splitext(uploaded_file.name)[0]}.mp3")
+                            
+                            # Generate audio embedding
+                            audio_embedding = embed_modality(audio_url, 'audio')
+                            
+                            if audio_embedding is not None:
+                                st.session_state.embeddings.append({'audio': audio_embedding})
+                                st.session_state.processed_files.append({
+                                    'name': f"{os.path.splitext(uploaded_file.name)[0]}.mp3",
+                                    'type': 'audio',
+                                    'url': audio_url
+                                })
+                            
+                            # Clean up
+                            os.unlink(audio_output)
+                    
                     st.session_state.processed_files.append({
                         'name': uploaded_file.name,
                         'type': embed_type,
                         'url': url
                     })
-                    #st.session_state.processed_files.add(uploaded_file.name)
-                    #st.session_state.processed_file_urls.add(url)
                     return f"Successfully processed {uploaded_file.name}"
                 else:
                     return f"Issue processing {uploaded_file.name}"
@@ -320,11 +354,6 @@ async def main():
             st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
             st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
 
-    #st.markdown('<p class="intro-text">Welcome to OMEGA Labs\' Any-to-Any multi-modal chat, model demos, and leaderboard. This streamlit showcases a multi-modal chat and video captioning capabilities from the latest models on Bittensor\'s subnet 21.<br /><strong>*Please note most models are undertrained right now (Q2 2024) given the early days of the subnet.</strong></p>', unsafe_allow_html=True)
-    #st.markdown('<p class="intro-text">On the "MM Chat" tab, upload video, audio, and/or image files and chat with our model to demonstrate how it understands multiple modalities.', unsafe_allow_html=True)
-    #st.markdown('<p class="intro-text">On the "Model Demos" tab, select a miner\'s model from the dropdown and then browse recent video submissions from subnet 24. Interact with the model by pressing the "Generate Caption for Video" button.</p>', unsafe_allow_html=True)
-    #st.markdown('<p class="intro-text">On the "Leaderboard" tab, checkout the latest rankings.</p>', unsafe_allow_html=True)
-
     tab1, tab2, tab3 = st.tabs(["Multi-Modal Chat", "Model Demos", "Leaderboard"])
 
     # Main column for chat
@@ -418,12 +447,16 @@ async def main():
         with input_container:
             st.divider()
             uploaded_file = st.file_uploader("Upload audio, video, or image files", type=["mp4", "mov", "avi", "mp3", "wav", "png", "jpg", "jpeg"], accept_multiple_files=False)
+
+            # Add checkbox for audio processing
+            process_audio = st.checkbox("Process audio if present in video file", value=True)
+
             # Process uploaded files
             if uploaded_file:
                 #for uploaded_file in uploaded_files:
                 with st.spinner(f"Processing {uploaded_file.name}..."):
                     if not any(file_info['name'] == uploaded_file.name for file_info in st.session_state.processed_files):
-                        result = process_file(uploaded_file)
+                        result = process_file(uploaded_file, process_audio)
                         st.write(result)
                         st.rerun()
 

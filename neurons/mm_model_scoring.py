@@ -77,7 +77,7 @@ def is_file_outdated(file_path: str, expiry_hours: int) -> bool:
     file_mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
     return datetime.now() - file_mod_time > timedelta(hours=expiry_hours)
 
-def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
+def load_ckpt_from_hf_cached(hf_repo_id: str, refresh_cache: bool = True) -> InferenceRecipe:
     hf_api = huggingface_hub.HfApi()
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
     if len(ckpt_files) == 0:
@@ -92,12 +92,12 @@ def load_ckpt_from_hf_cached(hf_repo_id: str) -> InferenceRecipe:
     ckpt_path = os.path.join(repo_cache_dir, ckpt_files[0])
 
     # Check if the files are outdated
-    if is_file_outdated(config_path, CACHE_EXPIRY_HOURS):
+    if is_file_outdated(config_path, CACHE_EXPIRY_HOURS) and refresh_cache:
         if os.path.exists(config_path):
             os.remove(config_path)
         config_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=CONFIG_FILE, local_dir=repo_cache_dir)
 
-    if is_file_outdated(ckpt_path, CACHE_EXPIRY_HOURS):
+    if is_file_outdated(ckpt_path, CACHE_EXPIRY_HOURS) and refresh_cache:
         if os.path.exists(ckpt_path):
             os.remove(ckpt_path)
         ckpt_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=ckpt_files[0], local_dir=repo_cache_dir)
@@ -152,7 +152,10 @@ def get_caption_from_model(hf_repo_id, video_emb):
     return generated_caption
 
 def get_mm_response(hf_repo_id, prompt, embeddings, assistant = ""):
-    inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id)
+    refresh_cache = True
+    if hf_repo_id == "briggers/omega_a2a_test4":
+        refresh_cache = False
+    inference_recipe, config = load_ckpt_from_hf_cached(hf_repo_id, refresh_cache)
 
     """ Example embeddings:
     embeddings = [
