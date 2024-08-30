@@ -45,4 +45,7 @@ COPY . .
 
 ENV HF_HOME=checkpoints
 
+# Set environment variable to use only 2 GPUs
+ENV CUDA_VISIBLE_DEVICES=0,1
+
 CMD ["/bin/bash"]
