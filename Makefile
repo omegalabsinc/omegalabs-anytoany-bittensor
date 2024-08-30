@@ -6,6 +6,7 @@ sh:
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
+		--network none \
 		a2a
 
 sh-headless:
@@ -15,6 +16,7 @@ sh-headless:
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
 		--name a2a \
+		--network none \
 		a2a
 	docker attach a2a
 
@@ -30,25 +32,39 @@ endif
 
 validator: a2a
 	docker run -it --detach --restart always \
-		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
+		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+		--gpus '"device=0,1"' \
+		--shm-size=1g \
+		--cpus=4 \
+		--memory=32g \
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
 		-e TQDM_DISABLE=True \
 		--env-file vali.env \
 		--name omega-a2a-validator \
+		--network none \
+		# Add host entries to resolve huggingface.co and wandb.ai to localhost
+		# This is useful for testing or when these services are locally mocked
+		--add-host=huggingface.co:0.0.0.0 \
 		a2a \
 		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF) --logging.trace
-	
+
 manual-validator: a2a
 	docker run -it --detach --restart always \
-		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --gpus=all \
+		--ipc=host --ulimit memlock=-1 --ulimit stack=67108864 \
+		--gpus '"device=0,1"' \
+		--shm-size=1g \
+		--cpus=4 \
+		--memory=32g \
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
 		-e TQDM_DISABLE=True \
 		--env-file .env \
 		--name omega-a2a-validator \
+		--network none \
+		--add-host=huggingface.co:0.0.0.0 \
 		a2a \
 		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF) --logging.trace
 
