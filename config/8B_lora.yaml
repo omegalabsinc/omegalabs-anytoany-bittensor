@@ -34,13 +34,13 @@ tokenizer:
 
 checkpointer:
   _component_: torchtune.utils.FullModelMetaCheckpointer
-  checkpoint_dir: checkpoints/Meta-Llama-3-8B-Instruct/original
+  checkpoint_dir: checkpoints/Meta-Llama-3.1-8B-Instruct/original
   checkpoint_files: [
     consolidated.00.pth
   ]
   adapter_checkpoint: null
   recipe_checkpoint: null
-  output_dir: output/Meta-Llama-3-8B-Instruct/
+  output_dir: output/Meta-Llama-3.1-8B-Instruct/
   model_type: LLAMA3
 resume_from_checkpoint: False
 interim_checkpoint_steps: 5000
@@ -59,18 +59,18 @@ dataset:
     datasets:
       - _component_: ds.OmegaVideoCaptionDataset
         length: 500000
-      - _component_: ds.LlavaInstructDataset
-        dataset_path: ds/coco_llava_instruct/output.parquet
-        train_on_input: False
-      - _component_: ds.LlavaInstructDataset
-        dataset_path: ds/vision_flan/output.parquet
-        train_on_input: False
-      - _component_: ds.CaptionInstructDataset
-        dataset_path: ds/sam_llava/output.parquet
-        train_on_input: False
-      # - _component_: ds.BagelLlama3Dataset
-      #   parquet_path: ds/bagel/bagel-input-output-v1.0.parquet
+      # - _component_: ds.LlavaInstructDataset
+      #   dataset_path: ds/coco_llava_instruct/output.parquet
       #   train_on_input: False
+      # - _component_: ds.LlavaInstructDataset
+      #   dataset_path: ds/vision_flan/output.parquet
+      #   train_on_input: False
+      # - _component_: ds.CaptionInstructDataset
+      #   dataset_path: ds/sam_llava/output.parquet
+      #   train_on_input: False
+      # # - _component_: ds.BagelLlama3Dataset
+      # #   parquet_path: ds/bagel/bagel-input-output-v1.0.parquet
+      # #   train_on_input: False
 
 seed: null
 shuffle: True

@@ -63,7 +63,7 @@ class EvenBatcher(IterableDataset):
     def _padded_collate(self, batch_list):
         batch, context_batch = [], []
         for input_ids, labels, context in batch_list:
-            batch.append((input_ids, labels))
+            batch.append({"tokens": input_ids, "labels": labels})
             context_batch.append(context)
         return utils.padded_collate(batch, self._pad_id, self._ignore_index), context_batch
 

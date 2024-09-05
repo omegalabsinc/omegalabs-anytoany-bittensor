@@ -248,9 +248,6 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
             last_epoch=self.total_training_steps - 1,
         )
 
-        self._profiler_enabled = cfg.profiler.enabled
-        self._profiler = config.instantiate(cfg.profiler)
-
     def _setup_model(
         self,
         cfg_model: DictConfig,
@@ -438,80 +435,74 @@ class LoRAFinetuneRecipeSingleDevice(FTRecipeInterface):
             # in case shuffle is True
             # self._sampler.set_epoch(curr_epoch)
 
-            # Optionally profile the training loop
-            with self._profiler:
-                for idx, batch in enumerate(pbar := tqdm(self._dataloader)):
-                    if (
-                        self.max_steps_per_epoch is not None
-                        and (idx // self._gradient_accumulation_steps)
-                        == self.max_steps_per_epoch
-                    ):
-                        break
+            for idx, batch in enumerate(pbar := tqdm(self._dataloader)):
+                if (
+                    self.max_steps_per_epoch is not None
+                    and (idx // self._gradient_accumulation_steps)
+                    == self.max_steps_per_epoch
+                ):
+                    break
 
-                    if self._profiler_enabled:
-                        self._profiler.step()
+                sample, mm_context = batch
+                input_ids = sample["tokens"].to(self._device)
+                labels = sample["labels"].to(self._device)
+                for context_dict in mm_context:
+                    for embed_dict in context_dict.values():
+                        for embed in embed_dict.values():
+                            embed.data = embed.to(self._device, self._dtype).data # in-place
 
-                    (input_ids, labels), mm_context = batch
-                    input_ids = input_ids.to(self._device)
-                    labels = labels.to(self._device)
-                    for context_dict in mm_context:
-                        for embed_dict in context_dict.values():
-                            for embed in embed_dict.values():
-                                embed.data = embed.to(self._device, self._dtype).data # in-place
+                # update embedding context in MMEmbedding object
+                # some unfortunate abstraction-breaking here
+                self._model.tok_embeddings.set_context(mm_context)
+                self._model.output.set_context(mm_context)
 
-                    # update embedding context in MMEmbedding object
-                    # some unfortunate abstraction-breaking here
-                    self._model.tok_embeddings.set_context(mm_context)
-                    self._model.output.set_context(mm_context)
+                logits = self._model(input_ids)
+                # Shift so that tokens < n predict n
+                logits = logits[..., :-1, :].contiguous()
+                labels = labels[..., 1:].contiguous()
+                logits = logits.transpose(1, 2)
+                # Compute loss
+                loss = self._loss_fn(logits, labels)
 
-                    logits = self._model(input_ids)
-                    # Shift so that tokens < n predict n
-                    logits = logits[..., :-1, :].contiguous()
-                    labels = labels[..., 1:].contiguous()
-                    logits = logits.transpose(1, 2)
-                    # Compute loss
-                    loss = self._loss_fn(logits, labels)
+                if self._model.output._clip_projections:
+                    clip_pred = torch.stack([p for p, _ in self._model.output._clip_projections])
+                    clip_embed = torch.stack([e for _, e in self._model.output._clip_projections])
+                    feature_loss = 1 - F.cosine_similarity(clip_pred, clip_embed).mean()
+                    loss += feature_loss
 
-                    if self._model.output._clip_projections:
-                        clip_pred = torch.stack([p for p, _ in self._model.output._clip_projections])
-                        clip_embed = torch.stack([e for _, e in self._model.output._clip_projections])
-                        feature_loss = 1 - F.cosine_similarity(clip_pred, clip_embed).mean()
-                        loss += feature_loss
+                if self.total_training_steps % self._log_every_n_steps == 0:
+                    pbar.set_description(
+                        f"{curr_epoch+1}|{idx+1}|Loss: {loss.item()}"
+                    )
+                    self._metric_logger.log_dict(
+                        {
+                            "loss": loss.item(),
+                            "lr": self._optimizer.param_groups[0]["lr"],
+                            "gpu_resources": torch.cuda.memory_allocated(),
+                        },
+                        step=self.total_training_steps,  # Each step is unique, not limited to each epoch
+                    )
 
-                    if self.total_training_steps % self._log_every_n_steps == 0:
-                        pbar.set_description(
-                            f"{curr_epoch+1}|{idx+1}|Loss: {loss.item()}"
-                        )
-                        self._metric_logger.log_dict(
-                            {
-                                "loss": loss.item(),
-                                "lr": self._optimizer.param_groups[0]["lr"],
-                                "gpu_resources": torch.cuda.memory_allocated(),
-                            },
-                            step=self.total_training_steps,  # Each step is unique, not limited to each epoch
-                        )
+                loss = loss / self._gradient_accumulation_steps
+                loss.backward()
 
-                    loss = loss / self._gradient_accumulation_steps
-                    loss.backward()
+                if (idx + 1) % self._gradient_accumulation_steps == 0:
+                    self._optimizer.step()
+                    self._optimizer.zero_grad(set_to_none=True)
+                    self._lr_scheduler.step()
 
-                    if (idx + 1) % self._gradient_accumulation_steps == 0:
-                        self._optimizer.step()
-                        self._optimizer.zero_grad(set_to_none=True)
-                        self._lr_scheduler.step()
+                    # Update the number of steps when the weights are updated
+                    self.total_training_steps += 1
 
-                        # Update the number of steps when the weights are updated
-                        self.total_training_steps += 1
-
-                    if (
-                        self.total_training_steps % self._log_peak_memory_every_n_steps
-                        == 0
-                        and self._device.type == "cuda"
-                    ):
-                        # Log peak memory for iteration
-                        memory_stats = utils.get_memory_stats(device=self._device)
-                        self._metric_logger.log_dict(
-                            memory_stats, step=self.total_training_steps
-                        )
+                if (
+                    self.total_training_steps % self._log_peak_memory_every_n_steps == 0
+                    and self._device.type == "cuda"
+                ):
+                    # Log peak memory for iteration
+                    memory_stats = utils.get_memory_stats(device=self._device)
+                    self._metric_logger.log_dict(
+                        memory_stats, step=self.total_training_steps
+                    )
 
             self.epochs_run += 1
             self.save_checkpoint(epoch=curr_epoch)

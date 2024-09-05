@@ -10,7 +10,7 @@ threadpoolctl==3.5.0
 datasets==2.19.2
 peft==0.11.1
 six==1.16.0
-torchtune @ git+https://github.com/pytorch/torchtune.git@8f59c2fecd722691271eecca630a526719a32f76#egg=torchtune
+torchtune @ git+https://github.com/pytorch/torchtune.git@43c7332ada45ce9b0364f65326f7cabc8a0caa81#egg=torchtune
 lm_eval==0.4
 torchvision==0.18.0
 torchdata @ git+https://github.com/pytorch/data.git@c78bbc7c69809172d13ce80cc8098ebc3715b96e#egg=torchdata
