@@ -1,12 +1,12 @@
 from torchtune.models import convert_weights
 
 from models.tokenizer import a2a_tokenizer
-from models.mmllama3 import lora_mmllama3_8b, mmllama3_8b, imagebind_huge
+from models.mmllama3 import lora_mmllama3_1_8b, mmllama3_1_8b, imagebind_huge
 
 __all__ = [
     "a2a_tokenizer",
-    "lora_mmllama3_8b",
-    "mmllama3_8b",
+    "lora_mmllama3_1_8b",
+    "mmllama3_1_8b",
     "imagebind_huge",
 ]
 

@@ -18,13 +18,13 @@
 
 # Model Arguments
 model:
-  _component_: models.lora_mmllama3_8b
+  _component_: models.lora_mmllama3_1_8b
   lora_attn_modules: ['q_proj', 'v_proj']
   apply_lora_to_mlp: False
   apply_lora_to_output: False
-  lora_rank: 8
-  lora_alpha: 16
-  perception_tokens: 2
+  lora_rank: 32
+  lora_alpha: 32
+  perception_tokens: 8
   use_clip: False
 
 # Tokenizer
@@ -43,7 +43,7 @@ checkpointer:
   output_dir: output/Meta-Llama-3.1-8B-Instruct/
   model_type: LLAMA3
 resume_from_checkpoint: False
-interim_checkpoint_steps: 5000
+interim_checkpoint_steps: 15000
 
 interim_gen_steps: null
 max_new_tokens: 100
@@ -58,23 +58,23 @@ dataset:
     _component_: ds.RoundRobinDataset
     datasets:
       - _component_: ds.OmegaVideoCaptionDataset
-        length: 500000
-      # - _component_: ds.LlavaInstructDataset
-      #   dataset_path: ds/coco_llava_instruct/output.parquet
+        length: 10000000
+      - _component_: ds.LlavaInstructDataset
+        dataset_path: ds/coco_llava_instruct/output.parquet
+        train_on_input: False
+      - _component_: ds.LlavaInstructDataset
+        dataset_path: ds/vision_flan/output.parquet
+        train_on_input: False
+      - _component_: ds.CaptionInstructDataset
+        dataset_path: ds/sam_llava/output.parquet
+        train_on_input: False
+      # - _component_: ds.BagelLlama3Dataset
+      #   parquet_path: ds/bagel/bagel-input-output-v1.0.parquet
       #   train_on_input: False
-      # - _component_: ds.LlavaInstructDataset
-      #   dataset_path: ds/vision_flan/output.parquet
-      #   train_on_input: False
-      # - _component_: ds.CaptionInstructDataset
-      #   dataset_path: ds/sam_llava/output.parquet
-      #   train_on_input: False
-      # # - _component_: ds.BagelLlama3Dataset
-      # #   parquet_path: ds/bagel/bagel-input-output-v1.0.parquet
-      # #   train_on_input: False
 
 seed: null
 shuffle: True
-batch_size: 4
+batch_size: 8
 
 # Optimizer and Scheduler
 optimizer:

@@ -5,7 +5,7 @@ import torch
 from torch import nn, Tensor
 from torchvision import transforms
 
-from torchtune.models.llama3 import lora_llama3_8b, llama3_8b
+from torchtune.models.llama3_1 import lora_llama3_1_8b, llama3_1_8b
 from torchtune.modules.peft import LORA_ATTN_MODULES, LoRALinear
 from torchtune.modules import TransformerDecoder
 
@@ -98,7 +98,7 @@ class MMLinear(nn.Linear):
 
 
 
-def lora_mmllama3_8b(
+def lora_mmllama3_1_8b(
     lora_attn_modules: List[LORA_ATTN_MODULES],
     apply_lora_to_mlp: bool = False,
     apply_lora_to_output: bool = False,
@@ -108,7 +108,7 @@ def lora_mmllama3_8b(
     perception_tokens: int = 2,
     use_clip: bool = False
 ) -> TransformerDecoder:
-    llama3 = lora_llama3_8b(
+    llama3 = lora_llama3_1_8b(
         lora_attn_modules,
         apply_lora_to_mlp,
         apply_lora_to_output,
@@ -121,11 +121,11 @@ def lora_mmllama3_8b(
     return llama3
 
 
-def mmllama3_8b(
+def mmllama3_1_8b(
     perception_tokens: int = 2,
     use_clip: bool = False
 ) -> TransformerDecoder:
-    llama3 = llama3_8b()
+    llama3 = llama3_1_8b()
     llama3.tok_embeddings = MMEmbedding(llama3.tok_embeddings, perception_tokens, use_clip)
     llama3.output = MMLinear(llama3.output)
     return llama3

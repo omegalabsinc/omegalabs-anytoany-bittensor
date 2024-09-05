@@ -511,9 +511,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                 ):
                     break
 
-                (input_ids, labels), mm_context = batch
-                input_ids = input_ids.to(self._device)
-                labels = labels.to(self._device)
+                sample, mm_context = batch
+                input_ids = sample["tokens"].to(self._device)
+                labels = sample["labels"].to(self._device)
                 for context_dict in mm_context:
                     for embed_dict in context_dict.values():
                         for embed in embed_dict.values():
@@ -574,7 +574,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     )
 
                 if (idx + 1) % self._interim_checkpoint_steps == 0 and self._is_rank_zero:
-                    self.save_checkpoint(epoch=curr_epoch, epoch_label="latest")
+                    self.save_checkpoint(epoch=curr_epoch, epoch_label=f"{curr_epoch:1d}_{idx:06d}")
 
             self.epochs_run += 1
             self.save_checkpoint(epoch=curr_epoch)
