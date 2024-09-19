@@ -47,11 +47,23 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
     return omega_dataset
 
 
-def load_ckpt_from_hf(hf_repo_id: str, local_dir) -> InferenceRecipe:
+def load_ckpt_from_hf(hf_repo_id: str, local_dir: str, target_file: str = "hotkey.txt") -> InferenceRecipe:
     repo_dir = Path(local_dir) / hf_repo_id
     bt.logging.info(f"Loading ckpt {hf_repo_id}, repo_dir: {repo_dir}")
 
     hf_api = huggingface_hub.HfApi()
+
+    # Download and read the target file
+    target_file_contents = None
+    try:
+        target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
+        with open(target_file_path, 'r') as file:
+            target_file_contents = file.read()
+    except huggingface_hub.utils._errors.EntryNotFoundError:
+        print(f"Warning: File '{target_file}' not found in the repository.")
+    except Exception as e:
+        print(f"An error occurred while trying to read '{target_file}': {str(e)}")
+
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
     if len(ckpt_files) == 0:
         raise ValueError(f"No checkpoint files found in {hf_repo_id}")
@@ -71,7 +83,7 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir) -> InferenceRecipe:
     train_cfg.tokenizer.path = "./models/tokenizer.model"
     inference_recipe = InferenceRecipe(train_cfg)
     inference_recipe.setup(cfg=train_cfg)
-    return inference_recipe, train_cfg
+    return inference_recipe, train_cfg, target_file_contents
 
 
 def get_gpu_memory():
@@ -107,7 +119,14 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
 def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
     cleanup_gpu_memory()
     log_gpu_memory('before model load')
-    inference_recipe, config = load_ckpt_from_hf(hf_repo_id, local_dir)
+    inference_recipe, config, license_file_contents = load_ckpt_from_hf(hf_repo_id, local_dir)
+
+    # Check if the contents of license file are the same as the hotkey if in repo
+    if license_file_contents is not None and license_file_contents != hotkey:
+        bt.logging.warning(f"*** License file contents {license_file_contents[:48]} do not match hotkey {hotkey}. Returning score of 0. ***")
+        cleanup_gpu_memory()
+        log_gpu_memory('after model clean-up')
+        return 0
 
     # Check if the model is unique. Calculates the model's checkpoint (.pt) file hash for storage.
     is_model_unique, model_hash = model_tracker.is_model_unique(
