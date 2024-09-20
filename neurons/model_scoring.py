@@ -119,14 +119,16 @@ def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
 def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
     cleanup_gpu_memory()
     log_gpu_memory('before model load')
-    inference_recipe, config, license_file_contents = load_ckpt_from_hf(hf_repo_id, local_dir)
+    inference_recipe, config, hotkey_file_contents = load_ckpt_from_hf(hf_repo_id, local_dir)
 
     # Check if the contents of license file are the same as the hotkey if in repo
-    if license_file_contents is not None and license_file_contents != hotkey:
-        bt.logging.warning(f"*** License file contents {license_file_contents[:48]} do not match hotkey {hotkey}. Returning score of 0. ***")
+    if hotkey_file_contents is not None and hotkey_file_contents != hotkey:
+        bt.logging.warning(f"*** Hotkey file contents {hotkey_file_contents[:48]} do not match hotkey {hotkey}. Returning score of 0. ***")
         cleanup_gpu_memory()
         log_gpu_memory('after model clean-up')
         return 0
+    elif hotkey_file_contents is not None and hotkey_file_contents == hotkey:
+        bt.logging.info(f"Hotkey file contents match hotkey {hotkey}")
 
     # Check if the model is unique. Calculates the model's checkpoint (.pt) file hash for storage.
     is_model_unique, model_hash = model_tracker.is_model_unique(

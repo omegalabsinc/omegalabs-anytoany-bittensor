@@ -130,6 +130,7 @@ async def main(config: bt.config):
     model_id_with_commit = await remote_model_store.upload_model(
         model=model,
         competition_parameters=parameters,
+        hotkey=wallet.hotkey.ss58_address
     )
 
     model_id_with_hash = ModelId(
