@@ -6,7 +6,7 @@
 import itertools
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, BinaryIO
 
 import torch
 from torch import nn
@@ -19,6 +19,7 @@ from torchtune.models import convert_weights
 from torchtune.data import Message
 
 from models.tokenizer import START_IMAGE, END_IMAGE, START_AUDIO, END_AUDIO, START_VIDEO, END_VIDEO
+from imagebind import data
 from imagebind.models.imagebind_model import ModalityType
 from diffusers import DiffusionPipeline
 
@@ -67,8 +68,8 @@ class InferenceRecipe:
             model_cfg=cfg.model,
             model_state_dict=ckpt_dict[utils.MODEL_KEY],
         )
-        with self._device:
-            self._model.setup_caches(max_batch_size=cfg.batch_size, dtype=self._dtype)
+        # with self._device:
+        #     self._model.setup_caches(max_batch_size=cfg.batch_size, dtype=self._dtype)
 
         self._embed_model = self._setup_embed_model(model_cfg=DictConfig({"_component_": "models.imagebind_huge"}))
         self._tokenizer = config.instantiate(cfg.tokenizer)
@@ -95,6 +96,10 @@ class InferenceRecipe:
         # Validate model was loaded in with the expected dtype.
         utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
         log.debug(f"Model is initialized with precision {self._dtype}.")
+
+        # Ensure the cache is setup on the right device
+        with self._device:
+            model.setup_caches(max_batch_size=1, dtype=self._dtype)
 
         return model
 
@@ -132,17 +137,26 @@ class InferenceRecipe:
             img = img.to(device=self._device, dtype=self._dtype)
             return self._clip_pipe.image_encoder(img).image_embeds.squeeze(0)
 
-    def extract_mm_context(self, video_ib_embed, tokens):
+    def extract_mm_context(self, embeddings, tokens):
         context = {}
         in_mm_embed = False
+        embed_index = 0
+        
         for idx, tok in enumerate(tokens):
-            in_mm_embed = in_mm_embed and not tok in self._mm_ids_end
-            if in_mm_embed:
-                #tokens[idx] # to support multiple embeds: get the value, match it up with the sample embed
+            if tok in self._mm_ids_end:
+                in_mm_embed = False
+                embed_index += 1  # Move to the next embedding
+            
+            if in_mm_embed and embed_index < len(embeddings):
+                embed_type, embed_value = next(iter(embeddings[embed_index].items()))
                 context[idx] = {
-                    "ib_embed": video_ib_embed.to(dtype=self._dtype, device=self._device),
+                    "ib_embed": torch.tensor(embed_value, dtype=self._dtype, device=self._device),
+                    #"embed_type": embed_type
                 }
-            in_mm_embed = in_mm_embed or tok in self._mm_ids_start
+            
+            if tok in self._mm_ids_start:
+                in_mm_embed = True
+        
         return context
 
     @torch.no_grad()
@@ -228,20 +242,41 @@ class InferenceRecipe:
 
 
     @torch.no_grad()
-    def generate_batch(self, cfg: DictConfig, video_ib_embed: torch.Tensor):
-        batch_dim = video_ib_embed.size(0)
+    def generate_batch(self, cfg: DictConfig, embeddings: List[Dict[str, List[float]]], assistant: str = "", prompt: str = None) -> str:
+        # embeddings: [{"image", [float]}, {"audio", [float]}, {"video", [float]}]
+        # prompt example: "Video:\n{video}\nCaption the previous video."
+        batch_dim = len(embeddings)
+        mm_prompt = ""
+        for embed in embeddings:
+            embed_type, embed_list = next(iter(embed.items()))
+            
+            if embed_type not in ("Image", "Audio", "Video"):
+                raise ValueError(f"Unknown embed type: {embed_type.lower()}")
+            
+            mm_prompt += f"{embed_type}: \n{{{embed_type.lower()}}}\n"
+
+        # combine the prompt with the mm_prompt
+        prompt = self.prompt_template if prompt is None else prompt
+        prompt = mm_prompt + prompt
+        # print("\n-------------------------\nprompt:\n-------------------------\n", prompt, "\n-------------------------\n")
+        
+
         messages = [
             Message(
                 role="user",
-                content=self.mm_process_prompt(self.prompt_template),
+                content=self.mm_process_prompt(prompt),
             ),
-            Message(role="assistant", content="")
+            Message(
+                role="assistant",
+                content=assistant,
+            )
         ]
         tokens, mask = self._tokenizer.tokenize_messages(messages)
         tokens = tokens[:-2] # strip eot and eos
-        mm_context = [self.extract_mm_context(e, tokens) for e in video_ib_embed] # context should be a list, batch-id indexed
+        mm_context = [self.extract_mm_context(embeddings, tokens) ] # context should be a list, batch-id indexed
         prompt = torch.tensor(tokens, dtype=torch.int, device=self._device).expand(batch_dim, -1).clone()
         prompt_length = prompt.size(1)
+
 
         self._model.tok_embeddings.set_context(mm_context)
         self._model.output.set_context(mm_context)
