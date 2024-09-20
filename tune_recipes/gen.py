@@ -250,7 +250,7 @@ class InferenceRecipe:
         for embed in embeddings:
             embed_type, embed_list = next(iter(embed.items()))
             
-            if embed_type not in ("Image", "Audio", "Video"):
+            if embed_type not in ("image", "audio", "video"):
                 raise ValueError(f"Unknown embed type: {embed_type.lower()}")
             
             mm_prompt += f"{embed_type}: \n{{{embed_type.lower()}}}\n"
