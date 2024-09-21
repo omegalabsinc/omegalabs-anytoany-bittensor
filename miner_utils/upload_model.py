@@ -130,6 +130,7 @@ async def main(config: bt.config):
     model_id_with_commit = await remote_model_store.upload_model(
         model=model,
         competition_parameters=parameters,
+        hotkey=wallet.hotkey.ss58_address
     )
 
     model_id_with_hash = ModelId(
@@ -152,13 +153,13 @@ async def main(config: bt.config):
     # We can only commit to the chain every n minutes, so run this in a loop, until successful.
     while True:
         try:
+            await model_metadata_store.store_model_metadata(
+                wallet.hotkey.ss58_address, model_id_with_hash
+            )
             update_repo_visibility(
                 model_id.namespace + "/" + model_id.name,
                 private=False,
                 token=os.getenv("HF_ACCESS_TOKEN"),
-            )
-            await model_metadata_store.store_model_metadata(
-                wallet.hotkey.ss58_address, model_id_with_hash
             )
             bt.logging.success("Committed model to the chain.")
             break
