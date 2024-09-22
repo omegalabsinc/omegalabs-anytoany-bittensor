@@ -1,0 +1,18 @@
+{
+    "video_and_audio_to_description": {
+        "prompt": "Caption the content of previous video and audio",
+        "embed_key": ["video_embed", "audio_embed"],
+        "output_key": ["description"]
+    },
+
+    "video_to_description": {
+        "prompt": "Caption the previous video",
+        "embed_key": ["video_embed"],
+        "output_key": ["description"]
+    },
+    "audio_to_description": {
+        "prompt": "Caption the previous audio",
+        "embed_key": ["audio_embed"],
+        "output_key": ["description"]
+    }
+}
