@@ -6,8 +6,8 @@ import json
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
-    #from imagebind.models import imagebind_model
-    from models.imagebind_wrapper import ImageBind
+    from imagebind.models import imagebind_model
+    from models.imagebind_wrapper import get_imagebind_v2, V2_PATH
     from imagebind.models.imagebind_model import ModalityType
     from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 
@@ -23,6 +23,7 @@ def parse_args():
     a.add_argument('--output-dir', type=Path, default='ds/coco_llava_instruct/tmp')
     a.add_argument('--progress-period', type=int, default=1024)
     a.add_argument('--write-period', type=int, default=100*1024)
+    a.add_argument('--v2', action='store_true', default=True)
     return a.parse_args()
 
 
@@ -37,13 +38,15 @@ if __name__ == "__main__":
     clip_pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-unclip-small", torch_dtype=dtype)
     clip_pipe.to(device)
 
-    #print('Loading imagebind model...')
-    #imagebind_model = imagebind_model.imagebind_huge(pretrained=True)
-    #imagebind_model.eval()
-    #imagebind_model.to(device)
-    print('Initializing and loading Imagebind v2 model...')
-    imagebind = ImageBind(v2=True)
-    imagebind_model = imagebind.imagebind
+    # load imagebind
+    if args.v2:
+        print('Initializing and loading Imagebind v2 model...')
+        imagebind_model = get_imagebind_v2(path=V2_PATH).imagebind_huge(pretrained=True)
+    else:
+        print('Initializing and loading Imagebind model...')
+        imagebind_model = imagebind_model.imagebind_huge(pretrained=True)
+    imagebind_model.eval()
+    imagebind_model.to(device)
 
     def imagebind_embed(img_tensor):
         return imagebind_model(

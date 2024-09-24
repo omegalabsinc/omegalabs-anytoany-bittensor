@@ -11,8 +11,8 @@ from torchtune.modules import TransformerDecoder
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
-    #from imagebind.models import imagebind_model
-    from models.imagebind_wrapper import ImageBind
+    from imagebind.models import imagebind_model
+    from models.imagebind_wrapper import get_imagebind_v2, V2_PATH
 
 IMAGEBIND_DIM = 1024
 CLIP_DIM = 768
@@ -132,9 +132,11 @@ def mmllama3_8b(
     return llama3
 
 
-def imagebind_huge():
-    #imagebind = imagebind_model.imagebind_huge(pretrained=True)
-    imagebind = ImageBind(v2=True)
+def imagebind_huge(use_v2: bool=True):
+    if use_v2:
+        imagebind = get_imagebind_v2(path=V2_PATH).imagebind_huge(pretrained=True)
+    else:
+        imagebind = imagebind_model.imagebind_huge(pretrained=True)
     imagebind.transform_from_pil = transforms.Compose([
         transforms.Resize(
             224, interpolation=transforms.InterpolationMode.BICUBIC
