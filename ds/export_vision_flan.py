@@ -26,6 +26,7 @@ def parse_args():
     a.add_argument('--progress-period', type=int, default=1024)
     a.add_argument('--write-period', type=int, default=100*1024)
     a.add_argument('--batch-dim', type=int, default=8)
+    a.add_argument('--v2', action='store_true', default=True)
     return a.parse_args()
 
 
