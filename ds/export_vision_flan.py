@@ -7,7 +7,8 @@ import json
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
-    from imagebind.models import imagebind_model
+    #from imagebind.models import imagebind_model
+    from models.imagebind_wrapper import ImageBind
     from imagebind.models.imagebind_model import ModalityType
     from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 
@@ -39,10 +40,13 @@ if __name__ == '__main__':
     clip_pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-unclip-small", torch_dtype=dtype)
     clip_pipe.to(device)
 
-    print('Loading imagebind model...')
-    imagebind_model = imagebind_model.imagebind_huge(pretrained=True)
-    imagebind_model.eval()
-    imagebind_model.to(device)
+    #print('Loading imagebind model...')
+    #imagebind_model = imagebind_model.imagebind_huge(pretrained=True)
+    #imagebind_model.eval()
+    #imagebind_model.to(device)
+    print('Initializing and loading Imagebind v2 model...')    
+    imagebind = ImageBind(v2=True)
+    imagebind_model = imagebind.imagebind
 
     def imagebind_embed(img_tensor):
         return imagebind_model(
