@@ -128,6 +128,6 @@ if __name__ == '__main__':
 
     print(f'Writing archives: {archive_idx}')
     torch.save(captions, args.output_dir / f'{archive_idx:02d}.caption.pt')
-    torch.save(torch.stack(ib__embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
+    torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
     torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
 
