@@ -159,7 +159,14 @@ class ModelQueueManager:
 
     def submit_score(self, model_hotkey, model_uid, scorer_hotkey, score):
         model = self.session.query(ModelQueue).filter_by(hotkey=model_hotkey, uid=model_uid).first()
-        if model and model.is_being_scored and model.is_being_scored_by == scorer_hotkey:
+        
+        if not model:
+            bt.logging.error(f"No model found for hotkey {model_hotkey} and uid {model_uid}")
+            return False
+
+        existing_scores = self.session.query(ScoreHistory).filter_by(hotkey=model_hotkey, uid=model_uid).count()
+
+        if existing_scores == 0 or (model.is_being_scored and model.is_being_scored_by == scorer_hotkey):
             new_score = ScoreHistory(
                 hotkey=model_hotkey,
                 uid=model_uid,
@@ -173,8 +180,14 @@ class ModelQueueManager:
             model.is_being_scored = False
             model.is_being_scored_by = None
             self.session.commit()
+            bt.logging.info(f"Successfully submitted score for model {model_hotkey} by {scorer_hotkey}")
             return True
-        return False
+        else:
+            bt.logging.error(f"Failed to submit score for model {model_hotkey} by {scorer_hotkey}. "
+                             f"Model: {model}, is_being_scored: {model.is_being_scored}, "
+                             f"is_being_scored_by: {model.is_being_scored_by}, "
+                             f"existing_scores: {existing_scores}")
+            return False
 
     def reset_stale_scoring_tasks(self, max_scoring_time_minutes=10):
         stale_time = datetime.utcnow() - timedelta(minutes=max_scoring_time_minutes)

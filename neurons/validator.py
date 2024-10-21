@@ -318,7 +318,8 @@ class Validator:
             "http://localhost:8000"
             #"https://dev-api.sn21.omega-labs.ai"
             if self.config.subtensor.network == "test"
-            else "https://api.sn21.omega-labs.ai"
+            else "http://localhost:8000"
+            #else "https://api.sn21.omega-labs.ai"
         )
         bt.logging.info(f"Using SN21 API: {api_root}")
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
@@ -1168,7 +1169,10 @@ class Validator:
                     json={
                         "miner_hotkey": miner_hotkey,
                         "miner_uid": miner_uid,
-                        "model_metadata": model_metadata,
+                        "model_metadata": {
+                            "id": model_metadata.id.to_compressed_str(),
+                            "block": model_metadata.block
+                        },
                         "model_score": model_score,
                     },
                 ) as response:
@@ -1176,7 +1180,7 @@ class Validator:
                     model = await response.json()
             return model
         except Exception as e:
-            bt.logging.debug(f"Error posting model score to API: {e}")
+            bt.logging.error(f"Error posting model score to API: {e}")
             return None
 
     async def get_all_model_scores(self) -> typing.Optional[typing.Dict[str, float]]:

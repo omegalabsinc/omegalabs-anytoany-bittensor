@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Depends, Body, Path, Security
 from fastapi.security import HTTPBasicCredentials, HTTPBasic
 from starlette import status
 from substrateinterface import Keypair
+from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import ModelQueueManager
 from api.config import NETWORK, NETUID, IS_PROD
@@ -48,6 +49,11 @@ def authenticate_with_bittensor(hotkey, metagraph):
 
     return True
 
+class ModelScoreResponse(BaseModel):
+    miner_hotkey: str
+    miner_uid: int
+    model_metadata: dict
+    model_score: float
 
 
 async def main():
@@ -116,9 +122,9 @@ async def main():
             logging.error(f"Error getting model to score: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
     
-    @app.post("/model-score")
+    @app.post("/score-model")
     async def post_model_score(
-        model_score_results: dict = Body(...),
+        model_score_results: ModelScoreResponse,
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
     ):
         if not authenticate_with_bittensor(hotkey, metagraph):
@@ -130,10 +136,25 @@ async def main():
         # get uid of bittensor validator
         uid = metagraph.hotkeys.index(hotkey)
 
+        """
+        {
+            "miner_hotkey": miner_hotkey,
+            "miner_uid": miner_uid,
+            "model_metadata": model_metadata,
+            "model_score": model_score,
+        }
+        """
+
         try:
             # In your API endpoint for submitting scores:
-            success = queue_manager.submit_score(model_score_results)
-            #success = queue_manager.submit_score(model_hotkey, scorer_hotkey, score, block_number)
+            print(f"Submitting score for model: {model_score_results.miner_hotkey, model_score_results.miner_uid, model_score_results.model_score}")
+            success = queue_manager.submit_score(
+                model_score_results.miner_hotkey,
+                model_score_results.miner_uid,
+                hotkey,
+                model_score_results.model_score
+                #model_score_results.model_metadata
+            )
             if success:
                 # Score submitted successfully
                 return {
