@@ -10,12 +10,11 @@ import ulid
 from omegaconf import OmegaConf, DictConfig
 import huggingface_hub
 from datasets import load_dataset, Dataset
-from imagebind.models.multimodal_preprocessors import SimpleTokenizer
-from imagebind.models.imagebind_model import ModalityType
 
 import bittensor as bt
 
 from tune_recipes.gen import InferenceRecipe
+from models.imagebind_wrapper import ImageBind
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -24,7 +23,10 @@ MIN_AGE = 4 * 60 * 60  # 4 hours
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
-BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
+#BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
+
+# Initialize the imagebind model
+#imagebind = ImageBind(v2=True)
 
 
 def get_timestamp_from_filename(filename: str):
@@ -103,18 +105,6 @@ def cleanup_gpu_memory():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
-def load_and_transform_text(text, device):
-    if text is None:
-        return None
-    tokenizer = SimpleTokenizer(bpe_path=BPE_PATH)
-    tokens = [tokenizer(t).unsqueeze(0).to(device) for t in text]
-    tokens = torch.cat(tokens, dim=0)
-    return tokens
-
-
-def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
-    return imagebind({ModalityType.TEXT: load_and_transform_text(texts, device)})[ModalityType.TEXT]
-
 
 def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
     cleanup_gpu_memory()
@@ -156,10 +146,8 @@ def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_trac
             cfg=config,
             video_ib_embed=video_embed
         )
-        text_embeddings = embed_text(
-            inference_recipe._embed_model,
-            generated_captions + actual_captions,
-            device=inference_recipe._device
+        text_embeddings = inference_recipe._embed_model.embed_text(
+            generated_captions + actual_captions
         )
         text_similarity = torch.nn.functional.cosine_similarity(
             text_embeddings[:video_embed.size(0)],
