@@ -69,7 +69,7 @@ checkpoints/sd2-1/%:
 
 
 # ===== from within container ===== #
-CKPT_OUTPUT ?= output_checkpoints/experiment_1
+CKPT_OUTPUT ?= output_checkpoints/experiment_IBv2
 OPTIONS ?=
 finetune-x1:
 	tune run tune_recipes/lora_finetune_single_device.py --config config/8B_lora.yaml \

@@ -3,7 +3,7 @@ import torch
 from imagebind import imagebind_model
 
 V2_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".checkpoints", "videobind.pth")
-V2_URL = "https://huggingface.co/jondurbin/videobind-v0.1/resolve/main/videobind.pth"
+V2_URL = "https://huggingface.co/jondurbin/videobind-v0.2/resolve/main/videobind.pth"
 
 # class ImageBind:
 #     def __init__(self, v2=True):

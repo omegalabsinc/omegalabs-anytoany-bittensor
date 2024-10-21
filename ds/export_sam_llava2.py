@@ -6,6 +6,12 @@ import warnings
 from pprint import pformat
 import tempfile
 from contextlib import contextmanager
+import tarfile
+import shutil
+import json
+import requests
+import urllib.parse
+import hashlib
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
@@ -21,23 +27,45 @@ from datasets import load_dataset
 from PIL import Image
 
 from diffusers import DiffusionPipeline
-from torchdata.datapipes.iter import IterableWrapper
-from iopath.common.file_io import PathManager
-import requests
-import urllib.parse
-import hashlib
-
-import tarfile
-import shutil
 
 class BatchFileProcessor:
-    def __init__(self, sam_dataset, temp_dir, batch_size=3):
+    def __init__(self, sam_dataset, temp_dir, checkpoint_file, batch_size=5):
         self.sam_dataset = sam_dataset
         self.temp_dir = temp_dir
         self.batch_size = batch_size
+        self.checkpoint_file = checkpoint_file
         self.processed_files = set()
+        self.existing_files = self.get_existing_tar_files()
+        self.load_checkpoint()
+
+    def get_existing_tar_files(self):
+        return [f for f in os.listdir(self.temp_dir) if f.endswith('.tar')]
+
+    def load_checkpoint(self):
+        if os.path.exists(self.checkpoint_file):
+            with open(self.checkpoint_file, 'r') as f:
+                checkpoint = json.load(f)
+                self.processed_files = set(checkpoint['processed_files'])
+                self.last_archive_idx = checkpoint.get('last_archive_idx', -1)
+        else:
+            self.last_archive_idx = -1
+
+    def save_checkpoint(self, archive_idx):
+        print(f'Saving checkpoint with archive index {archive_idx} to {self.checkpoint_file}...')
+        with open(self.checkpoint_file, 'w') as f:
+            json.dump({
+                'processed_files': list(self.processed_files),
+                'last_archive_idx': archive_idx
+            }, f)
 
     def process_batches(self):
+        # Process existing files first
+        for filename in self.existing_files:
+            temp_file = os.path.join(self.temp_dir, filename)
+            if temp_file not in self.processed_files:
+                yield temp_file
+                self.processed_files.add(temp_file)
+
         batch = []
         for file_uri in self.sam_dataset:
             if file_uri.startswith('http'):
@@ -46,6 +74,9 @@ class BatchFileProcessor:
                 filename = os.path.basename(file_uri)
             
             temp_file = os.path.join(self.temp_dir, filename)
+            
+            if temp_file in self.processed_files:
+                continue  # Skip already processed files
             
             if os.path.exists(temp_file):
                 # Prioritize existing files
@@ -88,18 +119,12 @@ class BatchFileProcessor:
         self.processed_files.clear()
 
     def sanitize_filename(self, url):
-        # Extract the filename from the URL
         parsed_url = urllib.parse.urlparse(url)
         path = parsed_url.path
         filename = os.path.basename(path)
-        
-        # Remove query parameters
         filename = filename.split('?')[0]
-        
-        # If filename is empty or doesn't have an extension, use a hash of the URL
         if not filename or '.' not in filename:
             filename = hashlib.md5(url.encode()).hexdigest() + '.tar'
-        
         return filename
 
     def download_file(self, url, temp_file):
@@ -108,7 +133,6 @@ class BatchFileProcessor:
         with open(temp_file, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-
 
 def process_tar_file(file_path, key_to_caption_idx, caption_dataset, image_transform, imagebind_embed):
     captions, ib_embeds = [], []
@@ -126,60 +150,6 @@ def process_tar_file(file_path, key_to_caption_idx, caption_dataset, image_trans
                             ib_embeds.append(imagebind_embed(image_transform(img)))
     return captions, ib_embeds
 
-class CustomFileOpener(IterDataPipe):
-    def __init__(self, datapipe, mode='rb', temp_dir=None):
-        self.datapipe = datapipe
-        self.mode = mode
-        self.temp_dir = temp_dir
-        self.path_manager = PathManager()
-
-    def sanitize_filename(self, url):
-        # Extract the filename from the URL
-        parsed_url = urllib.parse.urlparse(url)
-        path = parsed_url.path
-        filename = os.path.basename(path)
-        
-        # Remove query parameters
-        filename = filename.split('?')[0]
-        
-        # If filename is empty or doesn't have an extension, use a hash of the URL
-        if not filename or '.' not in filename:
-            filename = hashlib.md5(url.encode()).hexdigest() + '.tar'
-        
-        return filename
-
-    def download_file(self, url, temp_file):
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        with open(temp_file, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
-    def __iter__(self):
-        for file_uri in self.datapipe:
-            if file_uri.startswith('http'):
-                # This is a URL, we need to download it
-                filename = self.sanitize_filename(file_uri)
-                temp_file = os.path.join(self.temp_dir, filename)
-                try:
-                    self.download_file(file_uri, temp_file)
-                    file_uri = temp_file
-                except Exception as e:
-                    print(f"Error downloading file {file_uri}: {str(e)}")
-                    continue
-            elif self.temp_dir:
-                # This is a local file, but we want to copy it to the temp directory
-                temp_file = os.path.join(self.temp_dir, os.path.basename(file_uri))
-                self.path_manager.copy(file_uri, temp_file)
-                file_uri = temp_file
-
-            try:
-                with self.path_manager.open(file_uri, self.mode) as file:
-                    content = file.read()
-                yield file_uri, content
-            except Exception as e:
-                print(f"Error processing file {file_uri}: {str(e)}")
-
 def parse_args():
     a = argparse.ArgumentParser()
     a.add_argument('--key-to-idx-path', type=Path, default='ds/sam_llava/key_to_idx.pt')
@@ -191,9 +161,7 @@ def parse_args():
     a.add_argument('--temp-dir', type=Path, default='ds/sam_llava/tmpfiles', help='Temporary directory for downloaded files')
     return a.parse_args()
 
-
-if __name__ == '__main__':
-    args = parse_args()
+def main(args):
     print(f'args:\n{pformat(vars(args))}')
 
     # Set up temporary directory
@@ -213,7 +181,6 @@ if __name__ == '__main__':
     # load imagebind
     if args.v2:
         print('Initializing and loading Imagebind v2 model...')
-        #imagebind_model = get_imagebind_v2(path=V2_PATH).imagebind_huge(pretrained=True)
         imagebind_model = get_imagebind_v2(path=V2_PATH)
     else:
         print('Initializing and loading Imagebind model...')
@@ -228,7 +195,6 @@ if __name__ == '__main__':
 
     print('Loading caption dataset...')
     caption_dataset = load_dataset("PixArt-alpha/SAM-LLaVA-Captions10M")["train"]
-    # caption_dataset = caption_dataset.train_test_split(seed=1337, test_size=0.05)[split_name]
 
     key_to_caption_idx_path = args.key_to_idx_path
     if key_to_caption_idx_path.exists():
@@ -258,18 +224,9 @@ if __name__ == '__main__':
         print("Warning: The dataset is empty. Please check your input file.")
         exit()
 
-    sam_dataset = CustomFileOpener(sam_dataset, mode='rb', temp_dir=temp_dir)
-
-    """
-    sam_dataset = FileOpener(
-        [str(args.sam_sources_path)]
-    ).parse_csv(
-        delimiter=' ',
-        skip_lines=1
-    ).map(
-        lambda t: t[4] # just need url
-    ).open_files_by_iopath(mode='rb').load_from_tar()
-    """
+    checkpoint_file = args.output_dir / 'sam_llava_checkpoint.json'
+    batch_processor = BatchFileProcessor(sam_dataset, args.temp_dir, checkpoint_file, batch_size=5)
+    print(f'Found {len(batch_processor.existing_files)} existing .tar files in the temporary directory.')
 
     image_transform = transforms.Compose([
         transforms.Resize(
@@ -283,42 +240,47 @@ if __name__ == '__main__':
         ),
     ])
 
-    archive_idx = 0
-    captions, ib_embeds, clip_embeds = [], [], []
+    archive_idx = batch_processor.last_archive_idx + 1
+    captions, ib_embeds = [], []
 
-    print('Processing images...')
+    print(f'Processing images starting from archive index {archive_idx}...')
 
-    for i, (key_path, value) in enumerate(sam_dataset):
-        key_path = Path(key_path)
-        if key_path.suffix == ".jpg":
-            key = key_path.stem
-            caption_idx = key_to_caption_idx.get(key)
-            if caption_idx:
-                captions.append(caption_dataset[caption_idx]["txt"])
+    for batch_idx, tar_file in enumerate(batch_processor.process_batches()):
+        print(f"Processing file {batch_idx + 1}: {tar_file}")
+        batch_captions, batch_ib_embeds = process_tar_file(
+            tar_file, key_to_caption_idx, caption_dataset, image_transform, imagebind_embed
+        )
+        captions.extend(batch_captions)
+        ib_embeds.extend(batch_ib_embeds)
 
-                img = Image.open(io.BytesIO(value.read())).convert('RGB')
+        print(f"Current number of processed captions: {len(captions)}")
+        print(f"Current number of processed embeddings: {len(ib_embeds)}")
 
-                with torch.no_grad():
-                    # imagebind
-                    ib_embeds.append(imagebind_embed(image_transform(img)))
+        # Write out files more frequently
+        if len(captions) >= min(args.write_period, 1000):  # Write at least every 1000 samples
+            print(f'Writing archives: {archive_idx}')
+            torch.save(captions, args.output_dir / f'{archive_idx:02d}.caption.pt')
+            torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
+            batch_processor.save_checkpoint(archive_idx)
+            print(f"Checkpoint saved for archive index: {archive_idx}")
+            archive_idx += 1
+            captions, ib_embeds = [], []
 
-                    # clip
-                    #img = clip_pipe.feature_extractor(images=img, return_tensors="pt").pixel_values
-                    #img = img.to(device=device, dtype=dtype)
-                    #clip_embeds.append(clip_pipe.image_encoder(img).image_embeds.squeeze(0).cpu())
+        if (batch_idx + 1) % 5 == 0:
+            print(f"Cleaning up after processing {batch_idx + 1} files")
+            batch_processor.cleanup_batch()
 
-                if len(captions) % args.progress_period == 0:
-                    print(len(captions), '...')
-                if len(captions) > args.write_period:
-                    print(f'Writing archives: {archive_idx}')
-                    torch.save(captions, args.output_dir / f'{archive_idx:02d}.caption.pt')
-                    torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
-                    #torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
-                    archive_idx += 1 
-                    captions, ib_embeds, clip_embeds = [], [], []
+    # Write any remaining data
+    if captions:
+        print(f'Writing final archives: {archive_idx}')
+        torch.save(captions, args.output_dir / f'{archive_idx:02d}.caption.pt')
+        torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
+        batch_processor.save_checkpoint(archive_idx)
+        print(f"Final checkpoint saved for archive index: {archive_idx}")
 
-    print(f'Writing archives: {archive_idx}')
-    torch.save(captions, args.output_dir / f'{archive_idx:02d}.caption.pt')
-    torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
-    #torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
+    batch_processor.cleanup_batch()  # Clean up any remaining files
+    print("Processing completed.")
 
+if __name__ == '__main__':
+    args = parse_args()
+    main(args)
