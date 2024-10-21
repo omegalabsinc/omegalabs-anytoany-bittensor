@@ -26,6 +26,9 @@ MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
 BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
 
+TOKEN_CHUNK_SIZE = 75
+MAX_LENGTH = 1024
+
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
@@ -103,6 +106,50 @@ def cleanup_gpu_memory():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
+def split_text_by_token_limit(text, tokenizer, max_tokens=TOKEN_CHUNK_SIZE):
+    def fits_in_token_limit(text_segment):
+        tokens = tokenizer(text_segment)
+        tokens = tokens[tokens != 0][1:-1].tolist()
+        return len(tokens) <= max_tokens
+
+    def recursive_split(text, delimiters):
+        if fits_in_token_limit(text):
+            return [text]
+        if not delimiters:
+            return split_by_tokens(text)
+        delimiter = delimiters[0]
+        parts = text.split(delimiter)
+        result = []
+        current_segment = ""
+        for part in parts:
+            candidate_segment = current_segment + (delimiter if current_segment else '') + part
+            if fits_in_token_limit(candidate_segment):
+                current_segment = candidate_segment
+            else:
+                if current_segment:
+                    result.append(current_segment)
+                current_segment = part
+        if current_segment:
+            result.append(current_segment)
+        final_result = []
+        for segment in result:
+            if fits_in_token_limit(segment):
+                final_result.append(segment)
+            else:
+                final_result.extend(recursive_split(segment, delimiters[1:]))
+        return final_result
+
+    def split_by_tokens(text):
+        tokens = tokenizer(text)
+        tokens = tokens[tokens!=0][1:-1].tolist()
+        chunks = np.array_split(tokens, int(len(tokens) / max_tokens) or 1)
+        return [
+            tokenizer.decode(segment_tokens)
+            for segment_tokens in chunks
+        ]
+
+    return recursive_split(text, ['\n', '.', '!', '?', ',', ' '])
+
 def load_and_transform_text(text, device):
     if text is None:
         return None
@@ -111,9 +158,21 @@ def load_and_transform_text(text, device):
     tokens = torch.cat(tokens, dim=0)
     return tokens
 
+def load_and_transform_text_chunks(text, device):
+    if not text:
+        return []
+    tokenizer = SimpleTokenizer(bpe_path=BPE_PATH, context_length=MAX_LENGTH)
+    text_segments = split_text_by_token_limit(text, tokenizer)
+    return load_and_transform_text(text_segments, device)
+
+def generate_text_embeddings(imagebind, text: str, device):
+    chunks = load_and_transform_text_chunks(text, device)
+    embeddings = imagebind({ModalityType.TEXT: chunks})[ModalityType.TEXT]
+    return torch.mean(embeddings, dim=0)
 
 def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
-    return imagebind({ModalityType.TEXT: load_and_transform_text(texts, device)})[ModalityType.TEXT]
+    return torch.stack([generate_text_embeddings(imagebind, text, device) for text in texts])
+    #return imagebind({ModalityType.TEXT: load_and_transform_text(texts, device)})[ModalityType.TEXT]
 
 
 def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
