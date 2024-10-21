@@ -26,6 +26,7 @@ import numpy as np
 import shutil
 from subprocess import Popen, PIPE
 import asyncio
+from aiohttp import ClientSession, BasicAuth
 import argparse
 import typing
 import random
@@ -40,6 +41,7 @@ from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from model.storage.disk.disk_model_store import DiskModelStore
+from model.storage.mysql_model_queue import ModelQueueManager
 from model.storage.disk.utils import get_hf_download_path
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 from datasets import disable_caching
@@ -145,6 +147,11 @@ class Validator:
             type=int,
             default=100,
             help="Number of blocks to wait before setting weights.",
+        )
+        parser.add_argument(
+            "--run_api",
+            action="store_true",
+            help="Validator code runs api tasks.",
         )
         parser.add_argument(
             "--sample_total_models",
@@ -289,15 +296,16 @@ class Validator:
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
 
-        try:
-            # early exit if GPU memory insufficient
-            total_gb, used_gb, avail_gb = get_gpu_memory()
-            if avail_gb < GPU_MEM_GB_REQD:
-                m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
-                bt.logging.error(m)
-                raise RuntimeError(m)
-        except Exception as e:
-            bt.logging.error(f"Failed to get GPU memory: {e}")
+        if not self.config.run_api:
+            try:
+                # early exit if GPU memory insufficient
+                total_gb, used_gb, avail_gb = get_gpu_memory()
+                if avail_gb < GPU_MEM_GB_REQD:
+                    m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
+                    bt.logging.error(m)
+                    raise RuntimeError(m)
+            except Exception as e:
+                bt.logging.error(f"Failed to get GPU memory: {e}")
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
@@ -305,6 +313,18 @@ class Validator:
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.metagraph: bt.metagraph = self.subtensor.metagraph(self.config.netuid)
         torch.backends.cudnn.benchmark = True
+
+        api_root = (
+            "http://localhost:8000"
+            #"https://dev-api.sn21.omega-labs.ai"
+            if self.config.subtensor.network == "test"
+            else "https://api.sn21.omega-labs.ai"
+        )
+        bt.logging.info(f"Using SN21 API: {api_root}")
+        self.get_model_endpoint = f"{api_root}/get-model-to-score"
+        self.score_model_endpoint = f"{api_root}/score-model"
+        self.get_all_model_scores_endpoint = f"{api_root}/get-all-model-scores"
+
 
         # Dont check registration status if offline.
         if not self.config.offline:
@@ -446,22 +466,23 @@ class Validator:
         # Touch all models, starting a timer for them to be deleted if not used
         self.model_tracker.touch_all_miner_models()
         
-        # == Initialize the update thread ==
-        self.stop_event = threading.Event()
-        self.update_thread = threading.Thread(
-            target=self.update_models,
-            args=(self.config.update_delay_minutes,),
-            daemon=True,
-        )
-        self.update_thread.start()
+        if self.config.run_api:
+            # == Initialize the update thread ==
+            self.stop_event = threading.Event()
+            self.update_thread = threading.Thread(
+                target=self.update_models,
+                args=(self.config.update_delay_minutes,),
+                daemon=True,
+            )
+            self.update_thread.start()
 
-        # == Initialize the cleaner thread to remove outdated models ==
-        self.clean_thread = threading.Thread(
-            target=self.clean_models,
-            args=(self.config.clean_period_minutes,),
-            daemon=True,
-        )
-        self.clean_thread.start()
+            # == Initialize the cleaner thread to remove outdated models ==
+            self.clean_thread = threading.Thread(
+                target=self.clean_models,
+                args=(self.config.clean_period_minutes,),
+                daemon=True,
+            )
+            self.clean_thread.start()
 
         # == Initialize the weight setting thread ==
         if not self.config.dont_set_weights and not self.config.offline:
@@ -510,6 +531,7 @@ class Validator:
     def update_models(self, update_delay_minutes):
         # Track how recently we updated each uid
         uid_last_checked = dict()
+        queue_manager = ModelQueueManager()
 
         # The below loop iterates across all miner uids and checks to see
         # if they should be updated.
@@ -543,7 +565,18 @@ class Validator:
 
                 # Compare metadata and tracker, syncing new model from remote store to local if necessary.
                 updated = asyncio.run(self.model_updater.sync_model(hotkey))
+
+                metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+                if metadata is not None and self.is_model_old_enough(metadata):
+                    queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
+                    
+                    bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
+                    if updated:
+                        bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
+                else:
+                    bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
                 
+                """
                 # Ensure we eval the new model on the next loop.
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
@@ -560,6 +593,7 @@ class Validator:
                             self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
                 else:
                     bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
+                """
 
             except Exception as e:
                 bt.logging.error(
@@ -952,6 +986,16 @@ class Validator:
                                 bt.logging.info(f"*** Model from {hotkey} on block {model_metadata.block} is a copycat of {other_hotkey} on block {other_model_metadata.block} and will be scored 0. ***")
                                 scores_per_uid[uid] = 0
 
+        # Post model scores to the API
+        for uid, score in scores_per_uid.items():
+            hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
+            if model_metadata is not None:
+                try:
+                    await self.post_model_score(hotkey, uid, model_metadata, score)
+                except Exception as e:
+                    bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
+                    bt.logging.error(traceback.format_exc())
+        
         # Compute wins and win rates per uid.
         wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
         # Compute softmaxed weights based on win rate.
@@ -1080,6 +1124,86 @@ class Validator:
         # Sink step log.
         bt.logging.info(f"Step results: {step_log}")
 
+    async def get_model_to_score(self) -> str:
+        """
+        Queries the SN21 API for the next model to score.
+
+        Returns:
+        - float: The reward value for the miner.
+        """
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        
+        try:
+            async with ClientSession() as session:
+                async with session.post(
+                    self.get_model_endpoint,
+                    auth=BasicAuth(hotkey, signature),
+                    json=None,
+                ) as response:
+                    response.raise_for_status()
+                    model = await response.json()
+            return model
+        except Exception as e:
+            bt.logging.debug(f"Error retrieving model to score from API: {e}")
+            return None
+        
+    async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_score) -> bool:
+        """
+        Posts the score of a model to the SN21 API.
+
+        Returns:
+        - bool: True if the score was successfully posted, False otherwise.
+        """
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        
+        try:
+            async with ClientSession() as session:
+                async with session.post(
+                    self.score_model_endpoint,
+                    auth=BasicAuth(hotkey, signature),
+                    json={
+                        "miner_hotkey": miner_hotkey,
+                        "miner_uid": miner_uid,
+                        "model_metadata": model_metadata,
+                        "model_score": model_score,
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    model = await response.json()
+            return model
+        except Exception as e:
+            bt.logging.debug(f"Error posting model score to API: {e}")
+            return None
+
+    async def get_all_model_scores(self) -> typing.Optional[typing.Dict[str, float]]:
+        """
+        Gets all the current scores of models from the SN21 API.
+
+        Returns:
+        - Dict[str, float]: A dictionary of model IDs to their scores.
+        """
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        
+        try:
+            async with ClientSession() as session:
+                async with session.post(
+                    self.get_all_scores_endpoint,
+                    auth=BasicAuth(hotkey, signature),
+                    json=None,
+                ) as response:
+                    response.raise_for_status()
+                    model_scores = await response.json()
+            return model_scores
+        except Exception as e:
+            bt.logging.debug(f"Error posting model score to API: {e}")
+            return None
+
     async def run(self):
         while True:
             try:
@@ -1087,11 +1211,12 @@ class Validator:
                     self.metagraph.block.item() - self.last_epoch
                     < self.config.blocks_per_epoch
                 ):
-                    await self.try_run_step(ttl=60 * 50)
-                    bt.logging.debug(
-                        f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
-                    )
-                    self.global_step += 1
+                    if not self.config.run_api:
+                        await self.try_run_step(ttl=60 * 50)
+                        bt.logging.debug(
+                            f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
+                        )
+                        self.global_step += 1
 
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1
