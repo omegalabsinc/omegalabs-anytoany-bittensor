@@ -110,13 +110,23 @@ async def main():
         try:
             next_model = queue_manager.get_next_model_to_score()
             if next_model:
-                success = queue_manager.mark_model_as_being_scored(next_model.hotkey, hotkey)
+                success = queue_manager.mark_model_as_being_scored(next_model.hotkey, next_model.uid, hotkey)
                 if success:
-                    return next_model
+                    return {
+                        "success": True,
+                        "miner_uid": next_model.uid
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": "Failed to mark model as being scored"
+                    }
             
             else:
-                # return 200 with no model to score
-                return None
+                return {
+                    "success": False,
+                    "message": "No model available to score. This should be a rare occurrence."
+                }
                 
         except Exception as e:
             logging.error(f"Error getting model to score: {e}")
@@ -158,15 +168,17 @@ async def main():
             if success:
                 # Score submitted successfully
                 return {
+                    "success": True,
                     "message": "Model score results successfully updated from validator "
                     + str(uid)
                 }
             else:
                 # Error in submitting score, perhaps model is not being scored or by a different validator
-                raise HTTPException(
-                    status_code=500, detail="Failed to update model score results from validator "
+                return {
+                    "success": False,
+                    "message": "Failed to update model score results from validator "
                     + str(uid)
-                )
+                }
         except Exception as e:
             logging.error(f"Error posting post_model_score: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
@@ -186,7 +198,16 @@ async def main():
 
         try:
             all_model_scores = queue_manager.get_all_model_scores()
-            return all_model_scores
+            if all_model_scores:
+                return {
+                    "success": True,
+                    "model_scores": all_model_scores
+                }
+            elif not all_model_scores or len(all_model_scores) == 0:
+                return {
+                    "success": False,
+                    "message": "No model scores available. This should be a rare occurrence."
+                }
         except Exception as e:
             logging.error(f"Error getting all model scores: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")

@@ -24,6 +24,7 @@ class ModelQueue(Base):
     is_new = Column(Boolean, default=True)
     is_being_scored = Column(Boolean, default=False)
     is_being_scored_by = Column(String(255), default=None)
+    scoring_updated_at = Column(DateTime, default=None)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationship to ScoreHistory
@@ -117,42 +118,66 @@ class ModelQueueManager:
             bt.logging.error(f"Model metadata: {model_metadata}")
 
     def get_next_model_to_score(self):
-        now = datetime.utcnow()
-        subquery = self.session.query(
-            ScoreHistory.hotkey,
-            ScoreHistory.uid,
-            func.count(ScoreHistory.id).label('score_count'),
-            func.max(ScoreHistory.scored_at).label('last_scored_at')
-        ).filter(ScoreHistory.is_archived == False).group_by(ScoreHistory.hotkey, ScoreHistory.uid).subquery()
+        try:
+            now = datetime.utcnow()
+            subquery = self.session.query(
+                ScoreHistory.hotkey,
+                ScoreHistory.uid,
+                func.count(ScoreHistory.id).label('score_count'),
+                func.max(ScoreHistory.scored_at).label('last_scored_at')
+            ).filter(
+                ScoreHistory.is_archived == False
+            ).group_by(
+                ScoreHistory.hotkey, 
+                ScoreHistory.uid
+            ).subquery()
 
-        next_model = self.session.query(ModelQueue).outerjoin(
-            subquery, and_(ModelQueue.hotkey == subquery.c.hotkey, ModelQueue.uid == subquery.c.uid)
-        ).filter(
-            ModelQueue.is_being_scored == False,
-            or_(
-                subquery.c.score_count == None,  # New models
+            next_model = self.session.query(ModelQueue).outerjoin(
+                subquery, 
                 and_(
-                    subquery.c.score_count < self.max_scores_per_model,
-                    or_(
-                        subquery.c.last_scored_at == None,
-                        subquery.c.last_scored_at < now - self.rescore_interval
+                    ModelQueue.hotkey == subquery.c.hotkey, 
+                    ModelQueue.uid == subquery.c.uid
+                )
+            ).filter(
+                ModelQueue.is_being_scored == False,
+                or_(
+                    subquery.c.score_count == None,  # New models
+                    and_(
+                        subquery.c.score_count < self.max_scores_per_model,
+                        or_(
+                            subquery.c.last_scored_at == None,
+                            subquery.c.last_scored_at < now - self.rescore_interval
+                        )
                     )
                 )
-            )
-        ).order_by(
-            desc(ModelQueue.is_new),
-            subquery.c.score_count.asc().nullsfirst(),
-            subquery.c.last_scored_at.asc().nullsfirst(),
-            desc(ModelQueue.updated_at)
-        ).first()
+            ).order_by(
+                desc(ModelQueue.is_new),
+                # Handle NULL score_count (prioritize NULL values)
+                (subquery.c.score_count == None).desc(),
+                subquery.c.score_count.asc(),
+                # Handle NULL last_scored_at (prioritize NULL values)
+                (subquery.c.last_scored_at == None).desc(),
+                subquery.c.last_scored_at.asc(),
+                desc(ModelQueue.updated_at)
+            ).first()
 
-        return next_model
+            if next_model:
+                bt.logging.debug(f"Found next model to score: hotkey={next_model.hotkey}, uid={next_model.uid}")
+            else:
+                bt.logging.debug("No models available for scoring")
+
+            return next_model
+
+        except Exception as e:
+            bt.logging.error(f"Error getting model to score: {e}")
+            return None
 
     def mark_model_as_being_scored(self, model_hotkey, model_uid, scorer_hotkey):
         model = self.session.query(ModelQueue).filter_by(hotkey=model_hotkey, uid=model_uid).first()
         if model and not model.is_being_scored:
             model.is_being_scored = True
             model.is_being_scored_by = scorer_hotkey
+            model.scoring_updated_at = datetime.utcnow()
             self.session.commit()
             return True
         return False
@@ -179,6 +204,7 @@ class ModelQueueManager:
             self.session.add(new_score)
             model.is_being_scored = False
             model.is_being_scored_by = None
+            model.scoring_updated_at = None
             self.session.commit()
             bt.logging.info(f"Successfully submitted score for model {model_hotkey} by {scorer_hotkey}")
             return True
@@ -193,76 +219,84 @@ class ModelQueueManager:
         stale_time = datetime.utcnow() - timedelta(minutes=max_scoring_time_minutes)
         stale_models = self.session.query(ModelQueue).filter(
             ModelQueue.is_being_scored == True,
-            ModelQueue.updated_at < stale_time
+            ModelQueue.scoring_updated_at < stale_time
         ).all()
 
         for model in stale_models:
             model.is_being_scored = False
             model.is_being_scored_by = None
+            model.scoring_updated_at = None
+            bt.logging.info(f"Reset scoring task for stale model: hotkey={model.hotkey}, uid={model.uid}")
 
         self.session.commit()
         return len(stale_models)
     
     def get_all_model_scores(self):
         try:
+            # First, get the latest score timestamps for each hotkey+uid combination
             latest_scores = self.session.query(
                 ScoreHistory.hotkey,
                 ScoreHistory.uid,
                 func.max(ScoreHistory.scored_at).label('latest_score_time')
-            ).filter(ScoreHistory.is_archived == False).group_by(ScoreHistory.hotkey, ScoreHistory.uid).subquery()
+            ).filter(
+                ScoreHistory.is_archived == False
+            ).group_by(
+                ScoreHistory.hotkey, 
+                ScoreHistory.uid
+            ).subquery('latest_scores')
 
+            # Then, get the actual score details by joining with ScoreHistory
+            latest_score_details = self.session.query(
+                ScoreHistory
+            ).join(
+                latest_scores,
+                and_(
+                    ScoreHistory.hotkey == latest_scores.c.hotkey,
+                    ScoreHistory.uid == latest_scores.c.uid,
+                    ScoreHistory.scored_at == latest_scores.c.latest_score_time
+                )
+            ).subquery('latest_score_details')
+
+            # Finally, join with ModelQueue to get all the information
             query = self.session.query(
                 ModelQueue.uid,
                 ModelQueue.hotkey,
                 ModelQueue.competition_id,
-                ScoreHistory.score,
-                ScoreHistory.scored_at,
-                ScoreHistory.block,
-                ScoreHistory.scorer_hotkey
-            ).join(
-                latest_scores,
+                latest_score_details.c.score,
+                latest_score_details.c.scored_at,
+                latest_score_details.c.block,
+                latest_score_details.c.scorer_hotkey
+            ).outerjoin(
+                latest_score_details,
                 and_(
-                    ModelQueue.hotkey == latest_scores.c.hotkey,
-                    ModelQueue.uid == latest_scores.c.uid,
-                    ModelQueue.hotkey == ScoreHistory.hotkey,
-                    ModelQueue.uid == ScoreHistory.uid,
-                    ScoreHistory.scored_at == latest_scores.c.latest_score_time
+                    ModelQueue.hotkey == latest_score_details.c.hotkey,
+                    ModelQueue.uid == latest_score_details.c.uid
                 )
             )
 
             results = query.all()
 
+            # Process scored models
             scores_by_uid = defaultdict(list)
             for result in results:
-                scores_by_uid[result.uid].append({
-                    'hotkey': result.hotkey,
-                    'competition_id': result.competition_id,
-                    'score': result.score,
-                    'scored_at': result.scored_at.isoformat(),
-                    'block': result.block,
-                    'scorer_hotkey': result.scorer_hotkey
-                })
-
-            unscored_models = self.session.query(
-                ModelQueue.uid,
-                ModelQueue.hotkey,
-                ModelQueue.competition_id
-            ).outerjoin(
-                ScoreHistory,
-                and_(ModelQueue.hotkey == ScoreHistory.hotkey, ModelQueue.uid == ScoreHistory.uid)
-            ).filter(
-                ScoreHistory.id == None
-            ).all()
-
-            for model in unscored_models:
-                scores_by_uid[model.uid].append({
-                    'hotkey': model.hotkey,
-                    'competition_id': model.competition_id,
-                    'score': None,
-                    'scored_at': None,
-                    'block': None,
-                    'scorer_hotkey': None
-                })
+                if result.score is not None:  # This model has been scored
+                    scores_by_uid[result.uid].append({
+                        'hotkey': result.hotkey,
+                        'competition_id': result.competition_id,
+                        'score': result.score,
+                        'scored_at': result.scored_at.isoformat() if result.scored_at else None,
+                        'block': result.block,
+                        #'scorer_hotkey': result.scorer_hotkey
+                    })
+                else:  # This model hasn't been scored yet
+                    scores_by_uid[result.uid].append({
+                        'hotkey': result.hotkey,
+                        'competition_id': result.competition_id,
+                        'score': None,
+                        'scored_at': None,
+                        'block': None,
+                        #'scorer_hotkey': None
+                    })
 
             return dict(scores_by_uid)
 
