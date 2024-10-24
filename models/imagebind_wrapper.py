@@ -193,7 +193,6 @@ class ImageBind:
             video=embeddings[ModalityType.VISION],
             description=description_embeddings,
         )
-    """
 
     @torch.no_grad()
     def embed_text(self, texts: List[str]) -> torch.Tensor:
@@ -205,3 +204,17 @@ class ImageBind:
             else:
                 return_value = torch.cat((return_value, emb))
         return return_value
+    """
+    
+    @torch.no_grad()
+    def embed_text(self, texts: List[str]) -> torch.Tensor:
+        embeddings = []
+        for text in texts:
+            emb = self.generate_text_embeddings(text)
+            embeddings.append(emb)
+        
+        if not embeddings:
+            return None
+        
+        # Stack all embeddings along dimension 0
+        return torch.stack(embeddings, dim=0)

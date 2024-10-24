@@ -135,8 +135,7 @@ def mmllama3_8b(
 
 def imagebind_huge(use_v2: bool=True):
     if use_v2:
-        #imagebind = ImageBind(v2=True)
-        imagebind = get_imagebind_v2(path=V2_PATH)
+        imagebind = ImageBind(v2=True)
     else:
         imagebind = imagebind_model.imagebind_huge(pretrained=True)
     imagebind.transform_from_pil = transforms.Compose([
