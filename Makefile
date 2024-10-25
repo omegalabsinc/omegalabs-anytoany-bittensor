@@ -136,6 +136,6 @@ download-datasets: download-sam_llava-dataset download-coco_llava_instruct-datas
 
 download-%-dataset:
 	mkdir -p ds/$*
-	wget https://huggingface.co/datasets/nimapourjafar/$*/resolve/main/output.parquet -O ds/$*/output.parquet
+	wget https://huggingface.co/datasets/xzistance/$*/resolve/main/output.parquet -O ds/$*/output.parquet
 
 download-everything: download-base-model download-datasets

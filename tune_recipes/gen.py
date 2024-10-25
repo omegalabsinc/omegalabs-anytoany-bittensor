@@ -22,6 +22,8 @@ from models.tokenizer import START_IMAGE, END_IMAGE, START_AUDIO, END_AUDIO, STA
 from imagebind.models.imagebind_model import ModalityType
 from diffusers import DiffusionPipeline
 
+from models.imagebind_wrapper import ImageBind
+
 from models import add_proj_convert_weights, _BASE_TRAINABLE
 
 log = utils.get_logger("DEBUG")
@@ -70,7 +72,8 @@ class InferenceRecipe:
         with self._device:
             self._model.setup_caches(max_batch_size=cfg.batch_size, dtype=self._dtype)
 
-        self._embed_model = self._setup_embed_model(model_cfg=DictConfig({"_component_": "models.imagebind_huge"}))
+        #self._embed_model = self._setup_embed_model(model_cfg=DictConfig({"_component_": "models.imagebind_huge"}))
+        self._embed_model = ImageBind(v2=True)
         self._tokenizer = config.instantiate(cfg.tokenizer)
         self._mm_ids_start = self._tokenizer.encode(START_IMAGE + START_AUDIO + START_VIDEO, add_eos=False, add_bos=False)
         self._mm_ids_end = self._tokenizer.encode(END_IMAGE + END_AUDIO + END_VIDEO, add_eos=False, add_bos=False)
