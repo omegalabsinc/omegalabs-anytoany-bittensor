@@ -1,5 +1,6 @@
 import os
 import torch
+import numpy as np
 from typing import BinaryIO, List
 
 from imagebind import imagebind_model
