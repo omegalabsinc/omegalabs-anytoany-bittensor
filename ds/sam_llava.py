@@ -93,7 +93,8 @@ class CaptionInstructDataset(IterableDataset):
             is_image_end = tok == self._image_ids[1]
             in_image_embed = in_image_embed and not is_image_end
             if is_image_begin:
-                context[idx+1] = {k: sample[k] for k in ["ib_embed", "clip_embed"]}
+                #context[idx+1] = {k: sample[k] for k in ["ib_embed", "clip_embed"]}
+                context[idx+1] = {k: sample[k] for k in ["ib_embed"]}
             if in_image_embed:
                 image_embed_mask_ids.append(idx)
             in_image_embed = in_image_embed or is_image_begin
