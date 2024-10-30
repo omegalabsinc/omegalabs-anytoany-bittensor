@@ -40,21 +40,22 @@ class ScoreHistory(Base):
     __tablename__ = 'sn21_score_history'
 
     id = Column(Integer, primary_key=True)
-    hotkey = Column(String(255), ForeignKey('sn21_model_queue.hotkey'), index=True)
-    uid = Column(String(255), ForeignKey('sn21_model_queue.uid'), index=True)
+    hotkey = Column(String(255), ForeignKey('sn21_model_queue.hotkey', ondelete='SET NULL'), index=True, nullable=True)
+    uid = Column(String(255), ForeignKey('sn21_model_queue.uid', ondelete='SET NULL'), index=True, nullable=True)
     competition_id = Column(String(255), index=True)
     model_metadata = Column(JSON)
     score = Column(Float)
     scored_at = Column(DateTime, default=datetime.utcnow)
     block = Column(Integer)
+    model_hash = Column(String(255))
     scorer_hotkey = Column(String(255), index=True)
     is_archived = Column(Boolean, default=False)
 
     # Relationship to ModelQueue
     model = relationship("ModelQueue", 
-                         back_populates="scores", 
-                         foreign_keys=[hotkey, uid],
-                         primaryjoin="and_(ModelQueue.hotkey==ScoreHistory.hotkey, ModelQueue.uid==ScoreHistory.uid)")
+                        back_populates="scores", 
+                        foreign_keys=[hotkey, uid],
+                        primaryjoin="and_(ModelQueue.hotkey==ScoreHistory.hotkey, ModelQueue.uid==ScoreHistory.uid)")
 
     def __repr__(self):
         return f"<ScoreHistory(hotkey='{self.hotkey}', uid='{self.uid}', score={self.score}, scored_at={self.scored_at}, model_metadata={self.model_metadata} is_archived={self.is_archived})>"
@@ -152,13 +153,9 @@ class ModelQueueManager:
                 )
             ).order_by(
                 desc(ModelQueue.is_new),
-                # Handle NULL score_count (prioritize NULL values)
                 (subquery.c.score_count == None).desc(),
                 subquery.c.score_count.asc(),
-                # Handle NULL last_scored_at (prioritize NULL values)
-                (subquery.c.last_scored_at == None).desc(),
-                subquery.c.last_scored_at.asc(),
-                desc(ModelQueue.updated_at)
+                func.rand()  # Add randomization
             ).first()
 
             if next_model:
@@ -182,7 +179,7 @@ class ModelQueueManager:
             return True
         return False
 
-    def submit_score(self, model_hotkey, model_uid, scorer_hotkey, score):
+    def submit_score(self, model_hotkey, model_uid, scorer_hotkey, model_hash, score):
         model = self.session.query(ModelQueue).filter_by(hotkey=model_hotkey, uid=model_uid).first()
         
         if not model:
@@ -198,6 +195,7 @@ class ModelQueueManager:
                 competition_id=model.competition_id,
                 score=score,
                 block=model.block,
+                model_hash=model_hash,
                 scorer_hotkey=scorer_hotkey,
                 model_metadata=model.model_metadata 
             )
@@ -265,6 +263,7 @@ class ModelQueueManager:
                 latest_score_details.c.score,
                 latest_score_details.c.scored_at,
                 latest_score_details.c.block,
+                latest_score_details.c.model_hash,
                 latest_score_details.c.scorer_hotkey
             ).outerjoin(
                 latest_score_details,
@@ -286,6 +285,7 @@ class ModelQueueManager:
                         'score': result.score,
                         'scored_at': result.scored_at.isoformat() if result.scored_at else None,
                         'block': result.block,
+                        'model_hash': result.model_hash,
                         #'scorer_hotkey': result.scorer_hotkey
                     })
                 else:  # This model hasn't been scored yet
@@ -295,6 +295,7 @@ class ModelQueueManager:
                         'score': None,
                         'scored_at': None,
                         'block': None,
+                        'model_hash': None,
                         #'scorer_hotkey': None
                     })
 
@@ -305,19 +306,47 @@ class ModelQueueManager:
             return {}
 
     def archive_scores_for_deregistered_models(self, registered_hotkey_uid_pairs):
+        """
+        Archive deregistered models while preserving score history.
+        
+        Args:
+            registered_hotkey_uid_pairs (list[tuple[str, str]]): List of (hotkey, uid) pairs for registered miners
+        """
         try:
             all_models = self.session.query(ModelQueue.hotkey, ModelQueue.uid).all()
             deregistered_models = set((model.hotkey, model.uid) for model in all_models) - set(registered_hotkey_uid_pairs)
 
             for hotkey, uid in deregistered_models:
-                # Archive scores
-                self.session.query(ScoreHistory).filter_by(hotkey=hotkey, uid=uid).update({"is_archived": True})
-                
-                # Remove from ModelQueue
-                self.session.query(ModelQueue).filter_by(hotkey=hotkey, uid=uid).delete()
+                try:
+                    # Mark all related scores as archived
+                    archive_result = self.session.query(ScoreHistory).filter_by(
+                        hotkey=hotkey,
+                        uid=uid,
+                        is_archived=False
+                    ).update(
+                        {"is_archived": True},
+                        synchronize_session=False
+                    )
 
+                    # Remove from ModelQueue
+                    delete_result = self.session.query(ModelQueue).filter_by(
+                        hotkey=hotkey,
+                        uid=uid
+                    ).delete(synchronize_session=False)
+
+                    bt.logging.debug(
+                        f"Processed deregistered model - Hotkey: {hotkey}, "
+                        f"UID: {uid}, Archived scores: {archive_result}, "
+                        f"Removed from queue: {delete_result}"
+                    )
+
+                except Exception as e:
+                    bt.logging.error(f"Error processing model {hotkey}, {uid}: {str(e)}")
+                    continue
+
+            # Commit all changes
             self.session.commit()
-            bt.logging.debug(f"Archived scores and removed {len(deregistered_models)} deregistered models from the queue.")
+            print(f"Archived scores and removed {len(deregistered_models)} deregistered models from the queue.")
 
         except Exception as e:
             self.session.rollback()

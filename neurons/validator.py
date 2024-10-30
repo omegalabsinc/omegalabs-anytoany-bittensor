@@ -399,7 +399,7 @@ class Validator:
         )
 
         # Sync to consensus
-        if not self.config.genesis and not self.config.use_api:
+        if not self.config.genesis and not self.config.use_api and not self.config.run_api:
             competition_ids: typing.Dict[int, typing.Optional[str]] = {}
             for uid, hotkey in enumerate(list(self.metagraph.hotkeys)):
                 try:
@@ -683,6 +683,25 @@ class Validator:
 
         # Compute wins and win rates per uid.
         wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
+
+        # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
+        uids_penalized_for_hash_duplication = set()
+        for uid in uids:
+            if uid_to_block[uid] is None:
+                continue
+            for uid2 in uids:
+                if uid == uid2 or uid_to_block[uid2] is None:
+                    continue
+                if uid != uid2 and scores_per_uid[uid] == scores_per_uid[uid2]:
+                    if uid_to_block[uid] > uid_to_block[uid2]:
+                        scores_per_uid[uid2] = 0
+                        uids_penalized_for_hash_duplication.add(uid2)
+                        bt.logging.warning(f"uid {uid2} at block {uid_to_block[uid2]} has duplicate model hash of uid {uid} at block {uid_to_block[uid]}. Penalizing uid {uid2} with score of 0.")
+                    else:
+                        scores_per_uid[uid] = 0
+                        uids_penalized_for_hash_duplication.add(uid)
+                        bt.logging.warning(f"uid {uid} at block {uid_to_block[uid]} has duplicate model hash of uid {uid2} at block {uid_to_block[uid2]}. Penalizing uid {uid} with score of 0.")
+
         # Compute softmaxed weights based on win rate.
         model_weights = torch.tensor(
             [win_rate[uid] for uid in uids], dtype=torch.float32
@@ -710,11 +729,6 @@ class Validator:
             constants.alpha * self.weights + (1 - constants.alpha) * new_weights
         )
         self.weights = self.weights.nan_to_num(0.0)
-
-        # Filter based on win rate removing all but the sample_top_models best models for evaluation.
-        self.uids_to_eval[competition_parameters.competition_id] = set(
-            sorted(win_rate, key=win_rate.get, reverse=True)[: self.config.sample_top_models]
-        )
 
         # Log the performance of the eval loop.
         #bt.logging.debug(load_model_perf.summary_str())
@@ -916,8 +930,6 @@ class Validator:
             self.global_step % len(constants.COMPETITION_SCHEDULE)
         ]
         
-        # Pull relevant uids for step. If they aren't found in the model tracker on eval they will be skipped.
-        #uids = list(self.uids_to_eval[competition_parameters.competition_id])
         uids = []
         # Query API for next model to score.
         bt.logging.info(f"Getting model to score...")
@@ -1061,27 +1073,16 @@ class Validator:
             )
             bt.logging.debug(f"Computed model losses for uid: {uid_i}: {score}")
 
-        # let's loop through the final scores and make sure all model's are not copycats
-        for uid, score in scores_per_uid.items():
-            if score > 0:
-                hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
-                for other_uid, other_score in scores_per_uid.items():
-                    if other_score > 0 and other_uid != uid:
-                        other_hotkey, other_model_metadata = uid_to_hotkey_and_model_metadata[other_uid]
-                        if hotkey in self.model_tracker.miner_hotkey_to_last_touched_dict \
-                            and other_hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict \
-                            and self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey] == self.model_tracker.miner_hotkey_to_model_hash_dict[other_hotkey]:
-
-                            if model_metadata.block > other_model_metadata.block:
-                                bt.logging.info(f"*** Model from {hotkey} on block {model_metadata.block} is a copycat of {other_hotkey} on block {other_model_metadata.block} and will be scored 0. ***")
-                                scores_per_uid[uid] = 0
-
         # Post model scores to the API
         for uid, score in scores_per_uid.items():
             hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
             if model_metadata is not None:
                 try:
-                    await self.post_model_score(hotkey, uid, model_metadata, score)
+                    # Check if the model hash is in the tracker
+                    model_hash = None
+                    if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
+                        model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
+                    await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
                 except Exception as e:
                     bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
                     bt.logging.error(traceback.format_exc())
@@ -1510,7 +1511,7 @@ class Validator:
             bt.logging.debug(f"Error retrieving model to score from API: {e}")
             return None
         
-    async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_score) -> bool:
+    async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_hash, model_score) -> bool:
         """
         Posts the score of a model to the SN21 API.
 
@@ -1533,6 +1534,7 @@ class Validator:
                             "id": model_metadata.id.to_compressed_str(),
                             "block": model_metadata.block
                         },
+                        "model_hash": model_hash,
                         "model_score": model_score,
                     },
                 ) as response:

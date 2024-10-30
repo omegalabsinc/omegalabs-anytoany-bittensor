@@ -53,6 +53,7 @@ class ModelScoreResponse(BaseModel):
     miner_hotkey: str
     miner_uid: int
     model_metadata: dict
+    model_hash: str
     model_score: float
 
 
@@ -73,6 +74,13 @@ async def main():
             try:
                 # Sync the metagraph.
                 metagraph.sync(subtensor=subtensor)
+
+                # Create pairs of (hotkey, uid) from metagraph
+                registered_pairs = [
+                    (hotkey, str(metagraph.hotkeys.index(hotkey))) 
+                    for hotkey in metagraph.hotkeys
+                ]
+                #queue_manager.archive_scores_for_deregistered_models(registered_pairs)
 
             # In case of unforeseen errors, the api will log the error and continue operations.
             except Exception as err:
@@ -151,6 +159,7 @@ async def main():
             "miner_hotkey": miner_hotkey,
             "miner_uid": miner_uid,
             "model_metadata": model_metadata,
+            "model_hash": model_hash,
             "model_score": model_score,
         }
         """
@@ -162,6 +171,7 @@ async def main():
                 model_score_results.miner_hotkey,
                 model_score_results.miner_uid,
                 hotkey,
+                model_score_results.model_hash,
                 model_score_results.model_score
                 #model_score_results.model_metadata
             )
