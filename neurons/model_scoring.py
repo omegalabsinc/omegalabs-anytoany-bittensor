@@ -10,12 +10,11 @@ import ulid
 from omegaconf import OmegaConf, DictConfig
 import huggingface_hub
 from datasets import load_dataset, Dataset
-from imagebind.models.multimodal_preprocessors import SimpleTokenizer
-from imagebind.models.imagebind_model import ModalityType
 
 import bittensor as bt
 
 from tune_recipes.gen import InferenceRecipe
+from models.imagebind_wrapper import ImageBind
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -24,7 +23,10 @@ MIN_AGE = 4 * 60 * 60  # 4 hours
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
-BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
+#BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
+
+# Initialize the imagebind model
+#imagebind = ImageBind(v2=True)
 
 
 def get_timestamp_from_filename(filename: str):
@@ -103,18 +105,6 @@ def cleanup_gpu_memory():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
-def load_and_transform_text(text, device):
-    if text is None:
-        return None
-    tokenizer = SimpleTokenizer(bpe_path=BPE_PATH)
-    tokens = [tokenizer(t).unsqueeze(0).to(device) for t in text]
-    tokens = torch.cat(tokens, dim=0)
-    return tokens
-
-
-def embed_text(imagebind, texts: List[str], device) -> List[torch.FloatTensor]:
-    return imagebind({ModalityType.TEXT: load_and_transform_text(texts, device)})[ModalityType.TEXT]
-
 
 def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
     cleanup_gpu_memory()
@@ -131,18 +121,19 @@ def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_trac
         bt.logging.info(f"Hotkey file contents match hotkey {hotkey}")
 
     # Check if the model is unique. Calculates the model's checkpoint (.pt) file hash for storage.
-    is_model_unique, model_hash = model_tracker.is_model_unique(
-        hotkey, 
-        block, 
-        config.checkpointer.checkpoint_dir + "/" + config.checkpointer.checkpoint_files[0]
-    )
-    if is_model_unique:
-        bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
-    else:
-        bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
-        cleanup_gpu_memory()
-        log_gpu_memory('after model clean-up')
-        return 0
+    if model_tracker is not None:
+        is_model_unique, model_hash = model_tracker.is_model_unique(
+            hotkey, 
+            block, 
+            config.checkpointer.checkpoint_dir + "/" + config.checkpointer.checkpoint_files[0]
+        )
+        if is_model_unique:
+            bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
+        else:
+            bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
+            cleanup_gpu_memory()
+            log_gpu_memory('after model clean-up')
+            return 0
 
     bt.logging.info(f"Scoring {hf_repo_id}...")
     log_gpu_memory('after model load')
@@ -156,10 +147,8 @@ def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_trac
             cfg=config,
             video_ib_embed=video_embed
         )
-        text_embeddings = embed_text(
-            inference_recipe._embed_model,
-            generated_captions + actual_captions,
-            device=inference_recipe._device
+        text_embeddings = inference_recipe._embed_model.embed_text(
+            generated_captions + actual_captions
         )
         text_similarity = torch.nn.functional.cosine_similarity(
             text_embeddings[:video_embed.size(0)],
@@ -183,4 +172,8 @@ if __name__ == "__main__":
         for hf_repo_id in ["briggers/omega_a2a_test2", "salmanshahid/omega_a2a_test", "briggers/omega_a2a_test",]:
             local_dir = temp_dir_cache.get_temp_dir(hf_repo_id)
             local_dir = './model_cache' #temp_dir_cache.get_temp_dir(hf_repo_id)
-            get_model_score(hf_repo_id, mini_batch, local_dir)
+
+            hotkey = "hotkey"
+            block = 1
+            model_tracker = None
+            get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker)

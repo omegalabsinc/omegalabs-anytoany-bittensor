@@ -30,9 +30,10 @@ class SingleEmbedCaptionDataset(IterableDataset):
         if self._outer_index == 0:
             data = pd.read_parquet(self.dataset_path)
             self.ib_embeds = torch.from_numpy(np.stack(data.ib_embed.to_numpy()))
-            self.clip_embeds = torch.from_numpy(np.stack(data.clip_embed.to_numpy()))
+            #self.clip_embeds = torch.from_numpy(np.stack(data.clip_embed.to_numpy()))
             self.captions = data.caption.tolist()
-            assert len(self.ib_embeds) == len(self.clip_embeds) == len(self.captions)
+            #assert len(self.ib_embeds) == len(self.clip_embeds) == len(self.captions)
+            assert len(self.ib_embeds) == len(self.captions)
 
         if self._outer_index >= len(self):
             del self.ib_embeds, self.clip_embeds, self.captions
@@ -41,7 +42,7 @@ class SingleEmbedCaptionDataset(IterableDataset):
         item = {
             "caption": self.captions[self._index],
             "ib_embed": self.ib_embeds[self._index],
-            "clip_embed": self.clip_embeds[self._index],
+            #"clip_embed": self.clip_embeds[self._index],
         }
         self._index += self._world_size
         self._outer_index += 1
