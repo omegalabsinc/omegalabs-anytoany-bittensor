@@ -208,7 +208,7 @@ class ModelQueueManager:
                             uid=uid,
                             competition_id=model_metadata.id.competition_id,
                             model_metadata=serialized_metadata,
-                            is_new=updated,
+                            is_new=0, # default to not new when inserting into our queue
                             block=model_metadata.block
                         )
                         session.add(new_model)
