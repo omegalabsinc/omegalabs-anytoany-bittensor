@@ -13,7 +13,7 @@ from starlette import status
 from substrateinterface import Keypair
 from pydantic import BaseModel
 
-from model.storage.mysql_model_queue import ModelQueueManager
+from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from vali_api.config import NETWORK, NETUID, IS_PROD
 
 
@@ -63,6 +63,8 @@ async def main():
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
     
+    # Initialize database at application startup
+    init_database()
     queue_manager = ModelQueueManager()
 
     async def resync_metagraph():

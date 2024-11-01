@@ -43,7 +43,7 @@ from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from model.storage.disk.disk_model_store import DiskModelStore
-from model.storage.mysql_model_queue import ModelQueueManager
+from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.disk.utils import get_hf_download_path
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 from datasets import disable_caching
@@ -539,7 +539,12 @@ class Validator:
     def update_models(self, update_delay_minutes):
         # Track how recently we updated each uid
         uid_last_checked = dict()
-        queue_manager = ModelQueueManager()
+
+        queue_manager = None
+        if self.config.run_api:
+            # Initialize database at application startup
+            init_database()
+            queue_manager = ModelQueueManager()
 
         # The below loop iterates across all miner uids and checks to see
         # if they should be updated.
@@ -576,7 +581,8 @@ class Validator:
 
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
-                    queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
+                    if self.config.run_api:
+                        queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
                     
                     bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
                     if updated:
@@ -584,24 +590,23 @@ class Validator:
                 else:
                     bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
                 
-                """
                 # Ensure we eval the new model on the next loop.
-                metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
-                if metadata is not None and self.is_model_old_enough(metadata):
-                    with self.all_uids_lock:
-                        self.all_uids[metadata.id.competition_id].add(next_uid)
-                    
-                    bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
-                    if updated:
-                        with self.updated_uids_to_eval_lock:
-                            self.updated_uids_to_eval[metadata.id.competition_id].add(next_uid)
-                            bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
+                if not self.config.run_api:
+                    metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+                    if metadata is not None and self.is_model_old_enough(metadata):
+                        with self.all_uids_lock:
+                            self.all_uids[metadata.id.competition_id].add(next_uid)
+                        
+                        bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
+                        if updated:
+                            with self.updated_uids_to_eval_lock:
+                                self.updated_uids_to_eval[metadata.id.competition_id].add(next_uid)
+                                bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
+                        else:
+                            with self.pending_uids_to_eval_lock:
+                                self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
                     else:
-                        with self.pending_uids_to_eval_lock:
-                            self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
-                else:
-                    bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
-                """
+                        bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
 
             except Exception as e:
                 bt.logging.error(

@@ -10,11 +10,48 @@ import json
 
 from datetime import datetime, timedelta
 import bittensor as bt
+from typing import Optional
 
 from model.data import ModelId
 from vali_api.config import DBHOST, DBNAME, DBUSER, DBPASS
 
 Base = declarative_base()
+
+# Global variables for engine and Session
+_engine: Optional[object] = None
+Session: Optional[sessionmaker] = None
+
+def init_database():
+    """
+    Initialize the database connection and create tables.
+    Must be called before using any database operations.
+    """
+    global _engine, Session
+    
+    if _engine is not None:
+        bt.logging.warning("Database already initialized")
+        return
+
+    try:
+        connection_string = f'mysql://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}'
+        _engine = create_engine(connection_string)
+        Session = sessionmaker(bind=_engine)
+        
+        # Create all tables
+        Base.metadata.create_all(_engine)
+        bt.logging.info("Database initialized successfully")
+        
+    except Exception as e:
+        bt.logging.error(f"Failed to initialize database: {str(e)}")
+        raise
+
+def get_session() -> Session:
+    """
+    Get a database session. Raises exception if database not initialized.
+    """
+    if Session is None:
+        raise RuntimeError("Database not initialized. Call init_database() first.")
+    return Session()
 
 class ModelQueue(Base):
     __tablename__ = 'sn21_model_queue'
@@ -85,7 +122,10 @@ class ModelIdEncoder(json.JSONEncoder):
 
 class ModelQueueManager:
     def __init__(self, max_scores_per_model=5, rescore_interval_hours=24, max_retries=3, retry_delay=1):
-        self.session = Session()
+        if Session is None:
+            raise RuntimeError("Database not initialized. Call init_database() first.")
+
+        self.session = get_session()
         self.max_scores_per_model = max_scores_per_model
         self.rescore_interval = timedelta(hours=rescore_interval_hours)
         self.max_retries = max_retries
@@ -94,7 +134,7 @@ class ModelQueueManager:
     @contextmanager
     def session_scope(self):
         """Provide a transactional scope around a series of operations."""
-        session = Session()
+        session = get_session()
         try:
             yield session
             session.commit()
@@ -110,7 +150,11 @@ class ModelQueueManager:
             self.session.close()
         except:
             pass
-        self.session = Session()
+        try:
+            self.session = get_session()
+        except RuntimeError as e:
+            bt.logging.error(f"Failed to reset session: {str(e)}")
+            raise
 
     def execute_with_retry(self, operation, *args, **kwargs):
         """Execute an operation with retry logic."""
