@@ -61,7 +61,7 @@ class ModelQueue(Base):
     block = Column(Integer, index=True)
     competition_id = Column(String(255), index=True)
     model_metadata = Column(JSON)
-    is_new = Column(Boolean, default=True)
+    is_new = Column(Boolean, default=False)
     is_being_scored = Column(Boolean, default=False)
     is_being_scored_by = Column(String(255), default=None)
     scoring_updated_at = Column(DateTime, default=None)
