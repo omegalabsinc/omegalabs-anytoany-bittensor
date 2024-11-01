@@ -79,7 +79,7 @@ async def main():
                     (hotkey, str(metagraph.hotkeys.index(hotkey))) 
                     for hotkey in metagraph.hotkeys
                 ]
-                #queue_manager.archive_scores_for_deregistered_models(registered_pairs)
+                queue_manager.archive_scores_for_deregistered_models(registered_pairs)
 
             # In case of unforeseen errors, the api will log the error and continue operations.
             except Exception as err:
