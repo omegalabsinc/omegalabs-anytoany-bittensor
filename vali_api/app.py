@@ -14,7 +14,7 @@ from substrateinterface import Keypair
 from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import ModelQueueManager
-from api.config import NETWORK, NETUID, IS_PROD
+from vali_api.config import NETWORK, NETUID, IS_PROD
 
 
 app = FastAPI()
@@ -62,8 +62,7 @@ async def main():
 
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
-
-    #model_queuer = ModelQueuer()
+    
     queue_manager = ModelQueueManager()
 
     async def resync_metagraph():
@@ -118,11 +117,11 @@ async def main():
         try:
             next_model = queue_manager.get_next_model_to_score()
             if next_model:
-                success = queue_manager.mark_model_as_being_scored(next_model.hotkey, next_model.uid, hotkey)
+                success = queue_manager.mark_model_as_being_scored(next_model['hotkey'], next_model['uid'], hotkey)
                 if success:
                     return {
                         "success": True,
-                        "miner_uid": next_model.uid
+                        "miner_uid": next_model['uid']
                     }
                 else:
                     return {

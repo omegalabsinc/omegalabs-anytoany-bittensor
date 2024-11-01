@@ -324,11 +324,9 @@ class Validator:
         torch.backends.cudnn.benchmark = True
 
         api_root = (
-            "http://localhost:8000"
-            #"https://dev-api.sn21.omega-labs.ai"
+            "https://dev-sn21-api.omegatron.ai"
             if self.config.subtensor.network == "test"
-            else "http://localhost:8000"
-            #else "https://api.sn21.omega-labs.ai"
+            else "https://sn21-api.omegatron.ai"
         )
         bt.logging.info(f"Using SN21 API: {api_root}")
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
@@ -477,22 +475,23 @@ class Validator:
         self.model_tracker.touch_all_miner_models()
         
         self.stop_event = threading.Event()
-        if self.config.run_api:
-            # == Initialize the update thread ==
-            self.update_thread = threading.Thread(
-                target=self.update_models,
-                args=(self.config.update_delay_minutes,),
-                daemon=True,
-            )
-            self.update_thread.start()
+        # temporarily remove run_api check
+        #if self.config.run_api:
+        # == Initialize the update thread ==
+        self.update_thread = threading.Thread(
+            target=self.update_models,
+            args=(self.config.update_delay_minutes,),
+            daemon=True,
+        )
+        self.update_thread.start()
 
-            # == Initialize the cleaner thread to remove outdated models ==
-            self.clean_thread = threading.Thread(
-                target=self.clean_models,
-                args=(self.config.clean_period_minutes,),
-                daemon=True,
-            )
-            self.clean_thread.start()
+        # == Initialize the cleaner thread to remove outdated models ==
+        self.clean_thread = threading.Thread(
+            target=self.clean_models,
+            args=(self.config.clean_period_minutes,),
+            daemon=True,
+        )
+        self.clean_thread.start()
 
         # == Initialize the gathering scores, win-rate competition, and weight setting thread ==
         self.weight_thread = threading.Thread(
@@ -660,6 +659,7 @@ class Validator:
         # Initialize with default values (0 for scores, None for blocks)
         scores_per_uid = {uid: 0 for uid in uids}
         uid_to_block = {uid: None for uid in uids}
+        uid_to_hash = {uid: None for uid in uids}
         sample_per_uid = {muid: None for muid in uids}
 
         # Iterate through each UID and its associated models
@@ -675,11 +675,14 @@ class Validator:
             # Extract score and block, defaulting to None if not present
             score = model_data.get('score', 0)
             block = model_data.get('block', 0)
+            model_hash = model_data.get('model_hash', None)
             
             if score is not None:
                 scores_per_uid[uid] = score
             if block is not None:
                 uid_to_block[uid] = block
+            if model_hash is not None:
+                uid_to_hash[uid] = model_hash
 
         # Compute wins and win rates per uid.
         wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
@@ -687,12 +690,12 @@ class Validator:
         # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
         uids_penalized_for_hash_duplication = set()
         for uid in uids:
-            if uid_to_block[uid] is None:
+            if uid_to_hash[uid] is None and uid_to_block[uid] is None:
                 continue
             for uid2 in uids:
-                if uid == uid2 or uid_to_block[uid2] is None:
+                if uid == uid2 or uid_to_hash[uid] is None or uid_to_block[uid2] is None:
                     continue
-                if uid != uid2 and scores_per_uid[uid] == scores_per_uid[uid2]:
+                if uid != uid2 and uid_to_hash[uid] == uid_to_hash[uid2]:
                     if uid_to_block[uid] > uid_to_block[uid2]:
                         scores_per_uid[uid2] = 0
                         uids_penalized_for_hash_duplication.add(uid2)
@@ -1062,7 +1065,7 @@ class Validator:
                 bt.logging.debug(
                     f"Unable to load the model for {uid_i} (perhaps a duplicate?). Setting loss to 0."
                 )
-            if not score:
+            if score is None:
                 bt.logging.error(f"Failed to get score for uid: {uid_i}: {model_i_metadata}")
                 score = 0
 
@@ -1079,7 +1082,7 @@ class Validator:
             if model_metadata is not None:
                 try:
                     # Check if the model hash is in the tracker
-                    model_hash = None
+                    model_hash = ""
                     if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
                         model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
                     await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
@@ -1300,7 +1303,11 @@ class Validator:
             hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
             if model_metadata is not None:
                 try:
-                    await self.post_model_score(hotkey, uid, model_metadata, score)
+                     # Check if the model hash is in the tracker
+                    model_hash = ""
+                    if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
+                        model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
+                    await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
                 except Exception as e:
                     bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
                     bt.logging.error(traceback.format_exc())
