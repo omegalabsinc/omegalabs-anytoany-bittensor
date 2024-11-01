@@ -100,13 +100,6 @@ class ScoreHistory(Base):
     def __repr__(self):
         return f"<ScoreHistory(hotkey='{self.hotkey}', uid='{self.uid}', score={self.score}, scored_at={self.scored_at}, model_metadata={self.model_metadata} is_archived={self.is_archived})>"
 
-# Create the engine and session
-engine = create_engine(f'mysql://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}')
-Session = sessionmaker(bind=engine)
-
-# Create the table
-Base.metadata.create_all(engine)
-
 class ModelIdEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, ModelId):
