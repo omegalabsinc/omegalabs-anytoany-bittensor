@@ -36,7 +36,8 @@ class SingleEmbedCaptionDataset(IterableDataset):
             assert len(self.ib_embeds) == len(self.captions)
 
         if self._outer_index >= len(self):
-            del self.ib_embeds, self.clip_embeds, self.captions
+            #del self.ib_embeds, self.clip_embeds, self.captions
+            del self.ib_embeds, self.captions
             raise StopIteration
 
         item = {
