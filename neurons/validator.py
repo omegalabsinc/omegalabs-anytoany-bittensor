@@ -559,7 +559,7 @@ class Validator:
                     if next_uid in uid_last_checked
                     else None
                 )
-
+                
                 if time_diff and time_diff < dt.timedelta(minutes=update_delay_minutes):
                     # If we have seen it within `update_delay_minutes` minutes then sleep until it has been at least `update_delay_minutes` minutes.
                     time_to_sleep = (
@@ -569,8 +569,7 @@ class Validator:
                         f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
                     )
                     time.sleep(time_to_sleep)
-
-                uid_last_checked[next_uid] = dt.datetime.now()
+                
                 bt.logging.debug(f"Updating model for UID={next_uid}")
 
                 # Get their hotkey from the metagraph.
@@ -578,19 +577,21 @@ class Validator:
 
                 # Compare metadata and tracker, syncing new model from remote store to local if necessary.
                 updated = asyncio.run(self.model_updater.sync_model(hotkey))
-                # Sleep for a bit to avoid spamming the API
-                time.sleep(1)
 
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
                     if self.config.run_api:
                         queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
                     
-                    bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
+                    bt.logging.debug(f"Updated model for UID={next_uid}. Was new = {updated}")
                     if updated:
                         bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
                 else:
                     bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
+
+                uid_last_checked[next_uid] = dt.datetime.now()
+                # Sleep for a bit to avoid spamming the API
+                time.sleep(0.5)
                 
                 # Ensure we eval the new model on the next loop.
                 if not self.config.run_api:
@@ -1622,12 +1623,18 @@ class Validator:
                     self.metagraph.block.item() - self.last_epoch
                     < self.config.blocks_per_epoch
                 ):
-                    if not self.config.run_api:
+                    if self.config.run_api:
+                        # Update self.metagraph
+                        await self.try_sync_metagraph(ttl=60 * 5)
+                        # Sleep for 5 minutes before resycing metagraph
+                        await asyncio.sleep(60 * 5)
+                    else:
                         await self.try_run_step(ttl=60 * 50)
-                        bt.logging.debug(
-                            f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
-                        )
-                        self.global_step += 1
+                        
+                    bt.logging.debug(
+                        f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
+                    )
+                    self.global_step += 1
 
                 self.last_epoch = self.metagraph.block.item()
                 self.epoch_step += 1

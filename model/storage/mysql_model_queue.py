@@ -61,7 +61,7 @@ class ModelQueue(Base):
     block = Column(Integer, index=True)
     competition_id = Column(String(255), index=True)
     model_metadata = Column(JSON)
-    is_new = Column(Boolean, default=False)
+    is_new = Column(Boolean, default=True)
     is_being_scored = Column(Boolean, default=False)
     is_being_scored_by = Column(String(255), default=None)
     scoring_updated_at = Column(DateTime, default=None)
@@ -195,10 +195,11 @@ class ModelQueueManager:
                     serialized_metadata = json.dumps(model_metadata.__dict__, cls=ModelIdEncoder)
 
                     if existing_model:
-                        if updated:
-                            bt.logging.debug(f"Updating model metadata for UID={uid}, Hotkey={hotkey}")
+                        #if updated:
+                        if existing_model.model_metadata != serialized_metadata or existing_model.block != model_metadata.block:
+                            bt.logging.debug(f"Updating existing model metadata for UID={uid}, Hotkey={hotkey}. Old metadata: {existing_model.model_metadata}, New metadata: {serialized_metadata}")
                             existing_model.model_metadata = serialized_metadata
-                            existing_model.is_new = updated
+                            existing_model.is_new = True
                             existing_model.block = model_metadata.block
                             existing_model.updated_at = datetime.utcnow()
                     else:
@@ -208,12 +209,12 @@ class ModelQueueManager:
                             uid=uid,
                             competition_id=model_metadata.id.competition_id,
                             model_metadata=serialized_metadata,
-                            is_new=0, # default to not new when inserting into our queue
+                            is_new=True,
                             block=model_metadata.block
                         )
                         session.add(new_model)
+                        bt.logging.debug(f"Stored new model for UID={uid}, Hotkey={hotkey} in database. Is new = {updated}")
 
-                    bt.logging.debug(f"Stored model for UID={uid}, Hotkey={hotkey} in database. Is new = {updated}")
                     return True
 
                 except Exception as e:
@@ -353,6 +354,7 @@ class ModelQueueManager:
                         model_metadata=model.model_metadata 
                     )
                     session.add(new_score)
+                    model.is_new = False
                     model.is_being_scored = False
                     model.is_being_scored_by = None
                     model.scoring_updated_at = None
