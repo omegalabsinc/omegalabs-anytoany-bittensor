@@ -358,7 +358,7 @@ class ModelQueueManager:
                     model.is_being_scored = False
                     model.is_being_scored_by = None
                     model.scoring_updated_at = None
-                    model.updated_at = datetime.datetime.now(datetime.UTC)
+                    model.updated_at = datetime.now(datetime.UTC)
                     bt.logging.info(f"Successfully submitted score for model {model_hotkey} by {scorer_hotkey}")
                     return True
                     """
@@ -378,7 +378,7 @@ class ModelQueueManager:
                         model.is_being_scored = False
                         model.is_being_scored_by = None
                         model.scoring_updated_at = None
-                        model.updated_at = datetime.datetime.now(datetime.UTC)
+                        model.updated_at = datetime.now(datetime.UTC)
                         bt.logging.info(f"Successfully submitted score for model {model_hotkey} by {scorer_hotkey}")
                         return True
                     else:
