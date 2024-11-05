@@ -1,7 +1,6 @@
 -r requirements.txt
 python-dotenv
 PyMySQL
-SQLAlchemy
 mysqlclient
 
 # needed when installing on python 3.12+
