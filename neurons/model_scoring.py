@@ -23,10 +23,6 @@ MIN_AGE = 4 * 60 * 60  # 4 hours
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
-#BPE_PATH = "./models/bpe_simple_vocab_16e6.txt.gz"
-
-# Initialize the imagebind model
-#imagebind = ImageBind(v2=True)
 
 
 def get_timestamp_from_filename(filename: str):

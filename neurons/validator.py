@@ -26,6 +26,9 @@ import numpy as np
 import shutil
 from subprocess import Popen, PIPE
 import asyncio
+from aiohttp import ClientSession, BasicAuth
+import requests
+from requests.auth import HTTPBasicAuth
 import argparse
 import typing
 import random
@@ -40,6 +43,7 @@ from model.model_tracker import ModelTracker
 from model.model_updater import ModelUpdater
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
 from model.storage.disk.disk_model_store import DiskModelStore
+from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.disk.utils import get_hf_download_path
 from model.storage.hugging_face.hugging_face_model_store import HuggingFaceModelStore
 from datasets import disable_caching
@@ -94,7 +98,6 @@ def compute_wins(
     Parameters:
         uids (list): A list of uids to compare.
         scores_per_uid (dict): A dictionary of losses for each uid by batch.
-        batches (List): A list of data batches.
         uid_to_block (dict): A dictionary of blocks for each uid.
 
     Returns:
@@ -105,8 +108,11 @@ def compute_wins(
     for i, uid_i in enumerate(uids):
         total_matches = 0
         block_i = uid_to_block[uid_i]
+        # Skip if block is None or score is 0
+        if block_i is None or scores_per_uid[uid_i] == 0:
+            continue
         for j, uid_j in enumerate(uids):
-            if i == j:
+            if i == j or uid_to_block[uid_j] is None or scores_per_uid[uid_j] == 0:
                 continue
             block_j = uid_to_block[uid_j]
             score_i = scores_per_uid[uid_i]
@@ -145,6 +151,16 @@ class Validator:
             type=int,
             default=100,
             help="Number of blocks to wait before setting weights.",
+        )
+        parser.add_argument(
+            "--run_api",
+            action="store_true",
+            help="Validator code runs api tasks. Only used when running the API server.",
+        )
+        parser.add_argument(
+            "--use_api",
+            action="store_true",
+            help="Validator code uses the API: gets next model to score, posts model scores, and gets all current model scores for calculating scores and incentives.",
         )
         parser.add_argument(
             "--sample_total_models",
@@ -289,15 +305,16 @@ class Validator:
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
 
-        try:
-            # early exit if GPU memory insufficient
-            total_gb, used_gb, avail_gb = get_gpu_memory()
-            if avail_gb < GPU_MEM_GB_REQD:
-                m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
-                bt.logging.error(m)
-                raise RuntimeError(m)
-        except Exception as e:
-            bt.logging.error(f"Failed to get GPU memory: {e}")
+        if not self.config.run_api:
+            try:
+                # early exit if GPU memory insufficient
+                total_gb, used_gb, avail_gb = get_gpu_memory()
+                if avail_gb < GPU_MEM_GB_REQD:
+                    m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
+                    bt.logging.error(m)
+                    raise RuntimeError(m)
+            except Exception as e:
+                bt.logging.error(f"Failed to get GPU memory: {e}")
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
@@ -305,6 +322,17 @@ class Validator:
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.metagraph: bt.metagraph = self.subtensor.metagraph(self.config.netuid)
         torch.backends.cudnn.benchmark = True
+
+        api_root = (
+            "https://dev-sn21-api.omegatron.ai"
+            if self.config.subtensor.network == "test"
+            else "https://sn21-api.omegatron.ai"
+        )
+        bt.logging.info(f"Using SN21 API: {api_root}")
+        self.get_model_endpoint = f"{api_root}/get-model-to-score"
+        self.score_model_endpoint = f"{api_root}/score-model"
+        self.get_all_model_scores_endpoint = f"{api_root}/get-all-model-scores"
+
 
         # Dont check registration status if offline.
         if not self.config.offline:
@@ -369,7 +397,7 @@ class Validator:
         )
 
         # Sync to consensus
-        if not self.config.genesis:
+        if not self.config.genesis and not self.config.use_api and not self.config.run_api:
             competition_ids: typing.Dict[int, typing.Optional[str]] = {}
             for uid, hotkey in enumerate(list(self.metagraph.hotkeys)):
                 try:
@@ -446,8 +474,10 @@ class Validator:
         # Touch all models, starting a timer for them to be deleted if not used
         self.model_tracker.touch_all_miner_models()
         
-        # == Initialize the update thread ==
         self.stop_event = threading.Event()
+        # temporarily remove run_api check
+        #if self.config.run_api:
+        # == Initialize the update thread ==
         self.update_thread = threading.Thread(
             target=self.update_models,
             args=(self.config.update_delay_minutes,),
@@ -463,14 +493,13 @@ class Validator:
         )
         self.clean_thread.start()
 
-        # == Initialize the weight setting thread ==
-        if not self.config.dont_set_weights and not self.config.offline:
-            self.weight_thread = threading.Thread(
-                target=self.try_set_weights,
-                args=(300,),
-                daemon=True,
-            )
-            self.weight_thread.start()
+        # == Initialize the gathering scores, win-rate competition, and weight setting thread ==
+        self.weight_thread = threading.Thread(
+            target=self.try_set_scores_and_weights,
+            args=(300,),
+            daemon=True,
+        )
+        self.weight_thread.start()
 
         self.last_update_check = dt.datetime.now()
         self.update_check_interval = 1800  # 30 minutes
@@ -511,6 +540,12 @@ class Validator:
         # Track how recently we updated each uid
         uid_last_checked = dict()
 
+        queue_manager = None
+        if self.config.run_api:
+            # Initialize database at application startup
+            init_database()
+            queue_manager = ModelQueueManager()
+
         # The below loop iterates across all miner uids and checks to see
         # if they should be updated.
         while not self.stop_event.is_set():
@@ -524,7 +559,7 @@ class Validator:
                     if next_uid in uid_last_checked
                     else None
                 )
-
+                
                 if time_diff and time_diff < dt.timedelta(minutes=update_delay_minutes):
                     # If we have seen it within `update_delay_minutes` minutes then sleep until it has been at least `update_delay_minutes` minutes.
                     time_to_sleep = (
@@ -534,8 +569,7 @@ class Validator:
                         f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
                     )
                     time.sleep(time_to_sleep)
-
-                uid_last_checked[next_uid] = dt.datetime.now()
+                
                 bt.logging.debug(f"Updating model for UID={next_uid}")
 
                 # Get their hotkey from the metagraph.
@@ -543,23 +577,39 @@ class Validator:
 
                 # Compare metadata and tracker, syncing new model from remote store to local if necessary.
                 updated = asyncio.run(self.model_updater.sync_model(hotkey))
-                
-                # Ensure we eval the new model on the next loop.
+
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
-                    with self.all_uids_lock:
-                        self.all_uids[metadata.id.competition_id].add(next_uid)
+                    if self.config.run_api:
+                        queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
                     
-                    bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
+                    bt.logging.debug(f"Updated model for UID={next_uid}. Was new = {updated}")
                     if updated:
-                        with self.updated_uids_to_eval_lock:
-                            self.updated_uids_to_eval[metadata.id.competition_id].add(next_uid)
-                            bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
-                    else:
-                        with self.pending_uids_to_eval_lock:
-                            self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
+                        bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
                 else:
                     bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
+
+                uid_last_checked[next_uid] = dt.datetime.now()
+                # Sleep for a bit to avoid spamming the API
+                time.sleep(0.5)
+                
+                # Ensure we eval the new model on the next loop.
+                if not self.config.run_api:
+                    metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+                    if metadata is not None and self.is_model_old_enough(metadata):
+                        with self.all_uids_lock:
+                            self.all_uids[metadata.id.competition_id].add(next_uid)
+                        
+                        bt.logging.trace(f"Updated model for UID={next_uid}. Was new = {updated}")
+                        if updated:
+                            with self.updated_uids_to_eval_lock:
+                                self.updated_uids_to_eval[metadata.id.competition_id].add(next_uid)
+                                bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}. It will be evaluated on the next loop.")
+                        else:
+                            with self.pending_uids_to_eval_lock:
+                                self.pending_uids_to_eval[metadata.id.competition_id].add(next_uid)
+                    else:
+                        bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
 
             except Exception as e:
                 bt.logging.error(
@@ -592,6 +642,120 @@ class Validator:
             time.sleep(dt.timedelta(minutes=clean_period_minutes).total_seconds())
 
         bt.logging.info("Exiting clean models loop.")
+
+    def _try_win_rate_competition(self):
+        """
+        Gather the scores from our API and run the win-rate competition to determine the best models for each competition.
+        """
+        # Get the most recent scores from the API
+        try:
+            all_model_scores = self.get_all_model_scores()
+        except Exception as e:
+            bt.logging.error(f"Failed to get all model scores: {e}")
+            return
+        
+        # Execute the win-rate competition
+        #load_model_perf = PerfMonitor("Eval: Load model")
+        #compute_loss_perf = PerfMonitor("Eval: Compute loss")
+        competition_parameters = constants.COMPETITION_SCHEDULE[
+            self.global_step % len(constants.COMPETITION_SCHEDULE)
+        ]
+        uids = self.metagraph.uids.tolist()
+        # convert uids to int
+        uids = [int(uid) for uid in uids]
+        
+        # Initialize with default values (0 for scores, None for blocks)
+        scores_per_uid = {uid: 0 for uid in uids}
+        uid_to_block = {uid: None for uid in uids}
+        uid_to_hash = {uid: None for uid in uids}
+        sample_per_uid = {muid: None for muid in uids}
+
+        # Iterate through each UID and its associated models
+        for uid, models_data in all_model_scores.items():
+            if not models_data:  # Skip if no models for this UID
+                continue
+           
+            # Convert UID to int
+            uid = int(uid)
+            # Take the first model's data (assuming one model per UID)
+            model_data = models_data[0]
+            
+            # Extract score and block, defaulting to None if not present
+            score = model_data.get('score', 0)
+            block = model_data.get('block', 0)
+            model_hash = model_data.get('model_hash', None)
+            
+            if score is not None:
+                scores_per_uid[uid] = score
+            if block is not None:
+                uid_to_block[uid] = block
+            if model_hash is not None:
+                uid_to_hash[uid] = model_hash
+
+        # Compute wins and win rates per uid.
+        wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
+
+        # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
+        uids_penalized_for_hash_duplication = set()
+        for uid in uids:
+            if uid_to_hash[uid] is None and uid_to_block[uid] is None:
+                continue
+            for uid2 in uids:
+                if uid == uid2 or uid_to_hash[uid] is None or uid_to_block[uid2] is None:
+                    continue
+                if uid != uid2 and uid_to_hash[uid] == uid_to_hash[uid2]:
+                    if uid_to_block[uid] > uid_to_block[uid2]:
+                        scores_per_uid[uid2] = 0
+                        uids_penalized_for_hash_duplication.add(uid2)
+                        bt.logging.warning(f"uid {uid2} at block {uid_to_block[uid2]} has duplicate model hash of uid {uid} at block {uid_to_block[uid]}. Penalizing uid {uid2} with score of 0.")
+                    else:
+                        scores_per_uid[uid] = 0
+                        uids_penalized_for_hash_duplication.add(uid)
+                        bt.logging.warning(f"uid {uid} at block {uid_to_block[uid]} has duplicate model hash of uid {uid2} at block {uid_to_block[uid2]}. Penalizing uid {uid} with score of 0.")
+
+        # Compute softmaxed weights based on win rate.
+        model_weights = torch.tensor(
+            [win_rate[uid] for uid in uids], dtype=torch.float32
+        )
+        step_weights = torch.softmax(model_weights / constants.temperature, dim=0)
+        # Update weights based on moving average.
+        new_weights = torch.zeros_like(self.metagraph.S)
+        for i, uid_i in enumerate(uids):
+            new_weights[uid_i] = step_weights[i]
+        scale = (
+            len(constants.COMPETITION_SCHEDULE)
+            * competition_parameters.reward_percentage
+        )
+        new_weights *= scale / new_weights.sum()
+        if new_weights.shape[0] < self.weights.shape[0]:
+            self.weights = self.weights[: new_weights.shape[0]]
+        elif new_weights.shape[0] > self.weights.shape[0]:
+            self.weights = torch.cat(
+                [
+                    self.weights,
+                    torch.zeros(new_weights.shape[0] - self.weights.shape[0]),
+                ]
+            )
+        self.weights = (
+            constants.alpha * self.weights + (1 - constants.alpha) * new_weights
+        )
+        self.weights = self.weights.nan_to_num(0.0)
+
+        # Log the performance of the eval loop.
+        #bt.logging.debug(load_model_perf.summary_str())
+        #bt.logging.debug(compute_loss_perf.summary_str())
+
+        # Log to screen.
+        self.log_step(
+            competition_parameters.competition_id,
+            uids,
+            uid_to_block,
+            wins,
+            win_rate,
+            scores_per_uid,
+            sample_per_uid,
+        )
+        
 
     @staticmethod
     def adjust_for_vtrust(weights: np.ndarray, consensus: np.ndarray, vtrust_min: float = 0.5):
@@ -636,7 +800,7 @@ class Validator:
         )
         return new_weights
 
-    def try_set_weights(self, ttl: int):
+    def try_set_scores_and_weights(self, ttl: int):
         def _try_set_weights():
             try:
                 # Fetch latest metagraph
@@ -677,11 +841,18 @@ class Validator:
             # Check if we're at a 20-minute mark for setting weights
             if minutes % 20 == 0 or self.config.immediate:
                 try:
-                    bt.logging.debug("Setting weights.")
-                    _try_set_weights()
-                    bt.logging.debug("Finished setting weights.")
-                    if self.config.immediate:
-                        time.sleep(3600)
+                    if self.config.use_api:
+                        bt.logging.debug("Gathering scores and running win-rate competition.")
+                        self._try_win_rate_competition()
+                        bt.logging.debug("Finished running win-rate competition.")
+
+                    if not self.config.dont_set_weights and not self.config.offline:
+                        bt.logging.debug("Setting weights.")
+                        _try_set_weights()
+                        bt.logging.debug("Finished setting weights.")
+                        if self.config.immediate:
+                            time.sleep(3600)
+
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
             else:
@@ -715,7 +886,10 @@ class Validator:
 
     async def try_run_step(self, ttl: int):
         async def _try_run_step():
-            await self.run_step()
+            if self.config.use_api:
+                await self.run_step_with_api()
+            else:
+                await self.run_step()
 
         try:
             bt.logging.info("Running step.")
@@ -747,6 +921,186 @@ class Validator:
 
         return not self.is_git_latest()
 
+    async def run_step_with_api(self):
+        """
+        Executes a step in the evaluation process of models. This function performs several key tasks:
+        1. Identifies valid models for evaluation (top sample_min from last run + newly updated models).
+        2. Generates random pages for evaluation and prepares batches for each page from the dataset.
+        3. Computes the scoring for each model based on the losses incurred on the evaluation batches.
+        4. Calculates wins and win rates for each model to determine their performance relative to others.
+        5. Updates the weights of each model based on their performance and applies a softmax normalization.
+        6. Implements a blacklist mechanism to remove underperforming models from the evaluation set.
+        7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
+        """
+        cleanup_gpu_memory()
+        log_gpu_memory('at start of run_step')
+
+        # Update self.metagraph
+        await self.try_sync_metagraph(ttl=60 * 5)
+        competition_parameters = constants.COMPETITION_SCHEDULE[
+            self.global_step % len(constants.COMPETITION_SCHEDULE)
+        ]
+        
+        uids = []
+        # Query API for next model to score.
+        bt.logging.info(f"Getting model to score...")
+        uid = await self.get_model_to_score()
+        if uid is not None:
+            uids = [uid]
+
+        if len(uids) == 0:
+            bt.logging.debug(
+                f"API returned no uid to eval for competition {competition_parameters.competition_id}."
+            )
+            return
+        
+        for uid in uids:
+            hotkey = self.metagraph.hotkeys[uid]
+            try:
+                asyncio.run(self.model_updater.sync_model(hotkey))
+                if (
+                    self.model_tracker.get_model_metadata_for_miner_hotkey(
+                        hotkey
+                    )
+                    is None
+                ):
+                    bt.logging.warning(
+                        f"Unable to get metadata for UID {uid} with hotkey {hotkey}"
+                    )
+            except Exception as e:
+                bt.logging.warning(
+                    f"Unable to sync model for UID {uid} with hotkey {hotkey}"
+                )
+
+        # Keep track of which block this uid last updated their model.
+        # Default to an infinite block if we can't retrieve the metadata for the miner.
+        uid_to_block = defaultdict(lambda: math.inf)
+
+        # Prepare evaluation
+        bt.logging.debug(
+            f"Computing metrics on {uids} for competition {competition_parameters.competition_id}"
+        )
+        scores_per_uid = {muid: None for muid in uids}
+
+        self.model_tracker.release_all()
+        uid_to_hotkey_and_model_metadata: typing.Dict[
+            int, typing.Tuple[str, typing.Optional[ModelMetadata]]
+        ] = {}
+        for uid_i in uids:
+            # Check that the model is in the tracker.
+            hotkey = self.metagraph.hotkeys[uid_i]
+            model_i_metadata = self.model_tracker.take_model_metadata_for_miner_hotkey(
+                hotkey
+            )
+            bt.logging.info(f"Model metadata for {uid_i} is {model_i_metadata}")
+            if model_i_metadata is not None:
+                for other_uid, (
+                    other_hotkey,
+                    other_metadata,
+                ) in uid_to_hotkey_and_model_metadata.items():
+                    if (
+                        other_metadata
+                        and model_i_metadata.id.hash == other_metadata.id.hash
+                    ):
+                        if model_i_metadata.block < other_metadata.block:
+                            bt.logging.info(
+                                f"Perferring duplicate of {other_uid} with {uid_i} since it is older"
+                            )
+                            # Release the other model since it is not in use.
+                            self.model_tracker.release_model_metadata_for_miner_hotkey(other_hotkey, other_metadata)
+                            uid_to_hotkey_and_model_metadata[other_uid] = (
+                                other_hotkey,
+                                None,
+                            )
+                        else:
+                            bt.logging.info(
+                                f"Perferring duplicate of {uid_i} with {other_uid} since it is newer"
+                            )
+                            # Release own model since it is not in use.
+                            self.model_tracker.release_model_metadata_for_miner_hotkey(hotkey, model_i_metadata)
+                            model_i_metadata = None
+                        break
+
+            uid_to_hotkey_and_model_metadata[uid_i] = (hotkey, model_i_metadata)
+            
+        #bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
+
+        eval_data = pull_latest_omega_dataset()
+        log_gpu_memory('after pulling dataset')
+        if eval_data is None:
+            bt.logging.warning(
+                f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
+            )
+            time.sleep(MINS_TO_SLEEP * 60)
+
+        for uid_i, (
+            hotkey,
+            model_i_metadata,
+        ) in uid_to_hotkey_and_model_metadata.items():
+            score = None
+            if model_i_metadata is not None:
+                if (
+                    model_i_metadata.id.competition_id
+                    == competition_parameters.competition_id
+                ):
+                    self.model_tracker.touch_miner_model(hotkey)
+
+                    try:
+                        # Update the block this uid last updated their model.
+                        uid_to_block[uid_i] = model_i_metadata.block
+                        hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
+                        score = get_model_score(
+                            hf_repo_id,
+                            mini_batch=eval_data,
+                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
+                            hotkey=hotkey,
+                            block=model_i_metadata.block,
+                            model_tracker=self.model_tracker
+                        )
+                        bt.logging.info(f"Score for {model_i_metadata} is {score}")
+                    except Exception as e:
+                        bt.logging.error(
+                            f"Error in eval loop: {e}. Setting score for uid: {uid_i} to 0. \n {traceback.format_exc()}"
+                        )
+                    finally:
+                        # After we are done with the model, release it.
+                        self.model_tracker.release_model_metadata_for_miner_hotkey(hotkey, model_i_metadata)
+                else:
+                    bt.logging.debug(
+                        f"Skipping {uid_i}, submission is for a different competition ({model_i_metadata.id.competition_id}). Setting loss to 0."
+                    )
+            else:
+                bt.logging.debug(
+                    f"Unable to load the model for {uid_i} (perhaps a duplicate?). Setting loss to 0."
+                )
+            if score is None:
+                bt.logging.error(f"Failed to get score for uid: {uid_i}: {model_i_metadata}")
+                score = 0
+
+            scores_per_uid[uid_i] = score
+
+            bt.logging.debug(
+                f"Computed model score for uid: {uid_i}: {score}"
+            )
+            bt.logging.debug(f"Computed model losses for uid: {uid_i}: {score}")
+
+        # Post model scores to the API
+        for uid, score in scores_per_uid.items():
+            hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
+            if model_metadata is not None:
+                try:
+                    # Check if the model hash is in the tracker
+                    model_hash = ""
+                    if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
+                        model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
+                    await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
+                except Exception as e:
+                    bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
+                    bt.logging.error(traceback.format_exc())
+
+        # Increment the number of completed run steps by 1
+        self.run_step_count += 1
+    
     async def run_step(self):
         """
         Executes a step in the evaluation process of models. This function performs several key tasks:
@@ -952,6 +1306,20 @@ class Validator:
                                 bt.logging.info(f"*** Model from {hotkey} on block {model_metadata.block} is a copycat of {other_hotkey} on block {other_model_metadata.block} and will be scored 0. ***")
                                 scores_per_uid[uid] = 0
 
+        # Post model scores to the API
+        for uid, score in scores_per_uid.items():
+            hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
+            if model_metadata is not None:
+                try:
+                     # Check if the model hash is in the tracker
+                    model_hash = ""
+                    if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
+                        model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
+                    await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
+                except Exception as e:
+                    bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
+                    bt.logging.error(traceback.format_exc())
+        
         # Compute wins and win rates per uid.
         wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
         # Compute softmaxed weights based on win rate.
@@ -1066,6 +1434,52 @@ class Validator:
                 pass
         console = Console()
         console.print(table)
+        
+        table = Table(title="Top 25 Miners by Win Rate")
+        table.add_column("uid", justify="right", style="cyan", no_wrap=True)
+        table.add_column("score", style="magenta")
+        table.add_column("win_rate", style="magenta")
+        table.add_column("win_total", style="magenta")
+        table.add_column("weights", style="magenta")
+        table.add_column("block", style="magenta")
+        # Collect and sort data
+        miner_data = []
+        for uid in uids:
+            str_uid = str(uid)
+            try:
+                if str_uid not in step_log["uid_data"]:
+                    continue
+                uid_data = step_log["uid_data"][str_uid]
+                miner_data.append({
+                    'uid': uid,
+                    'score': round(uid_data.get('score', 0.0), 4),
+                    'win_rate': round(uid_data.get('win_rate', 0.0), 4),
+                    'win_total': uid_data.get('win_total', 0),
+                    'weight': round(float(self.weights[uid].item()), 4),
+                    'block': uid_data.get('block', 'N/A')
+                })
+            except Exception as e:
+                bt.logging.warning(f"Error processing UID {uid}: {str(e)}")
+                continue
+
+        # Sort by win_rate (descending) and take top 25
+        sorted_miners = sorted(
+            miner_data, 
+            key=lambda x: x['win_rate'], 
+            reverse=True
+        )[:25]
+        # Add rows to table
+        for rank, miner in enumerate(sorted_miners, 1):
+            table.add_row(
+                str(miner['uid']),
+                f"{miner['score']:.4f}",
+                f"{miner['win_rate']:.4f}",
+                str(miner['win_total']),
+                f"{miner['weight']:.4f}",
+                str(miner['block'])
+            )
+        console = Console()
+        console.print(table)
 
         ws, ui = self.weights.topk(len(self.weights))
         table = Table(title="Weights > 0.001")
@@ -1078,7 +1492,129 @@ class Validator:
         console.print(table)
 
         # Sink step log.
-        bt.logging.info(f"Step results: {step_log}")
+        #bt.logging.info(f"Step results: {step_log}")
+
+    async def get_model_to_score(self) -> str:
+        """
+        Queries the SN21 API for the next model to score.
+
+        Returns:
+        - float: The reward value for the miner.
+        """
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        
+        try:
+            async with ClientSession() as session:
+                async with session.post(
+                    self.get_model_endpoint,
+                    auth=BasicAuth(hotkey, signature),
+                    json=None,
+                ) as response:
+                    response.raise_for_status()
+                    response_json = await response.json()
+                    if "success" in response_json and not response_json["success"]:
+                        bt.logging.warning(response_json["message"])
+                        return None
+                    elif "success" in response_json and response_json["success"]:
+                        uid = int(response_json["miner_uid"])
+                        bt.logging.info(f"Retrieved model to score, miner uid: {uid}")
+                        return uid
+                
+        except Exception as e:
+            bt.logging.debug(f"Error retrieving model to score from API: {e}")
+            return None
+        
+    async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_hash, model_score) -> bool:
+        """
+        Posts the score of a model to the SN21 API.
+
+        Returns:
+        - bool: True if the score was successfully posted, False otherwise.
+        """
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        
+        try:
+            async with ClientSession() as session:
+                async with session.post(
+                    self.score_model_endpoint,
+                    auth=BasicAuth(hotkey, signature),
+                    json={
+                        "miner_hotkey": miner_hotkey,
+                        "miner_uid": miner_uid,
+                        "model_metadata": {
+                            "id": model_metadata.id.to_compressed_str(),
+                            "block": model_metadata.block
+                        },
+                        "model_hash": model_hash,
+                        "model_score": model_score,
+                    },
+                ) as response:
+                    response.raise_for_status()
+                    response_json = await response.json()
+                    if "success" in response_json and not response_json["success"]:
+                        bt.logging.warning(response_json["message"])
+                    elif "success" in response_json and response_json["success"]:
+                        bt.logging.info(f"Successfully posted model score for {miner_uid} with score {model_score}")
+                    return True
+            
+        except Exception as e:
+            bt.logging.error(f"Error posting model score to API: {e}")
+            return None
+
+    def get_all_model_scores(self) -> typing.Optional[typing.Dict[str, float]]:
+        """
+        Gets all the current scores of models from the SN21 API. Can't be async because it's called from a multiprocessing process.
+        Will retry up to 3 times with a 5 second pause between retries if the request fails.
+
+        Returns:
+        - Dict[str, float]: A dictionary of model IDs to their scores, or None if all retries fail.
+        """
+        MAX_RETRIES = 3
+        RETRY_DELAY = 5
+        
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.post(
+                    self.get_all_model_scores_endpoint,
+                    auth=HTTPBasicAuth(hotkey, signature),
+                    timeout=30
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                if "success" in response_json and not response_json["success"]:
+                    bt.logging.warning(response_json["message"])
+                    return None
+                elif "success" in response_json and response_json["success"]:
+                    model_scores = response_json["model_scores"]
+                    bt.logging.info(f"Retrieved model scores from API")
+                    return model_scores
+                if attempt > 0:
+                    bt.logging.debug(f"Successfully retrieved model scores after {attempt + 1} attempts")
+            
+            except requests.exceptions.RequestException as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get all model scores request failed (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.debug(f"Final attempt failed. Request error: {str(e)}")
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get all model scores unexpected error (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}")
+        
+        return None
 
     async def run(self):
         while True:
@@ -1087,7 +1623,14 @@ class Validator:
                     self.metagraph.block.item() - self.last_epoch
                     < self.config.blocks_per_epoch
                 ):
-                    await self.try_run_step(ttl=60 * 50)
+                    if self.config.run_api:
+                        # Update self.metagraph
+                        await self.try_sync_metagraph(ttl=60 * 5)
+                        # Sleep for 5 minutes before resycing metagraph
+                        await asyncio.sleep(60 * 5)
+                    else:
+                        await self.try_run_step(ttl=60 * 50)
+                        
                     bt.logging.debug(
                         f"{self.metagraph.block.item() - self.last_epoch } / {self.config.blocks_per_epoch} blocks until next epoch."
                     )
