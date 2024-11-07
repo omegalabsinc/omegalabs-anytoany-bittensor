@@ -253,16 +253,6 @@ class ModelQueueManager:
                         )
                     ).filter(
                         ModelQueue.is_being_scored == False,
-                        or_(
-                            subquery.c.score_count == None,
-                            and_(
-                                subquery.c.score_count < self.max_scores_per_model,
-                                or_(
-                                    subquery.c.last_scored_at == None,
-                                    subquery.c.last_scored_at < now - self.rescore_interval
-                                )
-                            )
-                        )
                     ).order_by(
                         desc(ModelQueue.is_new),
                         (subquery.c.score_count == None).desc(),
