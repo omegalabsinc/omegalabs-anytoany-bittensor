@@ -120,6 +120,7 @@ async def main():
             next_model = queue_manager.get_next_model_to_score()
             if next_model:
                 success = queue_manager.mark_model_as_being_scored(next_model['hotkey'], next_model['uid'], hotkey)
+                print(f"Next model to score: {next_model['hotkey'], next_model['uid']} for validator uid {uid}, hotkey {hotkey}")
                 if success:
                     return {
                         "success": True,
