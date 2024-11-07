@@ -795,7 +795,6 @@ class Validator:
         try:
             bt.logging.info("Running step.")
             await asyncio.wait_for(_try_run_step(), ttl)
-            await asyncio.sleep(300)
             bt.logging.info("Finished running step.")
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
