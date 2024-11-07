@@ -195,7 +195,6 @@ class ModelQueueManager:
                     serialized_metadata = json.dumps(model_metadata.__dict__, cls=ModelIdEncoder)
 
                     if existing_model:
-                        #if updated:
                         if existing_model.model_metadata != serialized_metadata or existing_model.block != model_metadata.block:
                             bt.logging.debug(f"Updating existing model metadata for UID={uid}, Hotkey={hotkey}. Old metadata: {existing_model.model_metadata}, New metadata: {serialized_metadata}")
                             existing_model.model_metadata = serialized_metadata
@@ -337,11 +336,7 @@ class ModelQueueManager:
                         bt.logging.error(f"No model found for hotkey {model_hotkey} and uid {model_uid}")
                         return False
 
-                    existing_scores = session.query(ScoreHistory).filter_by(
-                        hotkey=model_hotkey, 
-                        uid=model_uid
-                    ).count()
-
+                    """
                     # temporarily allow scoring from any hotkey
                     new_score = ScoreHistory(
                         hotkey=model_hotkey,
@@ -362,7 +357,8 @@ class ModelQueueManager:
                     bt.logging.info(f"Successfully submitted score for model {model_hotkey} by {scorer_hotkey}")
                     return True
                     """
-                    if existing_scores == 0 or (model.is_being_scored and model.is_being_scored_by == scorer_hotkey):
+                    
+                    if model.is_being_scored and model.is_being_scored_by == scorer_hotkey:
                         new_score = ScoreHistory(
                             hotkey=model_hotkey,
                             uid=model_uid,
@@ -384,10 +380,8 @@ class ModelQueueManager:
                     else:
                         bt.logging.error(f"Failed to submit score for model {model_hotkey} by {scorer_hotkey}. "
                                     f"Model: {model}, is_being_scored: {model.is_being_scored}, "
-                                    f"is_being_scored_by: {model.is_being_scored_by}, "
-                                    f"existing_scores: {existing_scores}")
+                                    f"is_being_scored_by: {model.is_being_scored_by}")
                         return False
-                    """
 
                 except Exception as e:
                     bt.logging.error(f"Error in _submit_score: {str(e)}")
@@ -399,7 +393,7 @@ class ModelQueueManager:
             bt.logging.error(f"Failed to submit score after {self.max_retries} attempts: {str(e)}")
             return False
 
-    def reset_stale_scoring_tasks(self, max_scoring_time_minutes=10):
+    def reset_stale_scoring_tasks(self, max_scoring_time_minutes=15):
         """Reset stale scoring tasks with retry logic."""
         def _reset_stale_tasks():
             with self.session_scope() as session:

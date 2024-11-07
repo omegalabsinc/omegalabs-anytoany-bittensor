@@ -230,9 +230,6 @@ async def main():
             uvicorn.run,
             app,
             host="0.0.0.0",
-            #port=443,
-            #ssl_certfile="/root/origin-cert.pem",
-            #ssl_keyfile="/root/origin-key.key",
         ),
         check_stale_scoring_tasks(),
     )
