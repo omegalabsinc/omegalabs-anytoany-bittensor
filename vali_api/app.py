@@ -341,23 +341,23 @@ async def main():
                         print(f"Total Scores Used: {data['num_scores']}")
                         print(f"Unique Validators: {data['unique_validators']}")
                     
-                        all_model_scores[uid] = {
+                        all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
                             'competition_id': data['competition_id'],
                             'score': data['score'],
                             'scored_at': data['scored_at'],
                             'block': data['block'],
                             'model_hash': data['model_hash'],
-                        }
+                        }]
                     else:
-                        all_model_scores[uid] = {
+                        all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
                             'competition_id': data['competition_id'],
                             'score': None,
                             'scored_at': None,
                             'block': None,
                             'model_hash': None,
-                        }
+                        }]
                     
                     # Print details of each score used in the average
                     """

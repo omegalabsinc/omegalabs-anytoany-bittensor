@@ -574,12 +574,14 @@ class Validator:
         sample_per_uid = {muid: None for muid in uids}
 
         # Iterate through each UID and its associated models
-        for uid, model_data in all_model_scores.items():
-            if not model_data:  # Skip if no models for this UID
+        for uid, models_data in all_model_scores.items():
+            if not models_data:  # Skip if no models for this UID
                 continue
            
             # Convert UID to int
             uid = int(uid)
+            # Take the first model's data (assuming one model per UID)
+            model_data = models_data[0]
             
             # Extract score and block, defaulting to None if not present
             score = model_data.get('score', 0)
