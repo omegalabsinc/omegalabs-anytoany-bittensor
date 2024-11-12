@@ -1079,6 +1079,10 @@ class Validator:
                 if str_uid not in step_log["uid_data"]:
                     continue
                 uid_data = step_log["uid_data"][str_uid]
+                # if score is 0 from penalty, set win rate to 0
+                if uid_data.get('score', 0.0) == 0.0:
+                    uid_data['win_rate'] = 0.0
+                    uid_data['win_total'] = 0
                 miner_data.append({
                     'uid': uid,
                     'score': round(uid_data.get('score', 0.0), 4),
