@@ -4,15 +4,14 @@ import torchaudio
 from huggingface_hub import hf_hub_download
 import sentencepiece
 from pydub import AudioSegment
-from models.S2S.moshi.moshi import models
+from models.S2S.moshi.moshi.models import loaders, LMGen
+from models.S2S.moshi.chunk_silence import detect_and_trim_silence
 import os
 from tqdm import tqdm
 import glob
 import random
 
 # Initialize models and tokenizer
-loaders = models.loaders
-LMGen = models.LMGen
 
 
 def seed_all(seed):
@@ -98,25 +97,19 @@ def warmup(mimi, lm_gen, device):
     frame_size = int(mimi.sample_rate / mimi.frame_rate)
     for _ in range(1):
         chunk = torch.zeros(1, 1, frame_size, dtype=torch.float32, device=device)
-        print("Encoding chunk")
         codes = mimi.encode(chunk)
-        print("Generating tokens")
         with torch.no_grad(), lm_gen.streaming(1), mimi.streaming(1):
             for c in range(codes.shape[-1]):
-                print(f"Generating tokens {c}/{codes.shape[-1]}")
                 tokens = lm_gen.step(codes[:, :, c:c + 1])
-                print(f"Decoding tokens {c}/{codes.shape[-1]}")
             if tokens is not None:
                 _ = mimi.decode(tokens[:, 1:])
     torch.cuda.synchronize()
 
 def generate_audio(mimi, lm_gen, text_tokenizer, all_codes, device):
-    print("Generating audio")
     out_wav_chunks = []
     text_output = []
     with torch.no_grad(), lm_gen.streaming(1), mimi.streaming(1):
         for idx, code in enumerate(all_codes):
-            print(f"Generating audio {idx}/{len(all_codes)}")
             # Assert the shape of the code
             assert code.shape == (1, 8, 1), f"Expected code shape (1, 8, 1), but got {code.shape}"
             tokens_out = lm_gen.step(code.to(device))
@@ -172,25 +165,19 @@ def process_folder(input_folder, audio_output_folder, text_output_folder, mimi, 
     print(f"Error count: {error_count}/{len(wav_files)}")
 
 def inference(audio_array: np.array, sample_rate: int):
-    print("Inside inference")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mimi, text_tokenizer, lm_gen = initialize_models(device)
-    print("Models initialized")
     wav = load_audio_from_array(audio_array, sample_rate, mimi).to(device)
-    print("Audio loaded")
     all_codes = encode_audio(mimi, wav, device)
     all_codes = pad_audio_codes(all_codes, mimi, device)
-    print("Audio encoded")
     warmup(mimi, lm_gen, device)
-    print("Warmup done")
     out_wav, text_output = generate_audio(mimi, lm_gen, text_tokenizer, all_codes, device)
-    return {"audio": out_wav, "text": text_output}
+    trimmed_wav = detect_and_trim_silence(out_wav, mimi.sample_rate, min_silence_duration=1000, silence_threshold=-40)
+    return {"audio": trimmed_wav, "text": text_output}
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     mimi, text_tokenizer, lm_gen = initialize_models(device)
-    print("sample rate", mimi.sample_rate)
-    # exit()
 
     # Set up input and output folders
     input_folder = '/workspace/tezuesh/omega-v2v/.extracted/'

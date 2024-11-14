@@ -386,7 +386,6 @@ class LMGen(StreamingModule[_LMGenState]):
                 "You should wrap those calls with a `with lm_gen.streaming(): ...`."
             )
         lm_model = self.lm_model
-        print("Stepping")
 
         assert input_tokens.dim() == 3, "Shape should be [B, K, T]."
         B, Ki, S = input_tokens.shape
@@ -397,7 +396,6 @@ class LMGen(StreamingModule[_LMGenState]):
         ), f"We expect {needed_tokens} tokens from the user stream, got {Ki}."
 
         CT = state.cache.shape[2]
-        print("Looping")
         for q_other in range(input_tokens.shape[1]):
             k = lm_model.dep_q + 1 + q_other
             delay = lm_model.delays[k]
@@ -407,14 +405,12 @@ class LMGen(StreamingModule[_LMGenState]):
             ]
 
         position = state.offset % CT
-        print("Writing to cache")
         for k, delay in enumerate(lm_model.delays):
             # Only for the very beginning, we extend the initial token for the acoustic
             # token that are delayed, and thus have no good value to take.
             if state.offset <= delay:
                 state.cache[:, k, position] = state.initial[:, k, 0]
         input_ = state.cache[:, :, position : position + 1]
-        print("Input shape", input_.shape)
 
         if self.check:
             # Check that we are not feeding in any value that is not generated yet.
@@ -424,11 +420,8 @@ class LMGen(StreamingModule[_LMGenState]):
             )
             assert (input_[:, lm_model.audio_offset :] <= lm_model.card).all(), input_
             assert (input_[:, :1] <= lm_model.text_card).all()
-        print("Input shape done ")
 
         transformer_out, text_logits = state.graphed_main(input_)
-        print("Transformer out shape", transformer_out.shape)
-        print("Text logits shape", text_logits.shape)
         # Shape of text_logits should be [B, K_text=1, T=1, Card_text]
         text_token = sample_token(
             text_logits.float(),
@@ -436,7 +429,6 @@ class LMGen(StreamingModule[_LMGenState]):
             self.temp_text,
             self.top_k_text,
         )
-        print("Text token shape", text_token.shape)
         assert text_token.dim() == 3, text_token.shape
         assert text_token.shape[2] == 1
         assert text_token.shape[1] == 1, "Only one text stream supported."
