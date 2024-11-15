@@ -14,6 +14,7 @@ MODEL_FILE_PT = "meta_model_{epoch}.pt"
 ADAPTER_FILE_PT = "adapter_{epoch}.pt"
 CONFIG_FILE = "training_config.yml"
 README_FILE = "README.md"
+HOTKEY_FILE = "hotkey.txt"
 
 
 def check_config(ckpt_dir):
@@ -26,7 +27,6 @@ def check_config(ckpt_dir):
 def get_required_files(epoch: int):
     return [
         MODEL_FILE_PT.format(epoch=epoch),
-        ADAPTER_FILE_PT.format(epoch=epoch),
         CONFIG_FILE,
     ]
 
@@ -52,6 +52,12 @@ Check out the [git repo](https://github.com/omegalabsinc/omegalabs-anytoany-bitt
         )
 
 
+def export_hotkey(ckpt_dir: str, hotkey: str):
+    hotkey_file = os.path.join(ckpt_dir, HOTKEY_FILE)
+    with open(hotkey_file, "w") as f:
+        f.write(hotkey)
+
+
 class HuggingFaceModelStore(RemoteModelStore):
     """Hugging Face based implementation for storing and retrieving a model."""
 
@@ -66,12 +72,14 @@ class HuggingFaceModelStore(RemoteModelStore):
     async def upload_model(
         self, model: Model, 
         competition_parameters: CompetitionParameters,
+        hotkey: str
     ) -> ModelId:
         """Uploads a trained model to Hugging Face."""
         token = HuggingFaceModelStore.assert_access_token_exists()
         api = HfApi(token=token)
         export_readme(model.local_repo_dir)
-        files_to_upload = get_required_files(model.id.epoch) + [README_FILE]
+        export_hotkey(model.local_repo_dir, hotkey)
+        files_to_upload = get_required_files(model.id.epoch) + [README_FILE] + [HOTKEY_FILE]
         hf_repo_id = model.id.namespace + "/" + model.id.name
         api.create_repo(
             repo_id=hf_repo_id,
