@@ -14,10 +14,10 @@ import numpy as np
 from evaluation.S2S.distance import S2SMetrics
 import random
 
-HF_DATASET = "tezuesh/diarization_dataset"
+HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
 MIN_AGE = 48 * 60 * 60  # 48 hours
-MAX_FILES = 1
+MAX_FILES = 2000
 
 
 def get_timestamp_from_filename(filename: str):
@@ -56,7 +56,9 @@ def compute_s2s_metrics(dataset: Dataset):
                 'anti_spoofing_score': [],
                 'combined_score': [],
                 'total_samples': 0}
-    for i in tqdm(range(len(dataset['youtube_id']))):
+    from datetime import datetime
+   
+    for i in tqdm(range(10)):
         youtube_id = dataset['youtube_id'][i]
         audio_array = np.array(dataset['audio'][i]['array'])
         sample_rate = dataset['audio'][i]['sampling_rate']
@@ -66,7 +68,6 @@ def compute_s2s_metrics(dataset: Dataset):
         diar_speakers = np.array(dataset['diar_speakers'][i])
         if len(diar_timestamps_start) == 1:
             continue
-        print(diar_timestamps_start[0], diar_timestamps_end[0], diar_speakers[0])
         
 
         test_idx = random.randint(0, len(diar_timestamps_start) - 2)
@@ -74,20 +75,34 @@ def compute_s2s_metrics(dataset: Dataset):
         diar_gt = audio_array[int(diar_timestamps_start[test_idx+1] * sample_rate):int(diar_timestamps_end[test_idx+1] * sample_rate)]
         speaker = diar_speakers[test_idx]
 
-        metrics['total_samples'] += 1
+        # Add minimum length check (250ms = 0.25 seconds)
+        min_samples = int(0.25 * sample_rate)
+        if len(diar_sample) < min_samples or len(diar_gt) < min_samples:
+            continue
 
         # Perform inference
         result = inference(model_id="moshi", audio_array=diar_sample, sample_rate=sample_rate)
         pred_audio = result['audio']
-        print(diar_gt.shape, pred_audio.shape)
         
-        metrics_dict = s2s_metrics.compute_distance(gt_audio_arrs=[diar_gt, sample_rate], generated_audio_arrs=[pred_audio, sample_rate])
+        # Check if inference produced valid audio
+        if pred_audio is None or len(pred_audio) == 0 or pred_audio.shape[-1] == 0:
+            for k, v in metrics.items():
+                if k == 'total_samples':
+                    metrics[k] += 1
+                else:
+                    metrics[k].append(0)
+            continue
+
+            
+        metrics['total_samples'] += 1
+
+        metrics_dict = s2s_metrics.compute_distance(gt_audio_arrs=[[diar_gt, sample_rate]], generated_audio_arrs=[[pred_audio, sample_rate]])
         for key, value in metrics_dict.items():
             metrics[key].append(value)
 
     for key, value in metrics.items():
         if key != 'total_samples':
-            metrics[key] = np.array(value) / metrics['total_samples']
+            metrics[key] = np.sum(np.array(value)) / metrics['total_samples']
 
     return metrics
 
@@ -95,4 +110,4 @@ def compute_s2s_metrics(dataset: Dataset):
 
 if __name__ == "__main__":
     dataset = pull_latest_diarization_dataset()
-    compute_s2s_metrics(dataset)
+    print(compute_s2s_metrics(dataset))
