@@ -9,15 +9,23 @@ import ulid
 import pandas as pd
 import tempfile
 from tqdm import tqdm
-from models.S2S import inference as s2s_inference
 import numpy as np
-from evaluation.S2S.distance import S2SMetrics
 import random
+import subprocess
+import torch
+import bittensor as bt
+
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from models.S2S import inference as s2s_inference
+from evaluation.S2S.distance import S2SMetrics
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
 MIN_AGE = 48 * 60 * 60  # 48 hours
-MAX_FILES = 2000
+MAX_FILES = 10
 
 
 def get_timestamp_from_filename(filename: str):
@@ -32,7 +40,6 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
         f.rfilename.startswith(DATA_FILES_PREFIX)
     ][:MAX_FILES]
 
-    print(recent_files)
     if len(recent_files) == 0:
         return None
     temp_dir = "./data_cache"
@@ -43,11 +50,34 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
     return omega_dataset
 
 
-def inference(model_id: str, audio_array: np.array, sample_rate: int):
-    return s2s_inference(model_id, audio_array, sample_rate)
+
+def get_gpu_memory():
+    # system-level
+    output = subprocess.check_output(['nvidia-smi', '--query-gpu=memory.total,memory.used', '--format=csv,nounits,noheader'])
+    total_gb, used_gb = map(lambda s: int(s) / 1e3, output.decode('utf-8').split(','))
+    return total_gb, used_gb, total_gb - used_gb
+
+def log_gpu_memory(msg=''):
+    # process-level
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    bt.logging.info(f"GPU-MEM {msg} Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
+
+def cleanup_gpu_memory():
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
 
 
-def compute_s2s_metrics(dataset: Dataset):
+def load_ckpt_from_hf(model_id: str, hf_repo_id: str, device: str='cuda'):
+    return s2s_inference(model_id, hf_repo_id, device)
+
+
+def compute_s2s_metrics(model_id: str, hf_repo_id: str, dataset: Dataset):
+    cleanup_gpu_memory()
+    log_gpu_memory('before model load')
+    model = load_ckpt_from_hf(model_id, hf_repo_id, device='cuda')
+    log_gpu_memory('after model load')
     s2s_metrics = S2SMetrics()
     metrics = {'mimi_score': [],
                 'wer_score': [],
@@ -56,9 +86,9 @@ def compute_s2s_metrics(dataset: Dataset):
                 'anti_spoofing_score': [],
                 'combined_score': [],
                 'total_samples': 0}
-    from datetime import datetime
+    
    
-    for i in tqdm(range(10)):
+    for i in tqdm(range(64)):
         youtube_id = dataset['youtube_id'][i]
         audio_array = np.array(dataset['audio'][i]['array'])
         sample_rate = dataset['audio'][i]['sampling_rate']
@@ -81,7 +111,7 @@ def compute_s2s_metrics(dataset: Dataset):
             continue
 
         # Perform inference
-        result = inference(model_id="moshi", audio_array=diar_sample, sample_rate=sample_rate)
+        result = model.inference(audio_array=diar_sample, sample_rate=sample_rate)
         pred_audio = result['audio']
         
         # Check if inference produced valid audio
@@ -96,18 +126,20 @@ def compute_s2s_metrics(dataset: Dataset):
             
         metrics['total_samples'] += 1
 
-        metrics_dict = s2s_metrics.compute_distance(gt_audio_arrs=[[diar_gt, sample_rate]], generated_audio_arrs=[[pred_audio, sample_rate]])
+        metrics_dict = s2s_metrics.compute_distance(gt_audio_arrs=[[diar_gt, sample_rate]], generated_audio_arrs=[[pred_audio.squeeze(0).squeeze(0), sample_rate]])
+        
         for key, value in metrics_dict.items():
             metrics[key].append(value)
 
-    for key, value in metrics.items():
-        if key != 'total_samples':
-            metrics[key] = np.sum(np.array(value)) / metrics['total_samples']
+    
+    mean_score = np.mean(metrics['combined_score'])
+    bt.logging.info(f"Scoring {model_id} {hf_repo_id} complete: {mean_score:0.5f}")
+    cleanup_gpu_memory()
+    log_gpu_memory('after model clean-up')
 
-    return metrics
-
+    return mean_score
 
 
 if __name__ == "__main__":
     dataset = pull_latest_diarization_dataset()
-    print(compute_s2s_metrics(dataset))
+    print(compute_s2s_metrics(model_id="moshi", hf_repo_id="kyutai/moshiko-pytorch-bf16", dataset=dataset))

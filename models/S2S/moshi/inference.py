@@ -26,15 +26,15 @@ def seed_all(seed):
 
 seed_all(42424242)
 
-def initialize_models(device='cpu'):
-    mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
+def initialize_models(hf_repo_id: str, device='cpu'):
+    mimi_weight = hf_hub_download(hf_repo_id, loaders.MIMI_NAME)
     mimi = loaders.get_mimi(mimi_weight, device=device)
     mimi.set_num_codebooks(8)  # up to 32 for mimi, but limited to 8 for moshi
 
-    text_tokenizer_path = hf_hub_download(loaders.DEFAULT_REPO, loaders.TEXT_TOKENIZER_NAME)
+    text_tokenizer_path = hf_hub_download(hf_repo_id, loaders.TEXT_TOKENIZER_NAME)
     text_tokenizer = sentencepiece.SentencePieceProcessor(text_tokenizer_path)
 
-    moshi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MOSHI_NAME)
+    moshi_weight = hf_hub_download(hf_repo_id, loaders.MOSHI_NAME)
     moshi = loaders.get_moshi_lm(moshi_weight, device=device)
     lm_gen = LMGen(moshi, temp=0.8, temp_text=0.7)
 
@@ -164,20 +164,29 @@ def process_folder(input_folder, audio_output_folder, text_output_folder, mimi, 
         
     print(f"Error count: {error_count}/{len(wav_files)}")
 
-def inference(audio_array: np.array, sample_rate: int):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    mimi, text_tokenizer, lm_gen = initialize_models(device)
-    wav = load_audio_from_array(audio_array, sample_rate, mimi).to(device)
-    all_codes = encode_audio(mimi, wav, device)
-    all_codes = pad_audio_codes(all_codes, mimi, device)
-    warmup(mimi, lm_gen, device)
-    out_wav, text_output = generate_audio(mimi, lm_gen, text_tokenizer, all_codes, device)
-    trimmed_wav = detect_and_trim_silence(out_wav, mimi.sample_rate, min_silence_duration=1000, silence_threshold=-40)
-    return {"audio": trimmed_wav, "text": text_output}
+
+class InferenceRecipe:
+    def __init__(self, hf_repo_id: str, device: str='cuda'):
+        self.hf_repo_id = hf_repo_id
+        self.device = torch.device(device)
+        self.mimi, self.text_tokenizer, self.lm_gen = initialize_models(hf_repo_id, self.device)
+    
+    def inference(self, audio_array: np.array, sample_rate: int):
+        wav = load_audio_from_array(audio_array, sample_rate, self.mimi).to(self.device)
+        all_codes = encode_audio(self.mimi, wav, self.device)
+        all_codes = pad_audio_codes(all_codes, self.mimi, self.device)
+        warmup(self.mimi, self.lm_gen, self.device)
+        out_wav, text_output = generate_audio(self.mimi, self.lm_gen, self.text_tokenizer, all_codes, self.device)
+        trimmed_wav = detect_and_trim_silence(out_wav, self.mimi.sample_rate, min_silence_duration=1000, silence_threshold=-40)
+        return {"audio": trimmed_wav, "text": text_output}
+
+
+
 
 def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    mimi, text_tokenizer, lm_gen = initialize_models(device)
+    hf_repo_id = "kyutai/moshiko-pytorch-bf16"
+    mimi, text_tokenizer, lm_gen = initialize_models(hf_repo_id, device)
 
     # Set up input and output folders
     input_folder = '/workspace/tezuesh/omega-v2v/.extracted/'

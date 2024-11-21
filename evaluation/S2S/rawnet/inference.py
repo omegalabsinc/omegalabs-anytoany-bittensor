@@ -32,7 +32,7 @@ class RawNet3Inference:
         
         model_path = "models"
         temp_location = hf_hub_download(repo_id=model_name, repo_type='model', filename='model.pt', local_dir=model_path)
-        self.model.load_state_dict(torch.load(temp_location)['model'])
+        self.model.load_state_dict(torch.load(temp_location, weights_only=True)['model'])
         self.model.eval()
 
    

@@ -1,15 +1,11 @@
 from jiwer import wer
 import librosa
 import torch
-import torchaudio
 import torchaudio.functional as F
-import sys
-sys.path.append(".")
-
 from evaluation.S2S.rawnet.inference import RawNet3Inference
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 from transformers import (
-    AutoFeatureExtractor,
+    AutoFeatureExtractor, 
     MimiModel,
     WhisperForConditionalGeneration,
     WhisperProcessor,
@@ -21,6 +17,7 @@ class S2SMetrics:
         # Load the Whisper large model and processor
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.mimi_model = MimiModel.from_pretrained("kyutai/mimi").to(self.device)
+        self.mimi_model.config.num_quantizers = 8
         self.mimi_feature_extractor = AutoFeatureExtractor.from_pretrained("kyutai/mimi")
 
         self.processor = WhisperProcessor.from_pretrained("openai/whisper-large-v2")
@@ -100,8 +97,8 @@ class S2SMetrics:
         generated_wav = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=24000, to_channels=1)
         
         # Squeeze the channel dimension since MIMI expects [batch, time] format
-        gt_wav = torch.from_numpy(gt_wav).unsqueeze(0)
-        generated_wav = torch.from_numpy(generated_wav).unsqueeze(0)
+        gt_wav = torch.from_numpy(gt_wav)
+        generated_wav = torch.from_numpy(generated_wav)
         
         metric = []
         if gt_wav.shape[0] < 1000 or generated_wav.shape[0] < 1000:
@@ -114,6 +111,7 @@ class S2SMetrics:
 
             gt_tokens = self.mimi_model.encode(gt_wav["input_values"], gt_wav["padding_mask"])['audio_codes']
             generated_tokens = self.mimi_model.encode(generated_wav["input_values"], generated_wav["padding_mask"])['audio_codes']
+           
             num_channels = gt_tokens.shape[1]
             channel_losses = []
             for channel_idx in range(num_channels):
@@ -121,7 +119,6 @@ class S2SMetrics:
                 generated_sample = generated_tokens[0, channel_idx, :]
                 edit_dist = F.edit_distance(gt_sample, generated_sample)
                 channel_losses.append(1 - edit_dist/max(len(gt_sample), len(generated_sample)))
-            
             metric.append(sum(channel_losses) / num_channels)
 
         return sum(metric) / len(metric)
@@ -139,7 +136,13 @@ class S2SMetrics:
         Returns:
             float: The Word Error Rate between the ground truth and predicted transcripts.
         """
-        return 1 - wer(gt_transcript, generated_transcript)
+
+        if len(gt_transcript.split(" ")) < len(generated_transcript.split(" ")):
+            gt_transcript, generated_transcript = generated_transcript, gt_transcript
+        
+        wer_score = wer(gt_transcript, generated_transcript)
+        return 1 - wer_score
+
 
     def calculate_pesq(self, gt_audio_arr, generated_audio_arr, sample_rate_gt, sample_rate_generated):
         
@@ -207,12 +210,14 @@ class S2SMetrics:
         increases as the difference in duration increases.
 
         Args:
-            gt_audio_path (str): Path to the ground truth audio file.
-            generated_audio_path (str): Path to the generated audio file.
+            gt_audio_arr (numpy.ndarray): Ground truth audio array
+            generated_audio_arr (numpy.ndarray): Generated audio array 
+            sample_rate_gt (int): Sample rate of ground truth audio
+            sample_rate_generated (int): Sample rate of generated audio
 
         Returns:
             float: The calculated length penalty. A value of 1 indicates
-                   perfect length match, with lower values for mismatched lengths.
+                  perfect length match, with lower values for mismatched lengths.
         """
         try:
             gt_audio = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=16000, to_channels=1)
@@ -221,12 +226,13 @@ class S2SMetrics:
             gt_duration = gt_audio.shape[0] / 16000  # Assuming 16kHz sample rate
             generated_duration = generated_audio.shape[0] / 16000
             
-            duration_diff = abs(gt_duration - generated_duration)
+            duration_diff = abs(gt_duration - generated_duration)/max(gt_duration, generated_duration)
             
             # Calculate penalty: 1 for perfect match, decreasing as difference increases
-            penalty = 1 / (1 + duration_diff)
+            penalty =  1 / (1 + duration_diff)
             
             return penalty
+        
         except Exception as e:
             print(f"An error occurred while calculating length penalty: {e}")
             return 0  # Return 0 as the maximum penalty in case of error
@@ -240,13 +246,13 @@ class S2SMetrics:
         
     def compute_distance(self, gt_audio_arrs, generated_audio_arrs):
         gt_transcripts = [self.transcribe_audio(gt_audio_arr[0], gt_audio_arr[1]) for gt_audio_arr in gt_audio_arrs]
-        generated_transcripts = [self.transcribe_audio(generated_audio_arr[0].squeeze(0).squeeze(0), generated_audio_arr[1]) for generated_audio_arr in generated_audio_arrs]
+        generated_transcripts = [self.transcribe_audio(generated_audio_arr[0], generated_audio_arr[1]) for generated_audio_arr in generated_audio_arrs]
    
         mimi_score = [self.mimi_scoring(gt_audio_arr[0], generated_audio_arr[0], gt_audio_arr[1], generated_audio_arr[1]) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]
         wer_score = [self.compute_wer(gt_transcript, generated_transcript) for gt_transcript, generated_transcript in zip(gt_transcripts, generated_transcripts)]
         length_penalty = [self.calculate_length_penalty(gt_audio_arr[0], generated_audio_arr[0], gt_audio_arr[1], generated_audio_arr[1]) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]    
-        pesq_score = [self.calculate_pesq(gt_audio_arr[0], generated_audio_arr[0].squeeze(0).squeeze(0), gt_audio_arr[1], generated_audio_arr[1] ) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]
-        anti_spoofing_score = [self.calculate_anti_spoofing_score(generated_audio_arr[0].squeeze(0).squeeze(0), gt_audio_arr[0], generated_audio_arr[1], gt_audio_arr[1]) for generated_audio_arr, gt_audio_arr in zip(generated_audio_arrs, gt_audio_arrs)]
+        pesq_score = [self.calculate_pesq(gt_audio_arr[0], generated_audio_arr[0], gt_audio_arr[1], generated_audio_arr[1] ) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]
+        anti_spoofing_score = [self.calculate_anti_spoofing_score(generated_audio_arr[0], gt_audio_arr[0], generated_audio_arr[1], gt_audio_arr[1]) for generated_audio_arr, gt_audio_arr in zip(generated_audio_arrs, gt_audio_arrs)]
         # Calculate combined metric using geometric and arithmetic means
         combined_scores = []
         for m, w, l, p, a in zip(mimi_score, wer_score, length_penalty, pesq_score, anti_spoofing_score):
