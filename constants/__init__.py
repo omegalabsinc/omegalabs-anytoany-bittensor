@@ -32,6 +32,10 @@ COMPETITION_SCHEDULE: List[CompetitionParameters] = [
         reward_percentage=1.0,
         competition_id="o1",
     ),
+    CompetitionParameters(
+        reward_percentage=0.5,
+        competition_id="v1_moshi",
+    ),
 ]
 ORIGINAL_COMPETITION_ID = "o1"
 BLOCK_DURATION = 12  # 12 seconds

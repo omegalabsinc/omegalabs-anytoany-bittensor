@@ -65,6 +65,11 @@ from neurons.model_scoring import (
     log_gpu_memory,
     get_gpu_memory
 )
+from neurons.v2v_scoring import (
+    compute_s2s_metrics,
+    pull_latest_diarization_dataset,
+    MIN_AGE as V2V_MIN_AGE,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
@@ -313,7 +318,8 @@ class Validator:
         torch.backends.cudnn.benchmark = True
 
         api_root = (
-            "https://dev-sn21-api.omegatron.ai"
+            # "https://dev-sn21-api.omegatron.ai"
+            "http://localhost:8000"
             if self.config.subtensor.network == "test"
             else "https://sn21-api.omegatron.ai"
         )
@@ -927,6 +933,7 @@ class Validator:
         #bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
         eval_data = pull_latest_omega_dataset()
+        eval_data_v2v = pull_latest_diarization_dataset()
         log_gpu_memory('after pulling dataset')
         if eval_data is None:
             bt.logging.warning(
@@ -950,14 +957,21 @@ class Validator:
                         # Update the block this uid last updated their model.
                         uid_to_block[uid_i] = model_i_metadata.block
                         hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
-                        score = get_model_score(
-                            hf_repo_id,
-                            mini_batch=eval_data,
-                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
-                            hotkey=hotkey,
-                            block=model_i_metadata.block,
-                            model_tracker=self.model_tracker
-                        )
+                        if competition_parameters.competition_id == "o1":
+                            score = get_model_score(
+                                hf_repo_id,
+                                mini_batch=eval_data,
+                                local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
+                                hotkey=hotkey,
+                                block=model_i_metadata.block,
+                                model_tracker=self.model_tracker
+                            )
+                        elif competition_parameters.competition_id == "v1_moshi":
+                            score = compute_s2s_metrics(
+                                model_id=model_i_metadata.id.competition_id.split("_")[1],
+                                hf_repo_id=hf_repo_id,
+                                dataset=eval_data_v2v,
+                            )
                         bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:
                         bt.logging.error(

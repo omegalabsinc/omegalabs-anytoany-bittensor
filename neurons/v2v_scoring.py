@@ -24,8 +24,8 @@ from evaluation.S2S.distance import S2SMetrics
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 48 * 60 * 60  # 48 hours
-MAX_FILES = 10
+MIN_AGE = 4 * 60 * 60  # 4 hours
+MAX_FILES = 8
 
 
 def get_timestamp_from_filename(filename: str):
@@ -69,14 +69,54 @@ def cleanup_gpu_memory():
     torch.cuda.ipc_collect()
 
 
-def load_ckpt_from_hf(model_id: str, hf_repo_id: str, device: str='cuda'):
-    return s2s_inference(model_id, hf_repo_id, device)
+def load_ckpt_from_hf(model_id: str, hf_repo_id: str, local_dir: str, device: str='cuda',  target_file: str = "hotkey.txt"):
+    repo_dir = Path(local_dir) / hf_repo_id
+    bt.logging.info(f"Loading ckpt {hf_repo_id}, repo_dir: {repo_dir}")
+    hf_api = huggingface_hub.HfApi()
+
+    # Download and read the target file
+    target_file_contents = None
+    try:
+        target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
+        with open(target_file_path, 'r') as file:
+            target_file_contents = file.read()
+    except huggingface_hub.utils._errors.EntryNotFoundError:
+        print(f"Warning: File '{target_file}' not found in the repository.")
+    except Exception as e:
+        print(f"An error occurred while trying to read '{target_file}': {str(e)}")
+    return s2s_inference(model_id, hf_repo_id, repo_dir, device), target_file_contents
 
 
-def compute_s2s_metrics(model_id: str, hf_repo_id: str, dataset: Dataset):
+def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
     cleanup_gpu_memory()
     log_gpu_memory('before model load')
-    model = load_ckpt_from_hf(model_id, hf_repo_id, device='cuda')
+    inference_recipe, hotkey_file_contents = load_ckpt_from_hf(model_id, hf_repo_id, local_dir=local_dir, device=device, target_file="hotkey.txt")
+    # Check if the contents of license file are the same as the hotkey if in repo
+    if hotkey_file_contents is not None and hotkey_file_contents != hotkey:
+        bt.logging.warning(f"*** Hotkey file contents {hotkey_file_contents[:48]} do not match hotkey {hotkey}. Returning score of 0. ***")
+        cleanup_gpu_memory()
+        log_gpu_memory('after model clean-up')
+        return 0
+    elif hotkey_file_contents is not None and hotkey_file_contents == hotkey:
+        bt.logging.info(f"Hotkey file contents match hotkey {hotkey}")
+    
+    # Check if the model is unique. Calculates the model's checkpoint (.pt) file hash for storage.
+    if model_tracker is not None:
+        model_paths = inference_recipe.model_paths
+        for path in model_paths:
+            is_model_unique, model_hash = model_tracker.is_model_unique(
+                hotkey, 
+                block, 
+                path
+            )
+            if is_model_unique:
+                bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
+            else:
+                bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
+                cleanup_gpu_memory()
+                log_gpu_memory('after model clean-up')
+                return 0
+        
     log_gpu_memory('after model load')
     s2s_metrics = S2SMetrics()
     metrics = {'mimi_score': [],
@@ -88,14 +128,14 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, dataset: Dataset):
                 'total_samples': 0}
     
    
-    for i in tqdm(range(64)):
-        youtube_id = dataset['youtube_id'][i]
-        audio_array = np.array(dataset['audio'][i]['array'])
-        sample_rate = dataset['audio'][i]['sampling_rate']
+    for i in tqdm(range(len(mini_batch['youtube_id']))):
+        youtube_id = mini_batch['youtube_id'][i]
+        audio_array = np.array(mini_batch['audio'][i]['array'])
+        sample_rate = mini_batch['audio'][i]['sampling_rate']
 
-        diar_timestamps_start = np.array(dataset['diar_timestamps_start'][i])
-        diar_timestamps_end = np.array(dataset['diar_timestamps_end'][i])
-        diar_speakers = np.array(dataset['diar_speakers'][i])
+        diar_timestamps_start = np.array(mini_batch['diar_timestamps_start'][i])
+        diar_timestamps_end = np.array(mini_batch['diar_timestamps_end'][i])
+        diar_speakers = np.array(mini_batch['diar_speakers'][i])
         if len(diar_timestamps_start) == 1:
             continue
         
@@ -111,7 +151,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, dataset: Dataset):
             continue
 
         # Perform inference
-        result = model.inference(audio_array=diar_sample, sample_rate=sample_rate)
+        result = inference_recipe.inference(audio_array=diar_sample, sample_rate=sample_rate)
         pred_audio = result['audio']
         
         # Check if inference produced valid audio
@@ -131,7 +171,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, dataset: Dataset):
         for key, value in metrics_dict.items():
             metrics[key].append(value)
 
-    
+    print("Combined score: ", metrics['combined_score'])
     mean_score = np.mean(metrics['combined_score'])
     bt.logging.info(f"Scoring {model_id} {hf_repo_id} complete: {mean_score:0.5f}")
     cleanup_gpu_memory()
@@ -142,4 +182,5 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, dataset: Dataset):
 
 if __name__ == "__main__":
     dataset = pull_latest_diarization_dataset()
-    print(compute_s2s_metrics(model_id="moshi", hf_repo_id="kyutai/moshiko-pytorch-bf16", dataset=dataset))
+    print(len(dataset['youtube_id']))
+    print(compute_s2s_metrics(model_id="moshi", hf_repo_id="kyutai/moshiko-pytorch-bf16", mini_batch=dataset))
