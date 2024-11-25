@@ -372,6 +372,7 @@ class Validator:
         # Setup a miner iterator to ensure we update all miners.
         # This subnet does not differentiate between miner and validators so this is passed all uids.
         self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
+        # self.miner_iterator = MinerIterator([14])
 
         # Setup a ModelMetadataStore
         self.metadata_store = ChainModelMetadataStore(
@@ -852,6 +853,7 @@ class Validator:
         # Query API for next model to score.
         bt.logging.info(f"Getting model to score...")
         uid = await self.get_model_to_score()
+        # uid = 14
         if uid is not None:
             uids = [uid]
 
@@ -970,7 +972,11 @@ class Validator:
                             score = compute_s2s_metrics(
                                 model_id=model_i_metadata.id.competition_id.split("_")[1],
                                 hf_repo_id=hf_repo_id,
-                                dataset=eval_data_v2v,
+                                mini_batch=eval_data_v2v,
+                                local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
+                                hotkey=hotkey,
+                                block=model_i_metadata.block,
+                                model_tracker=self.model_tracker
                             )
                         bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:

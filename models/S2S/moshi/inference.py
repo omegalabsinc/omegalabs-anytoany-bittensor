@@ -169,9 +169,9 @@ class InferenceRecipe:
     def __init__(self, hf_repo_id: str, repo_dir: str, device: str='cuda'):
         self.hf_repo_id = hf_repo_id
         self.device = torch.device(device)
-        models, paths = initialize_models(hf_repo_id, repo_dir, self.device)
-        self.mimi, self.text_tokenizer, self.lm_gen = models
-        self.model_paths = paths
+        mod_paths = initialize_models(hf_repo_id, repo_dir, self.device)
+        self.mimi, self.text_tokenizer, self.lm_gen = mod_paths["models"]
+        self.model_paths = mod_paths["paths"]
         
     def inference(self, audio_array: np.array, sample_rate: int):
         wav = load_audio_from_array(audio_array, sample_rate, self.mimi).to(self.device)

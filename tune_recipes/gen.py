@@ -14,7 +14,7 @@ from omegaconf import DictConfig
 from PIL import Image
 
 from torchtune import config, utils
-from torchtune.utils._generation import sample
+from torchtune.generation import sample
 from torchtune.models import convert_weights
 from torchtune.data import Message
 
