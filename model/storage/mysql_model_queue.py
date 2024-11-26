@@ -13,7 +13,7 @@ import bittensor as bt
 from typing import Optional
 
 from model.data import ModelId
-from vali_api.config import DBHOST, DBNAME, DBUSER, DBPASS
+from vali_api.config import DBHOST, DBNAME, DBUSER, DBPASS, IS_PROD
 
 Base = declarative_base()
 
@@ -53,8 +53,12 @@ def get_session() -> Session:
         raise RuntimeError("Database not initialized. Call init_database() first.")
     return Session()
 
+def get_table_name(base_name: str) -> str:
+    """Helper function to get the correct table name with suffix if not in production."""
+    return f"{base_name}{'_test' if not IS_PROD else ''}"
+
 class ModelQueue(Base):
-    __tablename__ = 'sn21_model_queue'
+    __tablename__ = get_table_name('sn21_model_queue')
 
     hotkey = Column(String(255), primary_key=True)
     uid = Column(String(255), primary_key=True, index=True)
@@ -67,21 +71,26 @@ class ModelQueue(Base):
     scoring_updated_at = Column(DateTime, default=None)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship to ScoreHistory
-    scores = relationship("ScoreHistory", 
-                          back_populates="model", 
-                          foreign_keys="[ScoreHistory.hotkey, ScoreHistory.uid]",
-                          primaryjoin="and_(ModelQueue.hotkey==ScoreHistory.hotkey, ModelQueue.uid==ScoreHistory.uid)")
+    # Relationship to use dynamic table name (lambda function)
+    scores = relationship(
+        "ScoreHistory",
+        back_populates="model",
+        foreign_keys="[ScoreHistory.hotkey, ScoreHistory.uid]",
+        primaryjoin=lambda: and_(
+            ModelQueue.hotkey == ScoreHistory.hotkey,
+            ModelQueue.uid == ScoreHistory.uid
+        )
+    )
 
     def __repr__(self):
         return f"<ModelQueue(hotkey='{self.hotkey}', uid='{self.uid}', competition_id='{self.competition_id}', is_new={self.is_new})>"
 
 class ScoreHistory(Base):
-    __tablename__ = 'sn21_score_history'
+    __tablename__ = get_table_name('sn21_score_history')
 
     id = Column(Integer, primary_key=True)
-    hotkey = Column(String(255), ForeignKey('sn21_model_queue.hotkey', ondelete='SET NULL'), index=True, nullable=True)
-    uid = Column(String(255), ForeignKey('sn21_model_queue.uid', ondelete='SET NULL'), index=True, nullable=True)
+    hotkey = Column(String(255), ForeignKey(f"{get_table_name('sn21_model_queue')}.hotkey", ondelete='SET NULL'), index=True, nullable=True)
+    uid = Column(String(255), ForeignKey(f"{get_table_name('sn21_model_queue')}.uid", ondelete='SET NULL'), index=True, nullable=True)
     competition_id = Column(String(255), index=True)
     model_metadata = Column(JSON)
     score = Column(Float)
@@ -91,11 +100,16 @@ class ScoreHistory(Base):
     scorer_hotkey = Column(String(255), index=True)
     is_archived = Column(Boolean, default=False)
 
-    # Relationship to ModelQueue
-    model = relationship("ModelQueue", 
-                        back_populates="scores", 
-                        foreign_keys=[hotkey, uid],
-                        primaryjoin="and_(ModelQueue.hotkey==ScoreHistory.hotkey, ModelQueue.uid==ScoreHistory.uid)")
+    # Relationship to ModelQueue using dynamic table name (lambda function)
+    model = relationship(
+        "ModelQueue",
+        back_populates="scores",
+        foreign_keys=[hotkey, uid],
+        primaryjoin=lambda: and_(
+            ModelQueue.hotkey == ScoreHistory.hotkey,
+            ModelQueue.uid == ScoreHistory.uid
+        )
+    )
 
     def __repr__(self):
         return f"<ScoreHistory(hotkey='{self.hotkey}', uid='{self.uid}', score={self.score}, scored_at={self.scored_at}, model_metadata={self.model_metadata} is_archived={self.is_archived})>"
@@ -413,6 +427,108 @@ class ModelQueueManager:
         except Exception as e:
             bt.logging.error(f"Failed to reset stale tasks after {self.max_retries} attempts: {str(e)}")
             return 0
+    
+    def get_recent_model_scores(self, scores_per_model=10):
+        """
+        Get recent scores for all models.
+        
+        Args:
+            scores_per_model (int): Number of recent scores to fetch per model
+            
+        Returns:
+            dict: Dictionary of model scores grouped by UID
+        """
+        def _get_recent_scores():
+            with self.session_scope() as session:
+                try:
+                    # First, create a subquery that ranks scores by timestamp for each model
+                    ranked_scores = (
+                        session.query(
+                            ScoreHistory,
+                            func.row_number().over(
+                                partition_by=(ScoreHistory.hotkey, ScoreHistory.uid),
+                                order_by=desc(ScoreHistory.scored_at)
+                            ).label('score_rank')
+                        )
+                        .filter(ScoreHistory.is_archived == False)
+                        .subquery()
+                    )
+
+                    # Get the most recent scores for each model
+                    recent_scores = session.query(ranked_scores).filter(
+                        ranked_scores.c.score_rank <= scores_per_model
+                    ).subquery('recent_scores')
+
+                    # Join with ModelQueue to get additional model information
+                    results = session.query(
+                        ModelQueue.uid,
+                        ModelQueue.hotkey,
+                        ModelQueue.competition_id,
+                        recent_scores.c.score,
+                        recent_scores.c.scored_at,
+                        recent_scores.c.block,
+                        recent_scores.c.model_hash,
+                        recent_scores.c.scorer_hotkey,
+                        recent_scores.c.score_rank
+                    ).outerjoin(
+                        recent_scores,
+                        and_(
+                            ModelQueue.hotkey == recent_scores.c.hotkey,
+                            ModelQueue.uid == recent_scores.c.uid
+                        )
+                    ).order_by(
+                        ModelQueue.uid,
+                        ModelQueue.hotkey,
+                        recent_scores.c.scored_at.desc()
+                    ).all()
+
+                    scores_by_uid = defaultdict(lambda: defaultdict(list))
+                    
+                    for result in results:
+                        if result.score is not None:
+                            # Create a unique key for each hotkey+uid combination
+                            model_key = f"{result.hotkey}_{result.uid}"
+                            
+                            scores_by_uid[result.uid][model_key].append({
+                                'hotkey': result.hotkey,
+                                'competition_id': result.competition_id,
+                                'score': result.score,
+                                'scored_at': result.scored_at.isoformat() if result.scored_at else None,
+                                'block': result.block,
+                                'model_hash': result.model_hash,
+                                'scorer_hotkey': result.scorer_hotkey,
+                                'rank': result.score_rank
+                            })
+                        else:
+                            # Handle models with no scores
+                            model_key = f"{result.hotkey}_{result.uid}"
+                            if not scores_by_uid[result.uid][model_key]:  # Only add if no scores exist
+                                scores_by_uid[result.uid][model_key].append({
+                                    'hotkey': result.hotkey,
+                                    'competition_id': result.competition_id,
+                                    'score': None,
+                                    'scored_at': None,
+                                    'block': None,
+                                    'model_hash': None,
+                                    'scorer_hotkey': None,
+                                    'rank': None
+                                })
+
+                    # Convert defaultdict to regular dict for return
+                    return {
+                        uid: dict(models) 
+                        for uid, models in scores_by_uid.items()
+                    }
+
+                except Exception as e:
+                    bt.logging.error(f"Error in _get_recent_scores: {str(e)}")
+                    raise
+
+        try:
+            return self.execute_with_retry(_get_recent_scores)
+        except Exception as e:
+            bt.logging.error(f"Failed to get recent scores after {self.max_retries} attempts: {str(e)}")
+            return {}
     
     def get_all_model_scores(self):
         """Get all model scores with retry logic."""
