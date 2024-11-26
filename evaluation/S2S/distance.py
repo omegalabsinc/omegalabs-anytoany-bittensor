@@ -10,7 +10,7 @@ from transformers import (
     WhisperForConditionalGeneration,
     WhisperProcessor,
 )
-
+import bittensor as bt
 class S2SMetrics:
     def __init__(self):
         
@@ -67,7 +67,7 @@ class S2SMetrics:
             return transcription[0]
         
         except Exception as e:
-            print(f"An error occurred while transcribing the audio: {e}")
+            bt.logging.info(f"An error occurred while transcribing the audio: {e}")
             return None
 
     
@@ -198,7 +198,7 @@ class S2SMetrics:
             return combined_pesq_score.detach().cpu().item()
         
         except Exception as e:
-            print(f"An error occurred while calculating PESQ score: {e}")
+            bt.logging.info(f"An error occurred while calculating PESQ score: {e}")
             return None
         
     def calculate_length_penalty(self, gt_audio_arr, generated_audio_arr, sample_rate_gt, sample_rate_generated):
@@ -234,7 +234,7 @@ class S2SMetrics:
             return penalty
         
         except Exception as e:
-            print(f"An error occurred while calculating length penalty: {e}")
+            bt.logging.info(f"An error occurred while calculating length penalty: {e}")
             return 0  # Return 0 as the maximum penalty in case of error
 
 
@@ -281,4 +281,4 @@ if __name__ == "__main__":
     generated_paths=['/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav', '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000223993.wav']
     metric = S2SMetrics()
 
-    print(metric.compute_distance(gt_paths, generated_paths))
+    bt.logging.info(metric.compute_distance(gt_paths, generated_paths))

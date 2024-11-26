@@ -318,8 +318,7 @@ class Validator:
         torch.backends.cudnn.benchmark = True
 
         api_root = (
-            # "https://dev-sn21-api.omegatron.ai"
-            "http://localhost:8000"
+            "https://dev-sn21-api.omegatron.ai"
             if self.config.subtensor.network == "test"
             else "https://sn21-api.omegatron.ai"
         )
@@ -350,7 +349,7 @@ class Validator:
         self.run_step_count = 0
 
         # === Running args ===
-        self.weights = torch.zeros_like(self.metagraph.S)
+        self.weights = torch.zeros_like(torch.tensor(self.metagraph.S))
         self.epoch_step = 0
         self.global_step = 0
         self.last_epoch = self.metagraph.block.item()
@@ -934,14 +933,9 @@ class Validator:
             
         #bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
-        eval_data = pull_latest_omega_dataset()
-        eval_data_v2v = pull_latest_diarization_dataset()
+       
         log_gpu_memory('after pulling dataset')
-        if eval_data is None:
-            bt.logging.warning(
-                f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
-            )
-            time.sleep(MINS_TO_SLEEP * 60)
+        
 
         for uid_i, (
             hotkey,
@@ -960,6 +954,12 @@ class Validator:
                         uid_to_block[uid_i] = model_i_metadata.block
                         hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
                         if competition_parameters.competition_id == "o1":
+                            eval_data = pull_latest_omega_dataset()
+                            if eval_data is None:
+                                bt.logging.warning(
+                                    f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
+                                )
+                                time.sleep(MINS_TO_SLEEP * 60)
                             score = get_model_score(
                                 hf_repo_id,
                                 mini_batch=eval_data,
@@ -969,6 +969,12 @@ class Validator:
                                 model_tracker=self.model_tracker
                             )
                         elif competition_parameters.competition_id == "v1_moshi":
+                            eval_data_v2v = pull_latest_diarization_dataset()
+                            if eval_data_v2v is None:
+                                bt.logging.warning(
+                                    f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
+                                )
+                                time.sleep(MINS_TO_SLEEP * 60)
                             score = compute_s2s_metrics(
                                 model_id=model_i_metadata.id.competition_id.split("_")[1],
                                 hf_repo_id=hf_repo_id,
@@ -1275,7 +1281,7 @@ class Validator:
                     # Sleep for 5 minutes before resycing metagraph
                     await asyncio.sleep(60 * 5)
                 else:
-                    await self.try_run_step(ttl=60 * 15) # 15 minute timeout. Same as the timeout for resetting stale models being scored.
+                    await self.try_run_step(ttl=60 * 30) # 30 minute timeout. Same as the timeout for resetting stale models being scored.
                 
                 self.global_step += 1
 

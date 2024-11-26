@@ -160,7 +160,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                 if k == 'total_samples':
                     metrics[k] += 1
                 else:
-                    metrics[k].append(0)
+                    metrics[k].append([0])
             continue
 
             
@@ -171,7 +171,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
         for key, value in metrics_dict.items():
             metrics[key].append(value)
 
-    print("Combined score: ", metrics['combined_score'])
+    bt.logging.info(f"Combined score: after scoring {len(metrics['combined_score'])} samples", metrics['combined_score'])
     mean_score = np.mean(metrics['combined_score'])
     bt.logging.info(f"Scoring {model_id} {hf_repo_id} complete: {mean_score:0.5f}")
     cleanup_gpu_memory()
