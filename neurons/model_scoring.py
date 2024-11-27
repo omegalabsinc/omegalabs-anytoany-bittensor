@@ -19,7 +19,7 @@ from models.imagebind_wrapper import ImageBind
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 4 * 60 * 60  # 4 hours
+MIN_AGE = 1 * 20 * 60  # 4 hours # changed from 4 hours to 20 minutes for testing
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
@@ -57,10 +57,10 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir: str, target_file: str = "hotke
         target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
         with open(target_file_path, 'r') as file:
             target_file_contents = file.read()
-    except huggingface_hub.utils._errors.EntryNotFoundError:
-        print(f"Warning: File '{target_file}' not found in the repository.")
+    except huggingface_hub.errors.EntryNotFoundError:
+        bt.logging.warning(f"Warning: File '{target_file}' not found in the repository.")
     except Exception as e:
-        print(f"An error occurred while trying to read '{target_file}': {str(e)}")
+        bt.logging.warning(f"An error occurred while trying to read '{target_file}': {str(e)}")
 
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
     if len(ckpt_files) == 0:
