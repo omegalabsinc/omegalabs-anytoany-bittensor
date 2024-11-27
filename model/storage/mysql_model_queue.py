@@ -505,7 +505,7 @@ class ModelQueueManager:
                             if not scores_by_uid[result.uid][model_key]:  # Only add if no scores exist
                                 scores_by_uid[result.uid][model_key].append({
                                     'hotkey': result.hotkey,
-                                    'competition_id': result.competition_id,
+                                    'competition_id': None,
                                     'score': None,
                                     'scored_at': None,
                                     'block': None,
