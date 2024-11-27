@@ -17,7 +17,7 @@ class S2SMetrics:
         # Load the Whisper large model and processor
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.mimi_model = MimiModel.from_pretrained("kyutai/mimi").to(self.device)
-        self.mimi_model.config.num_quantizers = 8
+        self.mimi_model.config.num_quantizers = 4
         self.mimi_feature_extractor = AutoFeatureExtractor.from_pretrained("kyutai/mimi")
 
         self.processor = WhisperProcessor.from_pretrained("openai/whisper-large-v2")
@@ -29,10 +29,14 @@ class S2SMetrics:
         
     
     def convert_audio(self, audio_arr, from_rate, to_rate, to_channels):
-        audio = librosa.resample(audio_arr, orig_sr=from_rate, target_sr=to_rate)
-        if to_channels == 1:
-            if len(audio.shape) > 1:
-                audio = audio.mean(axis=0, keepdims=True)
+        try:
+            audio = librosa.resample(audio_arr, orig_sr=from_rate, target_sr=to_rate)
+            if to_channels == 1:
+                if len(audio.shape) > 1:
+                    audio = audio.mean(axis=0, keepdims=True)
+        except Exception as e:
+            bt.logging.info(f"An error occurred while converting audio: {e}")
+            return None
         return audio
 
     def transcribe_audio(self, audio_arr, sample_rate):
@@ -47,7 +51,6 @@ class S2SMetrics:
         """
         try:
             audio = librosa.resample(audio_arr, orig_sr=sample_rate, target_sr=16000)
-
             input_features = self.processor(audio, sampling_rate=16000, return_tensors="pt").input_features
             
             # Calculate the attention mask
@@ -95,7 +98,12 @@ class S2SMetrics:
         
         gt_wav = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=24000, to_channels=1)
         generated_wav = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=24000, to_channels=1)
-        
+
+        if generated_wav is None:
+            return 0
+        if gt_wav is None:
+            return 1
+
         # Squeeze the channel dimension since MIMI expects [batch, time] format
         gt_wav = torch.from_numpy(gt_wav)
         generated_wav = torch.from_numpy(generated_wav)
@@ -111,7 +119,7 @@ class S2SMetrics:
 
             gt_tokens = self.mimi_model.encode(gt_wav["input_values"], gt_wav["padding_mask"])['audio_codes']
             generated_tokens = self.mimi_model.encode(generated_wav["input_values"], generated_wav["padding_mask"])['audio_codes']
-           
+            
             num_channels = gt_tokens.shape[1]
             channel_losses = []
             for channel_idx in range(num_channels):
@@ -120,7 +128,6 @@ class S2SMetrics:
                 edit_dist = F.edit_distance(gt_sample, generated_sample)
                 channel_losses.append(1 - edit_dist/max(len(gt_sample), len(generated_sample)))
             metric.append(sum(channel_losses) / num_channels)
-
         return sum(metric) / len(metric)
     
     def compute_wer(self, gt_transcript, generated_transcript):
@@ -136,7 +143,8 @@ class S2SMetrics:
         Returns:
             float: The Word Error Rate between the ground truth and predicted transcripts.
         """
-
+        if gt_transcript is None or generated_transcript is None:
+            return 0
         if len(gt_transcript.split(" ")) < len(generated_transcript.split(" ")):
             gt_transcript, generated_transcript = generated_transcript, gt_transcript
         
@@ -168,28 +176,31 @@ class S2SMetrics:
             Both audio files should have the same sampling rate (default is 16000 Hz).
         """
         try:
-
             # Convert both audio files to the required format (16kHz, mono)
             gt_audio = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=16000, to_channels=1)
             gen_audio = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=16000, to_channels=1)
+
+            if gen_audio is None:
+                return 0
+            if gt_audio is None:
+                return 1
 
 
             # Ensure both audio tensors have the same length by trimming to the shorter one
             min_length = min(gt_audio.shape[0], gen_audio.shape[0])
             gt_audio = gt_audio[:min_length]
             gen_audio = gen_audio[:min_length]
-
+        
             # Calculate narrowband PESQ score
             # Convert numpy arrays to torch tensors
             gen_audio_tensor = torch.from_numpy(gen_audio).unsqueeze(0)
             gt_audio_tensor = torch.from_numpy(gt_audio).unsqueeze(0)
-
             # Calculate narrowband PESQ score
             nb_pesq_score = (self.nb_pesq(gen_audio_tensor, gt_audio_tensor).clip(-0.5, 4.5) + 0.5) / 5.0   # Normalize from [-0.5, 4.5] to [0, 1]
 
             # Calculate wideband PESQ score
             wb_pesq_score = (self.wb_pesq(gen_audio_tensor, gt_audio_tensor).clip(-0.5, 4.5) + 0.5) / 5.0   # Normalize from [-0.5, 4.5] to [0, 1]
-
+            
             # Combine the scores 
             # Use appropriate weightage for narrowband and wideband PESQ scores
             # Wideband PESQ is generally considered more accurate for modern speech quality assessment
@@ -199,7 +210,7 @@ class S2SMetrics:
         
         except Exception as e:
             bt.logging.info(f"An error occurred while calculating PESQ score: {e}")
-            return None
+            return 0
         
     def calculate_length_penalty(self, gt_audio_arr, generated_audio_arr, sample_rate_gt, sample_rate_generated):
         """
@@ -222,7 +233,12 @@ class S2SMetrics:
         try:
             gt_audio = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=16000, to_channels=1)
             generated_audio = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=16000, to_channels=1)
-            
+
+            if generated_audio is None:
+                return 0
+            if gt_audio is None:
+                return 1
+
             gt_duration = gt_audio.shape[0] / 16000  # Assuming 16kHz sample rate
             generated_duration = generated_audio.shape[0] / 16000
             
@@ -239,10 +255,13 @@ class S2SMetrics:
 
 
     def calculate_anti_spoofing_score(self, generated_audio_arr, gt_audio_arr, gt_sample_rate, generated_sample_rate):
-
-        generated_embedding = self.anti_spoofing_inference.extract_speaker_embd(generated_audio_arr,generated_sample_rate, 48000, 10)
-        gt_embedding = self.anti_spoofing_inference.extract_speaker_embd(gt_audio_arr, gt_sample_rate, 48000, 10)
-        return 1/(1+((generated_embedding - gt_embedding) ** 2).mean()).detach().cpu().item()
+        try:
+            generated_embedding = self.anti_spoofing_inference.extract_speaker_embd(generated_audio_arr,generated_sample_rate, 48000, 10)
+            gt_embedding = self.anti_spoofing_inference.extract_speaker_embd(gt_audio_arr, gt_sample_rate, 48000, 10)
+            return 1/(1+((generated_embedding - gt_embedding) ** 2).mean()).detach().cpu().item()
+        except Exception as e:
+            bt.logging.info(f"An error occurred while calculating anti-spoofing score: {e}")
+            return 0
         
     def compute_distance(self, gt_audio_arrs, generated_audio_arrs):
         gt_transcripts = [self.transcribe_audio(gt_audio_arr[0], gt_audio_arr[1]) for gt_audio_arr in gt_audio_arrs]
@@ -257,12 +276,16 @@ class S2SMetrics:
         combined_scores = []
         for m, w, l, p, a in zip(mimi_score, wer_score, length_penalty, pesq_score, anti_spoofing_score):
             # Calculate geometric mean for pesq and anti-spoofing scores
-            geometric_mean = (p * a) ** (1/2)
-            # Calculate arithmetic mean for mimi and inverted WER scores
-            arithmetic_mean = (m + w) / 2
-            # Combine geometric and arithmetic means, then apply length penalty
-            combined = (geometric_mean * 0.6 + arithmetic_mean * 0.4) * l
-            combined_scores.append(combined)
+            try:
+                geometric_mean = (p * a) ** (1/2)
+                # Calculate arithmetic mean for mimi and inverted WER scores
+                arithmetic_mean = (m + w) / 2
+                # Combine geometric and arithmetic means, then apply length penalty
+                combined = (geometric_mean * 0.6 + arithmetic_mean * 0.4) * l
+                combined_scores.append(combined)
+            except Exception as e:
+                bt.logging.info(f"An error occurred while calculating combined score: {e}")
+                combined_scores.append(0)
         
         return {
             'mimi_score': mimi_score,
@@ -277,8 +300,32 @@ class S2SMetrics:
  
 if __name__ == "__main__":      
     # Example usage
-    gt_paths=['/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav', '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav']
-    generated_paths=['/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav', '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000223993.wav']
-    metric = S2SMetrics()
+    import librosa
 
-    bt.logging.info(metric.compute_distance(gt_paths, generated_paths))
+    # Load audio files first
+    gt_audio_arrs = []
+    generated_audio_arrs = []
+    
+    gt_paths = [
+        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav',
+        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav'
+    ]
+    generated_paths = [
+        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav',
+        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000223993.wav'
+    ]
+
+    # Load each audio file and store as (audio_array, sample_rate) tuples
+    for gt_path, gen_path in zip(gt_paths, generated_paths):
+        gt_audio, gt_sr = librosa.load(gt_path, sr=None)
+        gen_audio, gen_sr = librosa.load(gen_path, sr=None)
+        duration = librosa.get_duration(y=gt_audio, sr=gt_sr)
+        print(f"Duration of {gt_path}: {duration} seconds")
+        duration = librosa.get_duration(y=gen_audio, sr=gen_sr)
+        print(f"Duration of {gen_path}: {duration} seconds")
+        
+        gt_audio_arrs.append((gt_audio, gt_sr))
+        generated_audio_arrs.append((gen_audio, gen_sr))
+
+    metric = S2SMetrics()
+    print(metric.compute_distance(gt_audio_arrs, generated_audio_arrs))

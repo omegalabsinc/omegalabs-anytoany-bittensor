@@ -42,11 +42,10 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
 
     if len(recent_files) == 0:
         return None
-    temp_dir = "./data_cache"
-    # with TemporaryDirectory(dir='./data_cache') as temp_dir:
-    omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
-    omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
-    omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+    with TemporaryDirectory(dir='./data_cache') as temp_dir:
+        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
+        omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
+        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=16))
     return omega_dataset
 
 

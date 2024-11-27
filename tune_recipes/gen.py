@@ -47,7 +47,8 @@ class InferenceRecipe:
 
     def __init__(self, cfg: DictConfig) -> None:
         self._device = utils.get_device(device=cfg.device)
-        self._dtype = utils.get_dtype(dtype=cfg.dtype)
+        # self._dtype = utils.get_dtype(dtype=cfg.dtype)
+        self._dtype = cfg.dtype
         self._quantizer = config.instantiate(cfg.inference.quantizer)
         self._quantization_mode = utils.get_quantizer_mode(self._quantizer)
         self.prompt_template = cfg.inference.prompt_template
