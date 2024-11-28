@@ -222,7 +222,7 @@ async def periodic_task(interval, *tasks):
         await asyncio.sleep(interval)
 
 async def main():
-    await periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions)
+    await periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions, cleanup_old_checkpoints)
 
 if __name__ == "__main__":
     asyncio.run(main())
