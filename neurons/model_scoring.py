@@ -19,7 +19,7 @@ from models.imagebind_wrapper import ImageBind
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 1 * 20 * 60  # 4 hours # changed from 4 hours to 20 minutes for testing
+MIN_AGE = 4 * 60 * 60  # 4 hours 
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"

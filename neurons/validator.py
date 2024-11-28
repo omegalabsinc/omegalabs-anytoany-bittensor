@@ -448,8 +448,7 @@ class Validator:
         block_uploaded_at = model_metadata.block
         current_block = self.metagraph.block.item()
         model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
-        # is_old_enough = model_age > MIN_AGE if model_metadata.id.competition_id == "o1" else model_age > V2V_MIN_AGE
-        is_old_enough = True # For testing purposes, we will evaluate all models.
+        is_old_enough = model_age > MIN_AGE if model_metadata.id.competition_id == "o1" else model_age > V2V_MIN_AGE
         if not is_old_enough:
             bt.logging.debug(
                 f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
