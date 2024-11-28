@@ -499,6 +499,7 @@ class Validator:
 
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
+                    bt.logging.info(f"Model is old enough for UID={next_uid} with hotkey {hotkey}, metadata: {metadata} , {self.config.run_api}")
                     if self.config.run_api:
                         queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
                     else:

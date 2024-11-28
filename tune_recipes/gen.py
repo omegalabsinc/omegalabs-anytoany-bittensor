@@ -13,7 +13,7 @@ from torch import nn
 from omegaconf import DictConfig
 from PIL import Image
 
-from torchtune import config, utils
+from torchtune import config, utils, training
 from torchtune.generation import sample
 from torchtune.models import convert_weights
 from torchtune.data import Message
@@ -48,13 +48,13 @@ class InferenceRecipe:
     def __init__(self, cfg: DictConfig) -> None:
         self._device = utils.get_device(device=cfg.device)
         # self._dtype = utils.get_dtype(dtype=cfg.dtype)
-        self._dtype = cfg.dtype
+        self._dtype = training.get_dtype(dtype=cfg.dtype)
         self._quantizer = config.instantiate(cfg.inference.quantizer)
-        self._quantization_mode = utils.get_quantizer_mode(self._quantizer)
+        self._quantization_mode = training.get_quantizer_mode(self._quantizer)
         self.prompt_template = cfg.inference.prompt_template
         perception_tokens = cfg.model.perception_tokens
         self._perception_tokens = ("0 " * perception_tokens)[:perception_tokens]
-        utils.set_seed(seed=cfg.seed)
+        training.set_seed(seed=cfg.seed)
 
     def setup(self, cfg: DictConfig) -> None:
         checkpointer = config.instantiate(cfg.checkpointer)
