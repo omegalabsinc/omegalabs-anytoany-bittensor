@@ -24,7 +24,7 @@ from evaluation.S2S.distance import S2SMetrics
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 4 * 60 * 60  # 4 hours
+MIN_AGE = 1 * 60 * 60  # 1 hour
 MAX_FILES = 8
 
 

@@ -34,7 +34,7 @@ COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     ),
     CompetitionParameters(
         reward_percentage=0.5,
-        competition_id="v1_moshi",
+        competition_id="v1",
     ),
 ]
 ORIGINAL_COMPETITION_ID = "o1"

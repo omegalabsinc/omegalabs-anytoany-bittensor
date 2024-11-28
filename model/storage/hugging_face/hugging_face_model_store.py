@@ -13,6 +13,7 @@ from collections import defaultdict
 MODEL_FILE_PT = "meta_model_{epoch}.pt"
 ADAPTER_FILE_PT = "adapter_{epoch}.pt"
 CONFIG_FILE = "training_config.yml"
+CONFIG_FILE_MOSHI = "config.yaml"
 README_FILE = "README.md"
 HOTKEY_FILE = "hotkey.txt"
 
@@ -35,11 +36,12 @@ def get_required_files(epoch: int, model_type: str):
             MODEL_FILE_PT.format(epoch=epoch),
             CONFIG_FILE,
         ]
-    elif model_type == "moshi":
+    elif model_type == "v1":
         return [
             LM_FILE_PT_MOSHI,
             MIMI_FILE_PT_MOSHI,
-            TOKENIZER_FILE_MOSHI
+            TOKENIZER_FILE_MOSHI,
+            CONFIG_FILE_MOSHI
         ]
 
 
@@ -91,7 +93,7 @@ class HuggingFaceModelStore(RemoteModelStore):
         api = HfApi(token=token)
         export_readme(model.local_repo_dir)
         export_hotkey(model.local_repo_dir, hotkey)
-        files_to_upload = get_required_files(model.id.epoch, model.id.competition_id.split("_")[-1]) + [README_FILE] + [HOTKEY_FILE]
+        files_to_upload = get_required_files(model.id.epoch, model.id.competition_id) + [README_FILE] + [HOTKEY_FILE]
         hf_repo_id = model.id.namespace + "/" + model.id.name
         api.create_repo(
             repo_id=hf_repo_id,

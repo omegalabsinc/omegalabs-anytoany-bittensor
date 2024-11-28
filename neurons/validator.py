@@ -371,7 +371,6 @@ class Validator:
         # Setup a miner iterator to ensure we update all miners.
         # This subnet does not differentiate between miner and validators so this is passed all uids.
         self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
-        # self.miner_iterator = MinerIterator([14])
 
         # Setup a ModelMetadataStore
         self.metadata_store = ChainModelMetadataStore(
@@ -449,7 +448,8 @@ class Validator:
         block_uploaded_at = model_metadata.block
         current_block = self.metagraph.block.item()
         model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
-        is_old_enough = model_age > MIN_AGE
+        # is_old_enough = model_age > MIN_AGE if model_metadata.id.competition_id == "o1" else model_age > V2V_MIN_AGE
+        is_old_enough = True # For testing purposes, we will evaluate all models.
         if not is_old_enough:
             bt.logging.debug(
                 f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
@@ -852,7 +852,7 @@ class Validator:
         # Query API for next model to score.
         bt.logging.info(f"Getting model to score...")
         uid = await self.get_model_to_score()
-        # uid = 14
+
         if uid is not None:
             uids = [uid]
 
@@ -968,7 +968,7 @@ class Validator:
                                 block=model_i_metadata.block,
                                 model_tracker=self.model_tracker
                             )
-                        elif competition_parameters.competition_id == "v1_moshi":
+                        elif competition_parameters.competition_id == "v1":
                             eval_data_v2v = pull_latest_diarization_dataset()
                             if eval_data_v2v is None:
                                 bt.logging.warning(
@@ -976,7 +976,7 @@ class Validator:
                                 )
                                 time.sleep(MINS_TO_SLEEP * 60)
                             score = compute_s2s_metrics(
-                                model_id=model_i_metadata.id.competition_id.split("_")[1],
+                                model_id="moshi", # update this to the model id as we support more models.
                                 hf_repo_id=hf_repo_id,
                                 mini_batch=eval_data_v2v,
                                 local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
@@ -1285,7 +1285,7 @@ class Validator:
                     # Sleep for 5 minutes before resycing metagraph
                     await asyncio.sleep(60 * 5)
                 else:
-                    await self.try_run_step(ttl=60 * 30) # 30 minute timeout. Same as the timeout for resetting stale models being scored.
+                    await self.try_run_step(ttl=60 * 15) # 15 minute timeout. Same as the timeout for resetting stale models being scored.
                 
                 self.global_step += 1
 
