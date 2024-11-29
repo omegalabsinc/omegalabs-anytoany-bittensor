@@ -1,5 +1,5 @@
 import os
-from datasets import load_dataset, Audio
+from datasets import load_dataset, Audio, DownloadConfig
 import huggingface_hub
 from tempfile import TemporaryDirectory
 import time
@@ -40,12 +40,14 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
         f.rfilename.startswith(DATA_FILES_PREFIX)
     ][:MAX_FILES]
 
+    download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")
+
     if len(recent_files) == 0:
         return None
     with TemporaryDirectory(dir='./data_cache') as temp_dir:
-        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
+        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
-        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=16))
+        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=8))
     return omega_dataset
 
 
@@ -118,7 +120,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
         
     log_gpu_memory('after model load')
     cache_dir = "./model_cache"
-    s2s_metrics = S2SMetrics(repo_dir=cache_dir)
+    s2s_metrics = S2SMetrics(cache_dir=cache_dir)
     metrics = {'mimi_score': [],
                 'wer_score': [],
                 'length_penalty': [],

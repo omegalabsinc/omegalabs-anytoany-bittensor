@@ -9,7 +9,7 @@ import torch
 import ulid
 from omegaconf import OmegaConf, DictConfig
 import huggingface_hub
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, DownloadConfig
 
 import bittensor as bt
 
@@ -37,10 +37,13 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
         f.rfilename.startswith(DATA_FILES_PREFIX) and 
         time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
     ][:MAX_FILES]
+    
     if len(recent_files) == 0:
         return None
+    download_config = DownloadConfig(download_desc="Downloading Omega Multimodal Dataset")
+
     with TemporaryDirectory(dir='./data_cache') as temp_dir:
-        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
+        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
     return omega_dataset
 
