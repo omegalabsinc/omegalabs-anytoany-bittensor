@@ -5,23 +5,29 @@ import torchaudio.functional as F
 from evaluation.S2S.rawnet.inference import RawNet3Inference
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 from transformers import (
-    AutoFeatureExtractor, 
-    MimiModel,
     WhisperForConditionalGeneration,
     WhisperProcessor,
 )
 import bittensor as bt
+from models.S2S.moshi.moshi.models.loaders import get_mimi
+from models.S2S.moshi.inference import load_audio_from_array, encode_audio
+from huggingface_hub import hf_hub_download
+
 class S2SMetrics:
-    def __init__(self):
+    def __init__(self, cache_dir: str, device: str='cuda'):
         
         # Load the Whisper large model and processor
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.mimi_model = MimiModel.from_pretrained("kyutai/mimi").to(self.device)
-        self.mimi_model.config.num_quantizers = 4
-        self.mimi_feature_extractor = AutoFeatureExtractor.from_pretrained("kyutai/mimi")
+        self.device = torch.device(device)
+        MIMI_NAME = "tokenizer-e351c8d8-checkpoint125.safetensors"
 
-        self.processor = WhisperProcessor.from_pretrained("openai/whisper-large-v2")
-        self.model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large-v2").to(self.device)
+        mimi_weight_path = hf_hub_download(repo_id="tezuesh/mimi", filename=MIMI_NAME, local_dir=cache_dir)
+        
+        self.mimi_model = get_mimi(mimi_weight_path, device=self.device)
+        self.mimi_model.set_num_codebooks(4)  # up to 32 for mimi, but limited to 8 for moshi
+
+
+        self.processor = WhisperProcessor.from_pretrained("openai/whisper-large-v2", cache_dir=cache_dir)
+        self.model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large-v2", cache_dir=cache_dir).to(self.device)
         
         self.nb_pesq = PerceptualEvaluationSpeechQuality(16000, 'nb')
         self.wb_pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
@@ -96,35 +102,34 @@ class S2SMetrics:
             - The final score is the average of all audio pair scores, including penalized ones.
         """
         
-        gt_wav = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=24000, to_channels=1)
-        generated_wav = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=24000, to_channels=1)
+        gt_wav = load_audio_from_array(gt_audio_arr, sample_rate_gt, self.mimi_model)
+        generated_wav = load_audio_from_array(generated_audio_arr, sample_rate_generated, self.mimi_model)
 
         if generated_wav is None:
             return 0
         if gt_wav is None:
             return 1
-
-        # Squeeze the channel dimension since MIMI expects [batch, time] format
-        gt_wav = torch.from_numpy(gt_wav)
-        generated_wav = torch.from_numpy(generated_wav)
+        
         
         metric = []
-        if gt_wav.shape[0] < 1000 or generated_wav.shape[0] < 1000:
+        if gt_wav.shape[2] < 1000 or generated_wav.shape[2] < 1000:
             # Apply a penalty instead of skipping
             penalty = 0  # You can adjust this value
             metric.append(penalty)
         else:
-            gt_wav = self.mimi_feature_extractor(gt_wav, sampling_rate=24000, return_tensors="pt").to(self.device)
-            generated_wav = self.mimi_feature_extractor(generated_wav, sampling_rate=24000, return_tensors="pt").to(self.device)
 
-            gt_tokens = self.mimi_model.encode(gt_wav["input_values"], gt_wav["padding_mask"])['audio_codes']
-            generated_tokens = self.mimi_model.encode(generated_wav["input_values"], generated_wav["padding_mask"])['audio_codes']
+            gt_codes = encode_audio(self.mimi_model, gt_wav, self.device)
+            generated_codes = encode_audio(self.mimi_model, generated_wav, self.device)
+            # print("After encoding")
+            gt_codes = torch.cat(gt_codes, dim=2)
+            generated_codes = torch.cat(generated_codes, dim=2)
             
-            num_channels = gt_tokens.shape[1]
+            num_channels = gt_codes.shape[1]
             channel_losses = []
             for channel_idx in range(num_channels):
-                gt_sample = gt_tokens[0, channel_idx, :]
-                generated_sample = generated_tokens[0, channel_idx, :]
+                gt_sample = gt_codes[0, channel_idx, :]
+                generated_sample = generated_codes[0, channel_idx, :]
+               
                 edit_dist = F.edit_distance(gt_sample, generated_sample)
                 channel_losses.append(1 - edit_dist/max(len(gt_sample), len(generated_sample)))
             metric.append(sum(channel_losses) / num_channels)
@@ -326,6 +331,8 @@ if __name__ == "__main__":
         
         gt_audio_arrs.append((gt_audio, gt_sr))
         generated_audio_arrs.append((gen_audio, gen_sr))
+    
+    repo_dir = '/workspace/tezuesh/cached_models/'
 
-    metric = S2SMetrics()
+    metric = S2SMetrics(cache_dir=repo_dir)
     print(metric.compute_distance(gt_audio_arrs, generated_audio_arrs))

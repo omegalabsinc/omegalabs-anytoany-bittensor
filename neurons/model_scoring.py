@@ -57,7 +57,7 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir: str, target_file: str = "hotke
         target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
         with open(target_file_path, 'r') as file:
             target_file_contents = file.read()
-    except huggingface_hub.errors.EntryNotFoundError:
+    except huggingface_hub.utils.EntryNotFoundError:
         bt.logging.warning(f"Warning: File '{target_file}' not found in the repository.")
     except Exception as e:
         bt.logging.warning(f"An error occurred while trying to read '{target_file}': {str(e)}")

@@ -117,7 +117,8 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                 return 0
         
     log_gpu_memory('after model load')
-    s2s_metrics = S2SMetrics()
+    cache_dir = "./model_cache"
+    s2s_metrics = S2SMetrics(repo_dir=cache_dir)
     metrics = {'mimi_score': [],
                 'wer_score': [],
                 'length_penalty': [],

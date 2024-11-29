@@ -1,68 +1,13 @@
 from typing import List
 
-from torchtune.modules.tokenizers import TikTokenBaseTokenizer
-# from torchtune.modules.tokenizers._utils import _split_long_repetitions
-from typing import Iterator
+from torchtune.modules.tokenizers import TikTokenTokenizer
+from torchtune.modules.tokenizers._utils import _split_long_repetitions
 from torchtune.modules.tokenizers._tiktoken import (
     MAX_ENCODE_CHARS,
     MAX_NO_WHITESPACE_CHARS,
-    # ALL_SPECIAL_TOKENS,
+    ALL_SPECIAL_TOKENS,
 )
-
-
-BEGIN_OF_TEXT = "<|begin_of_text|>"
-END_OF_TEXT = "<|end_of_text|>"
-# fill-in-the-middle tags
-FIM_PREFIX = "<|fim_prefix|>"
-FIM_MIDDLE = "<|fim_middle|>"
-FIM_SUFFIX = "<|fim_suffix|>"
-# start and end header tokens for formatting chat messages
-START_HEADER_ID = "<|start_header_id|>"
-END_HEADER_ID = "<|end_header_id|>"
-STEP_ID = "<|step_id|>"
-# different end of message tags
-EOM_ID = "<|eom_id|>"
-EOT_ID = "<|eot_id|>"
-# special token for ipython messages
-PYTHON_TAG = "<|python_tag|>"
-ALL_SPECIAL_TOKENS = [
-    BEGIN_OF_TEXT,
-    END_OF_TEXT,
-    FIM_PREFIX,
-    FIM_MIDDLE,
-    FIM_SUFFIX,
-    STEP_ID,
-    START_HEADER_ID,
-    END_HEADER_ID,
-    EOM_ID,
-    EOT_ID,
-    PYTHON_TAG,
-]
-
-
-def _split_long_repetitions(s: str, max_consecutive_slice_len: int) -> Iterator[str]:
-    """
-    Split the string `s` so that each substring contains no more than `max_consecutive_slice_len`
-    consecutive whitespaces or consecutive non-whitespaces
-    """
-    current_slice_len = 0
-    current_slice_is_space = s[0].isspace() if len(s) > 0 else False
-    slice_start = 0
-
-    for i in range(len(s)):
-        is_now_space = s[i].isspace()
-
-        if current_slice_is_space ^ is_now_space:
-            current_slice_len = 1
-            current_slice_is_space = is_now_space
-        else:
-            current_slice_len += 1
-            if current_slice_len > max_consecutive_slice_len:
-                yield s[slice_start:i]
-                slice_start = i
-                current_slice_len = 1
-    yield s[slice_start:]
-
+  
 
 # use special tokens from TikTokenTokenizer, add some for MM delimiters
 START_IMAGE = "<|start_image|>"
@@ -82,7 +27,7 @@ A2A_SPECIAL_TOKENS = ALL_SPECIAL_TOKENS[:-2] + [
 ] + ALL_SPECIAL_TOKENS[-2:]
 
 # override to allow START_IMAGE, END_IMAGE to be encoded
-class A2ATokenizer(TikTokenBaseTokenizer):
+class A2ATokenizer(TikTokenTokenizer):
     def encode(
         self,
         text: str,
@@ -134,7 +79,7 @@ class A2ATokenizer(TikTokenBaseTokenizer):
         return tokens
 
 
-def a2a_tokenizer(path: str) -> TikTokenBaseTokenizer:
+def a2a_tokenizer(path: str) -> TikTokenTokenizer:
     tiktoken = A2ATokenizer(path, all_special_tokens=A2A_SPECIAL_TOKENS)
     tiktoken.pad_id = 0
     return tiktoken
