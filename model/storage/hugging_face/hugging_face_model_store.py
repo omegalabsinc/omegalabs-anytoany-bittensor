@@ -13,8 +13,14 @@ from collections import defaultdict
 MODEL_FILE_PT = "meta_model_{epoch}.pt"
 ADAPTER_FILE_PT = "adapter_{epoch}.pt"
 CONFIG_FILE = "training_config.yml"
+CONFIG_FILE_MOSHI = "config.yaml"
 README_FILE = "README.md"
 HOTKEY_FILE = "hotkey.txt"
+
+### MOSHI ###
+LM_FILE_PT_MOSHI = "model.safetensors"
+MIMI_FILE_PT_MOSHI = "tokenizer-e351c8d8-checkpoint125.safetensors"
+TOKENIZER_FILE_MOSHI = "tokenizer_spm_32k_3.model"
 
 
 def check_config(ckpt_dir):
@@ -24,11 +30,19 @@ def check_config(ckpt_dir):
         raise ValueError("Cannot upload checkpoints with CLIP embeddings")
 
 
-def get_required_files(epoch: int):
-    return [
-        MODEL_FILE_PT.format(epoch=epoch),
-        CONFIG_FILE,
-    ]
+def get_required_files(epoch: int, model_type: str):
+    if model_type == "o1":
+        return [
+            MODEL_FILE_PT.format(epoch=epoch),
+            CONFIG_FILE,
+        ]
+    elif model_type == "v1":
+        return [
+            LM_FILE_PT_MOSHI,
+            MIMI_FILE_PT_MOSHI,
+            TOKENIZER_FILE_MOSHI,
+            CONFIG_FILE_MOSHI
+        ]
 
 
 def export_readme(ckpt_dir: str):
@@ -79,7 +93,7 @@ class HuggingFaceModelStore(RemoteModelStore):
         api = HfApi(token=token)
         export_readme(model.local_repo_dir)
         export_hotkey(model.local_repo_dir, hotkey)
-        files_to_upload = get_required_files(model.id.epoch) + [README_FILE] + [HOTKEY_FILE]
+        files_to_upload = get_required_files(model.id.epoch, model.id.competition_id) + [README_FILE] + [HOTKEY_FILE]
         hf_repo_id = model.id.namespace + "/" + model.id.name
         api.create_repo(
             repo_id=hf_repo_id,

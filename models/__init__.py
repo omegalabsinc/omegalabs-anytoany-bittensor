@@ -3,11 +3,17 @@ from torchtune.models import convert_weights
 from models.tokenizer import a2a_tokenizer
 from models.mmllama3 import lora_mmllama3_8b, mmllama3_8b, imagebind_huge
 
+from models.S2S.moshi.moshi.models.loaders import get_mimi
+from models.S2S.moshi.inference import load_audio_from_array, encode_audio
+
 __all__ = [
     "a2a_tokenizer",
     "lora_mmllama3_8b",
     "mmllama3_8b",
     "imagebind_huge",
+    "get_mimi",
+    "load_audio_from_array",
+    "encode_audio",
 ]
 
 _BASE_TRAINABLE = [

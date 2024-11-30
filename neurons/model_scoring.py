@@ -9,7 +9,7 @@ import torch
 import ulid
 from omegaconf import OmegaConf, DictConfig
 import huggingface_hub
-from datasets import load_dataset, Dataset
+from datasets import load_dataset, Dataset, DownloadConfig
 
 import bittensor as bt
 
@@ -19,7 +19,7 @@ from models.imagebind_wrapper import ImageBind
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 4 * 60 * 60  # 4 hours
+MIN_AGE = 4 * 60 * 60  # 4 hours 
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
@@ -37,10 +37,13 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
         f.rfilename.startswith(DATA_FILES_PREFIX) and 
         time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
     ][:MAX_FILES]
+    
     if len(recent_files) == 0:
         return None
+    download_config = DownloadConfig(download_desc="Downloading Omega Multimodal Dataset")
+
     with TemporaryDirectory(dir='./data_cache') as temp_dir:
-        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir)["train"]
+        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
     return omega_dataset
 
@@ -57,10 +60,10 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir: str, target_file: str = "hotke
         target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
         with open(target_file_path, 'r') as file:
             target_file_contents = file.read()
-    except huggingface_hub.utils._errors.EntryNotFoundError:
-        print(f"Warning: File '{target_file}' not found in the repository.")
+    except huggingface_hub.utils.EntryNotFoundError:
+        bt.logging.warning(f"Warning: File '{target_file}' not found in the repository.")
     except Exception as e:
-        print(f"An error occurred while trying to read '{target_file}': {str(e)}")
+        bt.logging.warning(f"An error occurred while trying to read '{target_file}': {str(e)}")
 
     ckpt_files = [f for f in hf_api.list_repo_files(repo_id=hf_repo_id) if f.startswith(MODEL_FILE_PREFIX)]
     if len(ckpt_files) == 0:

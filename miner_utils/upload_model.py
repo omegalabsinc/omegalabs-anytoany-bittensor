@@ -84,12 +84,13 @@ def regenerate_hash(namespace, name, epoch, competition_id):
     return int(hash_output[:16], 16)  # Returns a 64-bit integer from the first 16 hexadecimal characters
 
 
-def validate_repo(ckpt_dir, epoch):
-    for filename in get_required_files(epoch):
+def validate_repo(ckpt_dir, epoch, model_type):
+    for filename in get_required_files(epoch, model_type):
         filepath = os.path.join(ckpt_dir, filename)
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Required file {filepath} not found in {ckpt_dir}")
-    check_config(ckpt_dir)
+    if model_type == "o1":
+        check_config(ckpt_dir)
 
 
 async def main(config: bt.config):
@@ -112,6 +113,7 @@ async def main(config: bt.config):
         )
 
     repo_namespace, repo_name = utils.validate_hf_repo_id(config.hf_repo_id)
+    bt.logging.info(f"Repo namespace: {repo_namespace}, repo name: {repo_name}, competition id: {config.competition_id}")
     model_id = ModelId(
         namespace=repo_namespace,
         name=repo_name,
@@ -120,8 +122,10 @@ async def main(config: bt.config):
     )
 
     model = Model(id=model_id, local_repo_dir=config.model_dir)
+   
 
-    validate_repo(config.model_dir, config.epoch)
+    validate_repo(config.model_dir, config.epoch, config.competition_id.split("_")[-1])
+    bt.logging.info(f"Validated repo for {config.model_dir}")
 
     remote_model_store = HuggingFaceModelStore()
 
