@@ -25,7 +25,7 @@ from evaluation.S2S.distance import S2SMetrics
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
 MIN_AGE = 1 * 60 * 60  # 1 hour
-MAX_FILES = 8
+MAX_FILES = 2
 
 
 def get_timestamp_from_filename(filename: str):
@@ -47,8 +47,20 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
     with TemporaryDirectory(dir='./data_cache') as temp_dir:
         omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
-        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=8))
-    return omega_dataset
+
+        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+        overall_dataset = []
+        for i in range(len(omega_dataset['audio'])):
+            omega_dataset['audio'][i] = omega_dataset['audio'][i]['array']
+            diar_timestamps_start = np.array(omega_dataset['diar_timestamps_start'][i])
+            diar_speakers = np.array(omega_dataset['diar_speakers'][i])
+            if len(set(diar_speakers)) == 1:
+                continue
+            for k in omega_dataset.keys():
+                overall_dataset.append(omega_dataset[k][i])
+            if len(overall_dataset) >= 16:
+                break
+        return overall_dataset
 
 
 
@@ -130,7 +142,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                 'total_samples': 0}
     
    
-    for i in tqdm(range(len(mini_batch['youtube_id']))):
+    for i in range(len(mini_batch['youtube_id'])):
         youtube_id = mini_batch['youtube_id'][i]
         audio_array = np.array(mini_batch['audio'][i]['array'])
         sample_rate = mini_batch['audio'][i]['sampling_rate']
@@ -172,8 +184,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
         
         for key, value in metrics_dict.items():
             metrics[key].append(value)
-
-    bt.logging.info(f"Combined score: after scoring {len(metrics['combined_score'])} samples", metrics['combined_score'])
+    
     mean_score = np.mean(metrics['combined_score'])
     bt.logging.info(f"Scoring {model_id} {hf_repo_id} complete: {mean_score:0.5f}")
     cleanup_gpu_memory()
@@ -183,6 +194,24 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
 
 
 if __name__ == "__main__":
-    dataset = pull_latest_diarization_dataset()
-    print(len(dataset['youtube_id']))
-    print(compute_s2s_metrics(model_id="moshi", hf_repo_id="kyutai/moshiko-pytorch-bf16", mini_batch=dataset))
+    
+  
+    from utilities.temp_dir_cache import TempDirCache
+    temp_dir_cache = TempDirCache(10)
+    for epoch in range(2):
+        for hf_repo_id in ["tezuesh/moshi1", "tezuesh/moshi7"]:
+            start_time = time.time()
+            diar_time = time.time()
+            mini_batch = pull_latest_diarization_dataset()
+            bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
+            # local_dir = temp_dir_cache.get_temp_dir(hf_repo_id)
+            local_dir = './model_cache' #temp_dir_cache.get_temp_dir(hf_repo_id)
+
+            hotkey = None
+            block = 1
+            model_tracker = None
+            vals = compute_s2s_metrics(model_id="moshi", hf_repo_id=hf_repo_id, mini_batch=mini_batch, local_dir=local_dir, hotkey=hotkey, block=block, model_tracker=model_tracker)
+            end_time = time.time()
+            bt.logging.info(f"I am here {hf_repo_id} Time taken: {end_time - start_time:.2f} seconds")
+            bt.logging.info(f"Combined score: {vals}")
+            exit(0)
