@@ -21,3 +21,5 @@ DBHOST = os.getenv("DBHOST")
 DBNAME = os.getenv("DBNAME")
 DBUSER = os.getenv("DBUSER")
 DBPASS = os.getenv("DBPASS")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN")

@@ -14,8 +14,15 @@ from substrateinterface import Keypair
 from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
-from vali_api.config import NETWORK, NETUID, IS_PROD
+from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
 
+import sentry_sdk
+print("SENTRY_DSN:", SENTRY_DSN)
+sentry_sdk.init(
+    dsn=SENTRY_DSN,
+    traces_sample_rate=1.0,
+    profiles_sample_rate=1.0,
+)
 
 app = FastAPI()
 security = HTTPBasic()
@@ -218,6 +225,10 @@ async def main():
     @app.get("/")
     def healthcheck():
         return {"status": "ok", "message": datetime.utcnow()}
+    
+    @app.get("/sentry-debug")
+    async def trigger_error():
+        division_by_zero = 1 / 0
     
     @app.post("/get-model-to-score")
     async def get_model_to_score(
