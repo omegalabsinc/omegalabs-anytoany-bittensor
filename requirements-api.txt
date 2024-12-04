@@ -5,3 +5,5 @@ mysqlclient
 
 # needed when installing on python 3.12+
 huggingface-hub==0.23.4
+
+sentry-sdk[fastapi]
