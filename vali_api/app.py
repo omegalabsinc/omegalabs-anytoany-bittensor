@@ -24,7 +24,6 @@ sentry_sdk.init(
     profiles_sample_rate=1.0,
 )
 
-app = FastAPI()
 security = HTTPBasic()
 
 
