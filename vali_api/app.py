@@ -362,7 +362,7 @@ async def main():
                     else:
                         all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
-                            'competition_id': data['competition_id'],
+                            'competition_id': None,
                             'score': None,
                             'scored_at': None,
                             'block': None,
