@@ -34,10 +34,11 @@ validator: a2a
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
+		-e TQDM_DISABLE=True \
 		--env-file vali.env \
 		--name omega-a2a-validator \
 		a2a \
-		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
+		bash auto_updating_validator.sh --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF) --logging.trace
 	
 manual-validator: a2a
 	docker run -it --detach --restart always \
@@ -45,10 +46,11 @@ manual-validator: a2a
 		--cap-add SYS_PTRACE --cap-add=SYS_ADMIN --ulimit core=0 \
 		-v $(shell pwd):/app \
 		-v ~/.bittensor:/root/.bittensor \
+		-e TQDM_DISABLE=True \
 		--env-file .env \
 		--name omega-a2a-validator \
 		a2a \
-		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF)
+		python neurons/validator.py --netuid $(NETUID) --wallet.name $(WALLET_NAME) --wallet.hotkey $(WALLET_HOTKEY) --port $(PORT) $(WANDBOFF) --logging.trace
 
 check-vali-logs:
 	docker logs omega-a2a-validator --follow --tail 100
@@ -124,6 +126,7 @@ ds/vision_flan/%:
 
 bagel: ds/bagel/bagel-input-output-v1.0.parquet
 ds/bagel/bagel-%-v1.0.parquet:
+	mkdir -p ds/bagel
 	wget https://huggingface.co/datasets/jondurbin/bagel-llama-3-v1.0/resolve/main/bagel-$*-v1.0.parquet?download=true -O $@
 
 download-base-model:
@@ -133,6 +136,6 @@ download-datasets: download-sam_llava-dataset download-coco_llava_instruct-datas
 
 download-%-dataset:
 	mkdir -p ds/$*
-	wget https://huggingface.co/datasets/nimapourjafar/$*/resolve/main/output.parquet -O ds/$*/output.parquet
+	wget https://huggingface.co/datasets/xzistance/$*/resolve/main/output.parquet -O ds/$*/output.parquet
 
 download-everything: download-base-model download-datasets

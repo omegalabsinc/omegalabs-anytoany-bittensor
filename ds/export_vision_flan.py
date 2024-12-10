@@ -8,6 +8,7 @@ import json
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", UserWarning)
     from imagebind.models import imagebind_model
+    from models.imagebind_wrapper import get_imagebind_v2, V2_PATH
     from imagebind.models.imagebind_model import ModalityType
     from imagebind.models.multimodal_preprocessors import SimpleTokenizer
 
@@ -25,6 +26,7 @@ def parse_args():
     a.add_argument('--progress-period', type=int, default=1024)
     a.add_argument('--write-period', type=int, default=100*1024)
     a.add_argument('--batch-dim', type=int, default=8)
+    a.add_argument('--v2', action='store_true', default=True)
     return a.parse_args()
 
 
@@ -39,8 +41,14 @@ if __name__ == '__main__':
     clip_pipe = DiffusionPipeline.from_pretrained("stabilityai/stable-diffusion-2-1-unclip-small", torch_dtype=dtype)
     clip_pipe.to(device)
 
-    print('Loading imagebind model...')
-    imagebind_model = imagebind_model.imagebind_huge(pretrained=True)
+   # load imagebind
+    if args.v2:
+        print('Initializing and loading Imagebind v2 model...')
+        #imagebind_model = get_imagebind_v2(path=V2_PATH).imagebind_huge(pretrained=True)
+        imagebind_model = get_imagebind_v2(path=V2_PATH)
+    else:
+        print('Initializing and loading Imagebind model...')
+        imagebind_model = imagebind_model.imagebind_huge(pretrained=True)
     imagebind_model.eval()
     imagebind_model.to(device)
 
@@ -82,7 +90,7 @@ if __name__ == '__main__':
         img = Image.open(img_path).convert('RGB')
 
         ib_batch.append(image_transform(img))
-        clip_batch.append(img)
+        #clip_batch.append(img)
 
         if len(ib_batch) == args.batch_dim:
             conversations.extend(conv_batch)
@@ -91,12 +99,14 @@ if __name__ == '__main__':
                 ib_embeds.extend(imagebind_embed(torch.stack(ib_batch)))
 
                 # clip
+                """ disabling clips
                 img_features = clip_pipe.feature_extractor(images=clip_batch, return_tensors="pt").pixel_values
                 clip_embeds.extend(
                     clip_pipe.image_encoder(
                         img_features.to(device=device, dtype=dtype)
                     ).image_embeds.cpu()
                 )
+                """
 
             conv_batch, ib_batch, clip_batch = [], [], []
 
@@ -106,13 +116,13 @@ if __name__ == '__main__':
             print(f'Writing archives: {archive_idx}')
             torch.save(conversations, args.output_dir / f'{archive_idx:02d}.caption.pt')
             torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
-            torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
+            #torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
             archive_idx += 1 
             conversations, ib_embeds, clip_embeds = [], [], []
 
     print(f'Writing archives: {archive_idx}')
     torch.save(conversations, args.output_dir / f'{archive_idx:02d}.caption.pt')
     torch.save(torch.stack(ib_embeds), args.output_dir / f'{archive_idx:02d}.ib_embed.pt')
-    torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
+    #torch.save(torch.stack(clip_embeds), args.output_dir / f'{archive_idx:02d}.clip_embed.pt')
 
 

@@ -141,6 +141,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         self.total_training_steps = 0
 
         self._resume_from_checkpoint = cfg.resume_from_checkpoint
+        self._interim_checkpoint_steps = cfg.interim_checkpoint_steps
         self._gradient_accumulation_steps = cfg.gradient_accumulation_steps
 
     def load_checkpoint(self, cfg_checkpointer: DictConfig) -> Dict[str, Any]:
@@ -287,46 +288,35 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
            d. The ``device_id`` param ensures that the FSDP initialization happens on
               the correct device.
         """
+        _, rank = utils.get_world_size_and_rank()
 
         if self._is_rank_zero:
-            log.info("FSDP is enabled. Instantiating Model on CPU for Rank 0 ...")
-            init_start = time.perf_counter()
+            log.info("DDP is enabled. Instantiating Model...")
 
-            with utils.set_default_dtype(self._dtype):
-                model = config.instantiate(cfg_model)
+        with utils.set_default_dtype(self._dtype):
+            model = config.instantiate(cfg_model).to(rank)
 
-            log.info(
-                f"Model instantiation took {time.perf_counter() - init_start:.2f} secs"
-            )
+        # The model contains LoRA params which won't have any matching keys in
+        # the state dict. As a result, we need to load with strict=False.
+        # Before loading the state dict, ensure the state dict keys for the base
+        # model and adapters (if available) match the keys in the full LoRA model
+        # This is a good sanity check to prevent silent errors
+        validate_state_dict_for_lora(
+            lora_attn_modules=cfg_model.lora_attn_modules,
+            apply_lora_to_mlp=cfg_model.apply_lora_to_mlp,
+            apply_lora_to_output=getattr(cfg_model, "apply_lora_to_output", False),
+            full_model_state_dict_keys=model.state_dict().keys(),
+            lora_state_dict_keys=(
+                lora_weights_state_dict.keys()
+                if lora_weights_state_dict is not None
+                else None
+            ),
+            base_model_state_dict_keys=list(base_model_state_dict.keys()) + _BASE_TRAINABLE,
+        )
 
-            # The model contains LoRA params which won't have any matching keys in
-            # the state dict. As a result, we need to load with strict=False.
-            # Before loading the state dict, ensure the state dict keys for the base
-            # model and adapters (if available) match the keys in the full LoRA model
-            # This is a good sanity check to prevent silent errors
-            validate_state_dict_for_lora(
-                lora_attn_modules=cfg_model.lora_attn_modules,
-                apply_lora_to_mlp=cfg_model.apply_lora_to_mlp,
-                apply_lora_to_output=getattr(cfg_model, "apply_lora_to_output", False),
-                full_model_state_dict_keys=model.state_dict().keys(),
-                lora_state_dict_keys=(
-                    lora_weights_state_dict.keys()
-                    if lora_weights_state_dict is not None
-                    else None
-                ),
-                base_model_state_dict_keys=list(base_model_state_dict.keys()) + _BASE_TRAINABLE,
-            )
-
-            # Load both the base model weights and (if available) the adapter weights. Both
-            # of this should happen only on Rank 0
-            model.load_state_dict(base_model_state_dict, strict=False)
-            if lora_weights_state_dict:
-                model.load_state_dict(lora_weights_state_dict, strict=False)
-
-        else:
-            # For non-zero ranks, load the model on meta device
-            with utils.set_default_dtype(self._dtype), torch.device("meta"):
-                model = config.instantiate(cfg_model)
+        model.load_state_dict(base_model_state_dict, strict=False)
+        if lora_weights_state_dict:
+            model.load_state_dict(lora_weights_state_dict, strict=False)
 
         if self._dtype == torch.bfloat16:
             model = model.to(torch.bfloat16)
@@ -345,26 +335,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            model = FSDP(
-                module=model,
-                auto_wrap_policy=utils.lora_fsdp_wrap_policy(
-                    modules_to_wrap={modules.TransformerDecoderLayer}
-                ),
-                sharding_strategy=torch.distributed.fsdp.ShardingStrategy.NO_SHARD,
-                device_id=self._device,
-                # this recipe does not currently support mixed precision training
-                mixed_precision=None,
-                # Ensure we broadcast params and buffers from rank 0
-                sync_module_states=True,
-                # Initialize empty modules on all non-zero ranks
-                param_init_fn=(
-                    lambda module: module.to_empty(
-                        device=torch.device("cuda"), recurse=False
-                    )
-                    if not self._is_rank_zero
-                    else None
-                ),
-            )
+            # find_unused_parameter=True is important, since some batches will not include all modalities
+            # and therefore will not include all encoders/decoders, which makes DDP reduce fail
+            model = DDP(model, device_ids=[rank], find_unused_parameters=True)
 
         # Ensure no params and buffers are on meta device
         utils.validate_no_params_on_meta_device(model)
@@ -449,10 +422,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
         return sampler, dataloader
 
-    def save_checkpoint(
-        self,
-        epoch: int,
-    ) -> None:
+    def save_checkpoint(self, epoch: int, epoch_label: str = None) -> None:
         """
         Checkpoint the state of the recipe. The constructed checkpoint state dict
         contains the following information:
@@ -464,39 +434,28 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         different checkpoint files. To correctly resume from training, the adapter weights
         and recipe state must be provided along with the base model weights.
         """
-        # final dict passed onto the checkpointer
+        epoch_label = epoch_label or epoch
         checkpoint_dict = {}
 
         intermediate_checkpoint = epoch + 1 < self.total_epochs
-        # To prevent GPU memory from spiking during checkpoint save,
-        # we consolidate the full model and optim state dicts on CPU for rank 0
-        with FSDP.state_dict_type(
-            self._model,
-            StateDictType.FULL_STATE_DICT,
-            FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
-            FullOptimStateDictConfig(offload_to_cpu=True, rank0_only=True),
-        ):
-            cpu_state_dict = self._model.state_dict()
-            if intermediate_checkpoint:
-                opt_state_dict = FSDP.optim_state_dict(self._model, self._optimizer)
-            else:
-                opt_state_dict = None
-
         # Now that we have the model and opt state dict, create the actual checkpoint dict
         # to be sent to the checkpointer and ultimately written to file
         if self._is_rank_zero:
 
             # Filter out the adapter keys and weights from the model state dict. These will
             # be saved separately
+            transformer_cpu_state_dict = {
+                k: v.cpu() for k, v in self._model.module.state_dict().items()
+            }
             adapter_key_filter = lambda x: x in self.adapter_params
             adapter_state_dict = {
-                k: v for k, v in cpu_state_dict.items() if adapter_key_filter(k)
+                k: v for k, v in transformer_cpu_state_dict.items() if adapter_key_filter(k)
             }
             checkpoint_dict.update({utils.ADAPTER_KEY: adapter_state_dict})
 
             # merge the adapter weights and base weights to create the model checkpoint
             merged_state_dict = get_merged_lora_ckpt(
-                cpu_state_dict,
+                transformer_cpu_state_dict,
                 rank=self._lora_rank,
                 alpha=self._lora_alpha,
             )
@@ -507,7 +466,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
             if intermediate_checkpoint:
                 checkpoint_dict.update(
                     {
-                        utils.OPT_KEY: opt_state_dict,
+                        utils.OPT_KEY: self._optimizer.state_dict(),
                         utils.SEED_KEY: self.seed,
                         utils.EPOCHS_KEY: self.epochs_run,
                         utils.TOTAL_EPOCHS_KEY: self.total_epochs,
@@ -517,7 +476,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
             self._checkpointer.save_checkpoint(
                 checkpoint_dict,
-                epoch=epoch,
+                epoch=epoch_label,
                 intermediate_checkpoint=intermediate_checkpoint,
             )
 
@@ -527,6 +486,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
         """
         # clean up before training begins
         utils.cleanup_before_training()
+
+        # synchronize before training begins
+        torch.distributed.barrier()
 
         _, rank = utils.get_world_size_and_rank()
 
@@ -559,8 +521,8 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
 
                 # update embedding context in MMEmbedding object
                 # some unfortunate abstraction-breaking here
-                self._model.tok_embeddings.set_context(mm_context)
-                self._model.output.set_context(mm_context)
+                self._model.module.tok_embeddings.set_context(mm_context)
+                self._model.module.output.set_context(mm_context)
 
                 logits = self._model(input_ids)
                 # Shift so that tokens < n predict n
@@ -570,9 +532,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                 # Compute loss
                 loss = self._loss_fn(logits, labels)
 
-                if self._model.output._clip_projections:
-                    clip_pred = torch.stack([p for p, _ in self._model.output._clip_projections])
-                    clip_embed = torch.stack([e for _, e in self._model.output._clip_projections])
+                if self._model.module.output._clip_projections:
+                    clip_pred = torch.stack([p for p, _ in self._model.module.output._clip_projections])
+                    clip_embed = torch.stack([e for _, e in self._model.module.output._clip_projections])
                     feature_loss = 1 - F.cosine_similarity(clip_pred, clip_embed).mean()
                     loss += feature_loss
 
@@ -580,7 +542,7 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     self.total_training_steps % self._log_every_n_steps == 0
                     and self._is_rank_zero
                 ):
-                    pbar.set_description(f"{curr_epoch+1}|{idx+1}|Loss: {loss.item()}")
+                    pbar.set_description(f"{curr_epoch+1}|{idx+1}|Loss: {loss.item():0.3f}")
                     self._metric_logger.log_dict(
                         {
                             "loss": loss.item(),
@@ -610,6 +572,9 @@ class LoRAFinetuneRecipeDistributed(FTRecipeInterface):
                     self._metric_logger.log_dict(
                         memory_stats, step=self.total_training_steps
                     )
+
+                if (idx + 1) % self._interim_checkpoint_steps == 0 and self._is_rank_zero:
+                    self.save_checkpoint(epoch=curr_epoch, epoch_label="latest")
 
             self.epochs_run += 1
             self.save_checkpoint(epoch=curr_epoch)

@@ -1,0 +1,7 @@
+-r requirements.txt
+python-dotenv
+PyMySQL
+mysqlclient
+
+# needed when installing on python 3.12+
+huggingface-hub==0.23.4

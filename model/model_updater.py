@@ -73,7 +73,7 @@ class ModelUpdater:
         )
         if metadata == tracker_model_metadata:
             return False
-        bt.logging.warning(f"Syncing model for hotkey {hotkey}")
+        bt.logging.debug(f"Syncing model for hotkey {hotkey}")
         # Get the local path based on the local store to download to (top level hotkey path)
         path = self.local_store.get_path(hotkey)
         
@@ -89,5 +89,5 @@ class ModelUpdater:
 
         # Update the tracker
         self.model_tracker.on_miner_model_updated(hotkey, metadata)
-        bt.logging.warning(f"Model for hotkey {hotkey} updated to {metadata}")
+        bt.logging.info(f"Model for hotkey {hotkey} updated to {metadata}")
         return True

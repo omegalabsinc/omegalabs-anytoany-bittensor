@@ -23,6 +23,8 @@ from imagebind import data
 from imagebind.models.imagebind_model import ModalityType
 from diffusers import DiffusionPipeline
 
+from models.imagebind_wrapper import ImageBind
+
 from models import add_proj_convert_weights, _BASE_TRAINABLE
 
 log = utils.get_logger("DEBUG")
@@ -68,7 +70,11 @@ class InferenceRecipe:
             model_cfg=cfg.model,
             model_state_dict=ckpt_dict[utils.MODEL_KEY],
         )
-        self._embed_model = self._setup_embed_model(model_cfg=DictConfig({"_component_": "models.imagebind_huge"}))
+        with self._device:
+            self._model.setup_caches(max_batch_size=cfg.batch_size, dtype=self._dtype)
+
+        #self._embed_model = self._setup_embed_model(model_cfg=DictConfig({"_component_": "models.imagebind_huge"}))
+        self._embed_model = ImageBind(v2=True)
         self._tokenizer = config.instantiate(cfg.tokenizer)
         self._mm_ids_start = self._tokenizer.encode(START_IMAGE + START_AUDIO + START_VIDEO, add_eos=False, add_bos=False)
         self._mm_ids_end = self._tokenizer.encode(END_IMAGE + END_AUDIO + END_VIDEO, add_eos=False, add_bos=False)
@@ -92,11 +98,7 @@ class InferenceRecipe:
 
         # Validate model was loaded in with the expected dtype.
         utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
-        log.info(f"Model is initialized with precision {self._dtype}.")
-
-        # Ensure the cache is setup on the right device
-        with self._device:
-            model.setup_caches(max_batch_size=1, dtype=self._dtype)
+        log.debug(f"Model is initialized with precision {self._dtype}.")
 
         return model
 
@@ -107,20 +109,11 @@ class InferenceRecipe:
         with utils.set_default_dtype(self._dtype), self._device:
             model = config.instantiate(model_cfg)
 
-#         if self._quantization_mode is not None:
-#             model = self._quantizer.quantize(model)
-#             model = model.to(device=self._device, dtype=self._dtype)
-
         # Validate model was loaded in with the expected dtype.
         utils.validate_expected_param_dtype(model.named_parameters(), dtype=self._dtype)
-        log.info(f"Embed model is initialized with precision {self._dtype}.")
-
-#         # Ensure the cache is setup on the right device
-#         with self._device:
-#             model.setup_caches(max_batch_size=1, dtype=self._dtype)
+        log.debug(f"Embed model is initialized with precision {self._dtype}.")
 
         return model
-
 
     def mm_process_prompt(self, prompt):
         return (
@@ -151,7 +144,7 @@ class InferenceRecipe:
             if in_mm_embed:
                 #tokens[idx] # to support multiple embeds: get the value, match it up with the sample embed
                 context[idx] = {
-                    "ib_embed": torch.tensor(video_ib_embed, dtype=self._dtype, device=self._device),
+                    "ib_embed": video_ib_embed.to(dtype=self._dtype, device=self._device),
                 }
             in_mm_embed = in_mm_embed or tok in self._mm_ids_start
         return context
@@ -194,7 +187,7 @@ class InferenceRecipe:
             model.output.set_context([])
             # x: [1, s]
             # input_pos: [s]
-            logits = model(x, input_pos)
+            logits = model(x, input_pos=input_pos)
             # logits: [1, s, v] where v is vocab_size
             # for sampling we extract the logits for the
             # last token and convert to shape: [v]
@@ -241,9 +234,80 @@ class InferenceRecipe:
         cleaned_tokens = [t for t in generated_tokens[len(prompt):] if t not in disallowed_tokens + allowed_id]
         caption = self._tokenizer.decode(cleaned_tokens)
 
-        log.debug(f"Generated caption: {caption} in {t:.02f} sec")
+        # log.debug(f"Generated caption: {caption} in {t:.02f} sec")
 
         return caption
+
+
+    @torch.no_grad()
+    def generate_batch(self, cfg: DictConfig, video_ib_embed: torch.Tensor):
+        batch_dim = video_ib_embed.size(0)
+        messages = [
+            Message(
+                role="user",
+                content=self.mm_process_prompt(self.prompt_template),
+            ),
+            Message(role="assistant", content="")
+        ]
+        tokens, mask = self._tokenizer.tokenize_messages(messages)
+        tokens = tokens[:-2] # strip eot and eos
+        mm_context = [self.extract_mm_context(e, tokens) for e in video_ib_embed] # context should be a list, batch-id indexed
+        prompt = torch.tensor(tokens, dtype=torch.int, device=self._device).expand(batch_dim, -1).clone()
+        prompt_length = prompt.size(1)
+
+        self._model.tok_embeddings.set_context(mm_context)
+        self._model.output.set_context(mm_context)
+
+        bos_id = self._tokenizer.tt_model.encode("<|begin_of_text|>", allowed_special="all")[0]
+        allowed_id = self._tokenizer.tt_model.encode(f"<|eot_id|>{START_IMAGE}{END_IMAGE}{START_AUDIO}{END_AUDIO}{START_VIDEO}{END_VIDEO}", allowed_special="all")
+        disallowed_tokens = list(set(range(bos_id, bos_id + 256)) - set(allowed_id))
+
+        def generate_next_token(model, input_pos, x, temperature=1.0, top_k=None):
+            # x: [B, s]
+            # input_pos: [s]
+            # logits: [B, s, v] where v is vocab_size
+            logits = model(x, input_pos=input_pos)[:, -1]
+            tokens = sample(logits, temperature, top_k)
+            return torch.tensor([
+                [self._tokenizer.eos_id if t in disallowed_tokens else t for t in toks]
+                for toks in tokens
+            ]).to(x.device)
+
+        generated_tokens = prompt.clone()
+        # keeps track at a high level if we've already hit a stop token in a sequence so we can early stop
+        stop_token_reached = torch.zeros(batch_dim, dtype=torch.bool, device=prompt.device)
+
+        # generate the first tokens conditioned on the prompt
+        tokens = generate_next_token(
+            self._model,
+            input_pos=torch.arange(0, prompt_length, device=prompt.device),
+            x=prompt,
+            temperature=cfg.temperature,
+            top_k=cfg.top_k,
+        )
+        eot_reached_b = tokens == self._tokenizer.eot_id
+        generated_tokens = torch.cat([generated_tokens, tokens], dim=-1)
+
+        self._model.tok_embeddings.set_context([])
+        self._model.output.set_context([])
+
+        input_pos = torch.tensor([prompt_length], device=prompt.device)
+        for _ in range(cfg.max_new_tokens - 1):
+            tokens = generate_next_token(
+                self._model, input_pos=input_pos, x=tokens, temperature=cfg.temperature, top_k=cfg.top_k
+            )
+            eot_reached_b |= tokens == self._tokenizer.eot_id
+            tokens *= ~eot_reached_b
+            generated_tokens = torch.cat([generated_tokens, tokens], dim=-1)
+            if eot_reached_b.all():
+                print('eot_reached_b.all()')
+                break
+            input_pos += 1
+
+        captions = []
+        for caption_tokens in generated_tokens.tolist():
+            captions.append(self._tokenizer.decode(caption_tokens[prompt.size(1):]))
+        return captions
 
 
 @config.parse

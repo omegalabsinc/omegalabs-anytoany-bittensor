@@ -4,6 +4,9 @@ import time
 import typing
 import json
 import random
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import huggingface_hub
@@ -174,6 +177,42 @@ async def pull_and_cache_miner_info():
     await asyncio.sleep(1)
     return True
 
+async def cleanup_old_checkpoints(checkpoint_dir: str = ".checkpoints", max_age_days: int = 10):
+    """
+    Cleans up checkpoint directories older than the specified age.
+    
+    Args:
+        checkpoint_dir (str): Path to the checkpoints directory
+        max_age_days (int): Maximum age in days before a checkpoint directory is deleted
+    """
+    print(f"Cleaning up checkpoints older than {max_age_days} days in {checkpoint_dir}")
+    
+    checkpoint_path = Path(checkpoint_dir)
+    if not checkpoint_path.exists():
+        print(f"Checkpoint directory {checkpoint_dir} does not exist")
+        return
+    
+    current_time = datetime.now(timezone.utc)
+    
+    try:
+        for model_dir in checkpoint_path.iterdir():
+            if not model_dir.is_dir():
+                continue
+                
+            # Get directory modification time
+            mod_time = datetime.fromtimestamp(model_dir.stat().st_mtime, tz=timezone.utc)
+            age_days = (current_time - mod_time).days
+            
+            if age_days > max_age_days:
+                print(f"Removing old checkpoint directory: {model_dir} (age: {age_days} days)")
+                try:
+                    shutil.rmtree(model_dir)
+                except Exception as e:
+                    print(f"Error removing directory {model_dir}: {e}")
+                    
+    except Exception as e:
+        print(f"Error during checkpoint cleanup: {e}")
+
 async def periodic_task(interval, *tasks):
     while True:
         try:
@@ -184,7 +223,7 @@ async def periodic_task(interval, *tasks):
         await asyncio.sleep(interval)
 
 async def main():
-    await periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions)
+    await periodic_task(1800, pull_and_cache_miner_info, pull_and_cache_recent_descriptions, cleanup_old_checkpoints)
 
 if __name__ == "__main__":
     asyncio.run(main())
