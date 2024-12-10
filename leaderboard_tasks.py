@@ -155,6 +155,7 @@ async def pull_and_cache_miner_info():
         model_rank = get_uid_rank(metagraph, uids, uid_i)
         model_info.append({
             "uid": uid_i,
+            "hotkey": hotkey,
             "name": f"Miner UID {uid_i} (Rank: {model_rank})",
             "model_path": f"{model_metadata.id.namespace}/{model_metadata.id.name}",
             "incentive": metagraph.I[uid_i].item(),
