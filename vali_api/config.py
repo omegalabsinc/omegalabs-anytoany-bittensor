@@ -22,4 +22,6 @@ DBNAME = os.getenv("DBNAME")
 DBUSER = os.getenv("DBUSER")
 DBPASS = os.getenv("DBPASS")
 
+API_KEYS = os.getenv('API_KEYS')
+
 SENTRY_DSN = os.getenv("SENTRY_DSN")

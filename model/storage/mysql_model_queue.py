@@ -609,6 +609,97 @@ class ModelQueueManager:
         except Exception as e:
             bt.logging.error(f"Failed to get all scores after {self.max_retries} attempts: {str(e)}")
             return {}
+        
+    def get_top_model_scores(self, top_n=5, competition_id=None):
+        """
+        Get the top N highest scoring models with retry logic.
+        
+        Args:
+            top_n (int): Number of top scores to return (default: 5)
+            competition_id (str, optional): Filter by specific competition ID
+            
+        Returns:
+            dict: Dictionary of model scores keyed by UID
+        """
+        def _get_top_scores():
+            with self.session_scope() as session:
+                try:
+                    # First, get the latest score timestamps
+                    latest_scores = session.query(
+                        ScoreHistory.hotkey,
+                        ScoreHistory.uid,
+                        func.max(ScoreHistory.scored_at).label('latest_score_time')
+                    ).filter(
+                        ScoreHistory.is_archived == False
+                    ).group_by(
+                        ScoreHistory.hotkey, 
+                        ScoreHistory.uid
+                    ).subquery('latest_scores')
+
+                    # Get score details with ranking
+                    score_ranks = session.query(
+                        ScoreHistory,
+                        func.dense_rank().over(
+                            order_by=ScoreHistory.score.desc()
+                        ).label('rank')
+                    ).join(
+                        latest_scores,
+                        and_(
+                            ScoreHistory.hotkey == latest_scores.c.hotkey,
+                            ScoreHistory.uid == latest_scores.c.uid,
+                            ScoreHistory.scored_at == latest_scores.c.latest_score_time
+                        )
+                    ).subquery('score_ranks')
+
+                    # Build the main query
+                    query = session.query(
+                        ModelQueue.uid,
+                        ModelQueue.hotkey,
+                        ModelQueue.competition_id,
+                        score_ranks.c.score,
+                        score_ranks.c.scored_at,
+                        score_ranks.c.block,
+                        score_ranks.c.model_hash,
+                        score_ranks.c.rank
+                    ).outerjoin(
+                        score_ranks,
+                        and_(
+                            ModelQueue.hotkey == score_ranks.c.hotkey,
+                            ModelQueue.uid == score_ranks.c.uid
+                        )
+                    ).filter(score_ranks.c.rank <= top_n)
+
+                    # Add competition filter if provided
+                    if competition_id is not None:
+                        query = query.filter(ModelQueue.competition_id == competition_id)
+
+                    results = query.all()
+
+                    # Process results
+                    scores_by_uid = defaultdict(list)
+                    for result in results:
+                        if result.score is not None:
+                            scores_by_uid[result.uid].append({
+                                'hotkey': result.hotkey,
+                                'competition_id': result.competition_id,
+                                'score': result.score,
+                                'scored_at': result.scored_at.isoformat() if result.scored_at else None,
+                                'block': result.block,
+                                'model_hash': result.model_hash,
+                                'rank': result.rank
+                            })
+
+                    return dict(scores_by_uid)
+
+                except Exception as e:
+                    bt.logging.error(f"Error in _get_top_scores: {str(e)}")
+                    raise
+
+        try:
+            return self.execute_with_retry(_get_top_scores)
+        except Exception as e:
+            bt.logging.error(f"Failed to get top scores after {self.max_retries} attempts: {str(e)}")
+            return {}
 
     def archive_scores_for_deregistered_models(self, registered_hotkey_uid_pairs):
         """Archive deregistered models with retry logic."""

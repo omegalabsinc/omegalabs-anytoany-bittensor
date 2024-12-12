@@ -9,23 +9,37 @@ import logging
 
 from fastapi import FastAPI, HTTPException, Depends, Body, Path, Security
 from fastapi.security import HTTPBasicCredentials, HTTPBasic
+from fastapi.security.api_key import APIKeyHeader
 from starlette import status
 from substrateinterface import Keypair
 from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
-from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
+from vali_api.config import NETWORK, NETUID, IS_PROD, API_KEYS, SENTRY_DSN
 
 import sentry_sdk
-print("SENTRY_DSN:", SENTRY_DSN)
-sentry_sdk.init(
-    dsn=SENTRY_DSN,
-    traces_sample_rate=1.0,
-    profiles_sample_rate=1.0,
-)
+if IS_PROD:
+    print("SENTRY_DSN:", SENTRY_DSN)
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
+
+# define the APIKeyHeader for API authorization to our APP endpoints
+api_key_header = APIKeyHeader(name="OMEGA_API_KEY", auto_error=False)
 
 security = HTTPBasic()
 
+
+async def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header is not None and api_key_header in API_KEYS:
+        return api_key_header
+    else:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API Key"
+        )
 
 def get_hotkey(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> str:
     keypair = Keypair(ss58_address=credentials.username)
@@ -394,6 +408,25 @@ async def main():
             logging.error(f"Error getting all model scores: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
     
+    @app.get("/get-top-model-scores")
+    def get_top_model_scores(
+        api_key: str = Security(get_api_key),
+        competition_id: Optional[str] = None,
+        top_n: int = 5,
+    ):
+        """
+        Get the top N model scores for each model.
+        """
+        try:
+            top_scores = queue_manager.get_top_model_scores(top_n, competition_id)
+            return {
+                "success": True,
+                "top_scores": top_scores
+            }
+        except Exception as e:
+            logging.error(f"Error getting top model scores: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error.")
+
 
     await asyncio.gather(
         resync_metagraph(),
