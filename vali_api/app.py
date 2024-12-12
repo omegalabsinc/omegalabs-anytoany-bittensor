@@ -195,6 +195,10 @@ class ModelScoreResponse(BaseModel):
 
 async def main():
     app = FastAPI()
+    
+    port = 8000
+    if not IS_PROD: 
+        port = 8001
 
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
@@ -434,6 +438,7 @@ async def main():
             uvicorn.run,
             app,
             host="0.0.0.0",
+            port=port,
         ),
         check_stale_scoring_tasks(),
     )
