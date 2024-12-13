@@ -656,6 +656,7 @@ class ModelQueueManager:
                         ModelQueue.uid,
                         ModelQueue.hotkey,
                         ModelQueue.competition_id,
+                        ModelQueue.model_metadata,
                         score_ranks.c.score,
                         score_ranks.c.scored_at,
                         score_ranks.c.block,
@@ -679,13 +680,15 @@ class ModelQueueManager:
                     scores_by_uid = defaultdict(list)
                     for result in results:
                         if result.score is not None:
+                            # create hf repo id from metadata
+                            model_metadata = json.loads(result.model_metadata)
+                            hf_repo_id = model_metadata['id']['namespace'] + '/' + model_metadata['id']['name']
                             scores_by_uid[result.uid].append({
                                 'hotkey': result.hotkey,
+                                'hf_repo_id': hf_repo_id,
                                 'competition_id': result.competition_id,
                                 'score': result.score,
                                 'scored_at': result.scored_at.isoformat() if result.scored_at else None,
-                                'block': result.block,
-                                'model_hash': result.model_hash,
                                 'rank': result.rank
                             })
 
