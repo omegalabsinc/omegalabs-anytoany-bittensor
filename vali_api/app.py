@@ -27,7 +27,7 @@ if IS_PROD:
     )
 
 # define the APIKeyHeader for API authorization to our APP endpoints
-api_key_header = APIKeyHeader(name="OMEGA_API_KEY", auto_error=False)
+api_key_header = APIKeyHeader(name="X-OMEGA-API-KEY", auto_error=False)
 
 security = HTTPBasic()
 
