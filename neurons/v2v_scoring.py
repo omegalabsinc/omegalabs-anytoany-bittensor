@@ -58,7 +58,7 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
         # Process each audio sample
         for i in range(len(omega_dataset['audio'])):
             # Extract raw audio array
-            audio_array = omega_dataset['audio'][i]['array']
+            audio_array = omega_dataset['audio'][i]
 
             # Get speaker timestamps and IDs
             diar_timestamps_start = np.array(omega_dataset['diar_timestamps_start'][i])
