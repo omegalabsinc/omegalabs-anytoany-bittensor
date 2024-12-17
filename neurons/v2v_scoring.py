@@ -24,30 +24,31 @@ from evaluation.S2S.distance import S2SMetrics
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 1 * 60 * 60  # 1 hour
-MAX_FILES = 2
+MIN_AGE = 8 * 60 * 60  # 8 hours
+MAX_FILES = 8
 
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
 
 
-def pull_latest_diarization_dataset() -> Optional[Dataset]:    
+def pull_latest_diarization_dataset() -> Optional[Dataset]:
     omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
     recent_files = [
         f.rfilename
         for f in omega_ds_files if
-        f.rfilename.startswith(DATA_FILES_PREFIX)
+        f.rfilename.startswith(DATA_FILES_PREFIX) and
+        time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
     ][:MAX_FILES]
 
     download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")
 
     if len(recent_files) == 0:
         return None
+
     with TemporaryDirectory(dir='./data_cache') as temp_dir:
         omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
-
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
         overall_dataset = []
         for i in range(len(omega_dataset['audio'])):

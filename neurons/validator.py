@@ -308,7 +308,7 @@ class Validator:
                     bt.logging.error(m)
                     raise RuntimeError(m)
             except Exception as e:
-                bt.logging.error(f"Failed to get GPU memory: {e}")
+                bt.logging.error(f"Failed to get GPU memory: {e}: {traceback.format_exc()}")
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
@@ -541,8 +541,7 @@ class Validator:
                     bt.logging.debug("Starting cleanup of stale models. Removing {}... Done!".format(len(old_models)))
 
             except Exception as e:
-                bt.logging.error(f"Error in clean loop: {e}")
-                print(traceback.format_exc())
+                bt.logging.error(f"Error in clean loop: {e}: {traceback.format_exc()}")
 
             time.sleep(dt.timedelta(minutes=clean_period_minutes).total_seconds())
 
@@ -556,7 +555,7 @@ class Validator:
         try:
             all_model_scores = self.get_all_model_scores()
         except Exception as e:
-            bt.logging.error(f"Failed to get all model scores: {e}")
+            bt.logging.error(f"Failed to get all model scores: {e}: {traceback.format_exc()}")
             return
         
         if all_model_scores is None:
@@ -734,7 +733,7 @@ class Validator:
                     weights_report["weights"][uid] = score
                 bt.logging.debug(weights_report)
             except Exception as e:
-                bt.logging.error(f"failed to set weights {e}")
+                bt.logging.error(f"failed to set weights {e}: {traceback.format_exc()}")
             ws, ui = self.weights.topk(len(self.weights))
             table = Table(title="All Weights")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
@@ -877,7 +876,7 @@ class Validator:
                     )
             except Exception as e:
                 bt.logging.warning(
-                    f"Unable to sync model for UID {uid} with hotkey {hotkey}"
+                    f"Unable to sync model for UID {uid} with hotkey {hotkey}: {traceback.format_exc()}"
                 )
 
         # Keep track of which block this uid last updated their model.
@@ -936,6 +935,7 @@ class Validator:
        
         log_gpu_memory('after pulling dataset')
         
+        print(uid_to_hotkey_and_model_metadata)
 
         for uid_i, (
             hotkey,
@@ -1118,7 +1118,7 @@ class Validator:
                     'block': uid_data.get('block', 'N/A')
                 })
             except Exception as e:
-                bt.logging.warning(f"Error processing UID {uid}: {str(e)}")
+                bt.logging.warning(f"Error processing UID {uid}: {str(e)}: {traceback.format_exc()}")
                 continue
 
         # Sort by win_rate (descending) and take top 25
@@ -1163,7 +1163,7 @@ class Validator:
         keypair = self.dendrite.keypair
         hotkey = keypair.ss58_address
         signature = f"0x{keypair.sign(hotkey).hex()}"
-        
+
         try:
             async with ClientSession() as session:
                 async with session.post(
@@ -1182,7 +1182,8 @@ class Validator:
                         return uid
                 
         except Exception as e:
-            bt.logging.debug(f"Error retrieving model to score from API: {e}")
+            traceback.print_exc()
+            bt.logging.debug(f"Error retrieving model to score from API: {e}: {traceback.format_exc()}")
             return None
         
     async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_hash, model_score) -> bool:
@@ -1221,7 +1222,7 @@ class Validator:
                     return True
             
         except Exception as e:
-            bt.logging.error(f"Error posting model score to API: {e}")
+            bt.logging.error(f"Error posting model score to API: {e}: {traceback.format_exc()}")
             return None
 
     def get_all_model_scores(self) -> typing.Optional[typing.Dict[str, float]]:
@@ -1271,7 +1272,7 @@ class Validator:
                     bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
                     time.sleep(RETRY_DELAY)
                 else:
-                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}")
+                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}: {traceback.format_exc()}")
         
         return None
 
