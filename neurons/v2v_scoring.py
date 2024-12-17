@@ -47,22 +47,42 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
         return None
 
     with TemporaryDirectory(dir='./data_cache') as temp_dir:
+        # Load the dataset from HuggingFace using the recent files
         omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
-        overall_dataset = []
+
+        # Initialize dictionary to store processed samples
+        overall_dataset = {k: [] for k in omega_dataset.keys()}
+
+        # Process each audio sample
         for i in range(len(omega_dataset['audio'])):
-            omega_dataset['audio'][i] = omega_dataset['audio'][i]['array']
+            # Extract raw audio array
+            audio_array = omega_dataset['audio'][i]['array']
+
+            # Get speaker timestamps and IDs
             diar_timestamps_start = np.array(omega_dataset['diar_timestamps_start'][i])
             diar_speakers = np.array(omega_dataset['diar_speakers'][i])
+
+            # Skip samples with only 1 speaker
             if len(set(diar_speakers)) == 1:
                 continue
-            for k in omega_dataset.keys():
-                overall_dataset.append(omega_dataset[k][i])
-            if len(overall_dataset) >= 16:
-                break
-        return overall_dataset
 
+            # Add all fields for this sample
+            for k in omega_dataset.keys():
+                value = audio_array if k == 'audio' else omega_dataset[k][i]
+                overall_dataset[k].append(value)
+
+            # Stop after collecting 16 valid samples
+            if len(overall_dataset['audio']) >= 16:
+                break
+
+        # Check if we found enough valid samples
+        if len(overall_dataset['audio']) < 1:
+            return None
+
+        # Convert back to Dataset
+        return Dataset.from_dict(overall_dataset)
 
 
 def get_gpu_memory():
