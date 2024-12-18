@@ -23,3 +23,14 @@ pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@28fe037d
 wandb==0.17.1
 numpy==1.26.4
 SQLAlchemy
+torchaudio==2.3.0
+jiwer==3.0.5
+pesq==0.0.4
+pyannote.audio==3.1.1
+scikit-learn==1.5.2
+torch-audiomentations==0.11.1
+pydub==0.25.1
+huggingface-hub==0.24.0
+librosa==0.10.2.post1
+asteroid-filterbanks==0.4.0
+torchmetrics==1.6.0

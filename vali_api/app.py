@@ -184,6 +184,8 @@ async def main():
 
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
+
+    port = 8000 if IS_PROD else 8001
     
     # Initialize database at application startup
     init_database()
@@ -401,6 +403,7 @@ async def main():
             uvicorn.run,
             app,
             host="0.0.0.0",
+            port=port
         ),
         check_stale_scoring_tasks(),
     )
