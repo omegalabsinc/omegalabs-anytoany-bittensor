@@ -65,6 +65,11 @@ from neurons.model_scoring import (
     log_gpu_memory,
     get_gpu_memory
 )
+from neurons.v2v_scoring import (
+    compute_s2s_metrics,
+    pull_latest_diarization_dataset,
+    MIN_AGE as V2V_MIN_AGE,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 MINS_TO_SLEEP = 10
@@ -303,7 +308,7 @@ class Validator:
                     bt.logging.error(m)
                     raise RuntimeError(m)
             except Exception as e:
-                bt.logging.error(f"Failed to get GPU memory: {e}")
+                bt.logging.error(f"Failed to get GPU memory: {e}: {traceback.format_exc()}")
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
@@ -344,7 +349,7 @@ class Validator:
         self.run_step_count = 0
 
         # === Running args ===
-        self.weights = torch.zeros_like(self.metagraph.S)
+        self.weights = torch.zeros_like(torch.tensor(self.metagraph.S))
         self.epoch_step = 0
         self.global_step = 0
         self.last_epoch = self.metagraph.block.item()
@@ -443,7 +448,7 @@ class Validator:
         block_uploaded_at = model_metadata.block
         current_block = self.metagraph.block.item()
         model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
-        is_old_enough = model_age > MIN_AGE
+        is_old_enough = model_age > MIN_AGE if model_metadata.id.competition_id == "o1" else model_age > V2V_MIN_AGE
         if not is_old_enough:
             bt.logging.debug(
                 f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
@@ -494,6 +499,7 @@ class Validator:
 
                 metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
                 if metadata is not None and self.is_model_old_enough(metadata):
+                    bt.logging.info(f"Model is old enough for UID={next_uid} with hotkey {hotkey}, metadata: {metadata} , {self.config.run_api}")
                     if self.config.run_api:
                         queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
                     else:
@@ -535,8 +541,7 @@ class Validator:
                     bt.logging.debug("Starting cleanup of stale models. Removing {}... Done!".format(len(old_models)))
 
             except Exception as e:
-                bt.logging.error(f"Error in clean loop: {e}")
-                print(traceback.format_exc())
+                bt.logging.error(f"Error in clean loop: {e}: {traceback.format_exc()}")
 
             time.sleep(dt.timedelta(minutes=clean_period_minutes).total_seconds())
 
@@ -550,7 +555,7 @@ class Validator:
         try:
             all_model_scores = self.get_all_model_scores()
         except Exception as e:
-            bt.logging.error(f"Failed to get all model scores: {e}")
+            bt.logging.error(f"Failed to get all model scores: {e}: {traceback.format_exc()}")
             return
         
         if all_model_scores is None:
@@ -728,7 +733,7 @@ class Validator:
                     weights_report["weights"][uid] = score
                 bt.logging.debug(weights_report)
             except Exception as e:
-                bt.logging.error(f"failed to set weights {e}")
+                bt.logging.error(f"failed to set weights {e}: {traceback.format_exc()}")
             ws, ui = self.weights.topk(len(self.weights))
             table = Table(title="All Weights")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
@@ -846,6 +851,7 @@ class Validator:
         # Query API for next model to score.
         bt.logging.info(f"Getting model to score...")
         uid = await self.get_model_to_score()
+
         if uid is not None:
             uids = [uid]
 
@@ -870,7 +876,7 @@ class Validator:
                     )
             except Exception as e:
                 bt.logging.warning(
-                    f"Unable to sync model for UID {uid} with hotkey {hotkey}"
+                    f"Unable to sync model for UID {uid} with hotkey {hotkey}: {traceback.format_exc()}"
                 )
 
         # Keep track of which block this uid last updated their model.
@@ -926,13 +932,10 @@ class Validator:
             
         #bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
-        eval_data = pull_latest_omega_dataset()
+       
         log_gpu_memory('after pulling dataset')
-        if eval_data is None:
-            bt.logging.warning(
-                f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
-            )
-            time.sleep(MINS_TO_SLEEP * 60)
+        
+        print(uid_to_hotkey_and_model_metadata)
 
         for uid_i, (
             hotkey,
@@ -950,14 +953,37 @@ class Validator:
                         # Update the block this uid last updated their model.
                         uid_to_block[uid_i] = model_i_metadata.block
                         hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
-                        score = get_model_score(
-                            hf_repo_id,
-                            mini_batch=eval_data,
-                            local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
-                            hotkey=hotkey,
-                            block=model_i_metadata.block,
-                            model_tracker=self.model_tracker
-                        )
+                        if competition_parameters.competition_id == "o1":
+                            eval_data = pull_latest_omega_dataset()
+                            if eval_data is None:
+                                bt.logging.warning(
+                                    f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
+                                )
+                                time.sleep(MINS_TO_SLEEP * 60)
+                            score = get_model_score(
+                                hf_repo_id,
+                                mini_batch=eval_data,
+                                local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
+                                hotkey=hotkey,
+                                block=model_i_metadata.block,
+                                model_tracker=self.model_tracker
+                            )
+                        elif competition_parameters.competition_id == "v1":
+                            eval_data_v2v = pull_latest_diarization_dataset()
+                            if eval_data_v2v is None:
+                                bt.logging.warning(
+                                    f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
+                                )
+                                time.sleep(MINS_TO_SLEEP * 60)
+                            score = compute_s2s_metrics(
+                                model_id="moshi", # update this to the model id as we support more models.
+                                hf_repo_id=hf_repo_id,
+                                mini_batch=eval_data_v2v,
+                                local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
+                                hotkey=hotkey,
+                                block=model_i_metadata.block,
+                                model_tracker=self.model_tracker
+                            )
                         bt.logging.info(f"Score for {model_i_metadata} is {score}")
                     except Exception as e:
                         bt.logging.error(
@@ -1092,7 +1118,7 @@ class Validator:
                     'block': uid_data.get('block', 'N/A')
                 })
             except Exception as e:
-                bt.logging.warning(f"Error processing UID {uid}: {str(e)}")
+                bt.logging.warning(f"Error processing UID {uid}: {str(e)}: {traceback.format_exc()}")
                 continue
 
         # Sort by win_rate (descending) and take top 25
@@ -1137,7 +1163,7 @@ class Validator:
         keypair = self.dendrite.keypair
         hotkey = keypair.ss58_address
         signature = f"0x{keypair.sign(hotkey).hex()}"
-        
+
         try:
             async with ClientSession() as session:
                 async with session.post(
@@ -1156,7 +1182,8 @@ class Validator:
                         return uid
                 
         except Exception as e:
-            bt.logging.debug(f"Error retrieving model to score from API: {e}")
+            traceback.print_exc()
+            bt.logging.debug(f"Error retrieving model to score from API: {e}: {traceback.format_exc()}")
             return None
         
     async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_hash, model_score) -> bool:
@@ -1195,7 +1222,7 @@ class Validator:
                     return True
             
         except Exception as e:
-            bt.logging.error(f"Error posting model score to API: {e}")
+            bt.logging.error(f"Error posting model score to API: {e}: {traceback.format_exc()}")
             return None
 
     def get_all_model_scores(self) -> typing.Optional[typing.Dict[str, float]]:
@@ -1245,7 +1272,7 @@ class Validator:
                     bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
                     time.sleep(RETRY_DELAY)
                 else:
-                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}")
+                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}: {traceback.format_exc()}")
         
         return None
 
