@@ -1,12 +1,13 @@
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker, relationship
-from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.exc import OperationalError
 from contextlib import contextmanager
 from datetime import datetime
 import bittensor as bt
 from typing import Optional, Dict, List
 import time
+from vali_api.config import DBHOST, DBNAME, DBUSER, DBPASS
 
 Base = declarative_base()
 
@@ -14,7 +15,7 @@ Base = declarative_base()
 _engine: Optional[object] = None
 Session: Optional[sessionmaker] = None
 
-def init_database(dbuser: str, dbpass: str, dbhost: str, dbname: str, is_prod: bool = False):
+def init_database():
     """Initialize the database connection and create tables."""
     global _engine, Session
     
@@ -23,7 +24,7 @@ def init_database(dbuser: str, dbpass: str, dbhost: str, dbname: str, is_prod: b
         return
 
     try:
-        connection_string = f'mysql://{dbuser}:{dbpass}@{dbhost}/{dbname}'
+        connection_string = f'mysql://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}'
         _engine = create_engine(connection_string)
         Session = sessionmaker(bind=_engine)
         Base.metadata.create_all(_engine)
