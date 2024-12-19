@@ -14,6 +14,7 @@ from substrateinterface import Keypair
 from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
+from model.storage.eval_leaderboard import init_database as init_eval_database, EvalLeaderboardManager
 from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
 from constants import MODEL_EVAL_TIMEOUT
 
@@ -190,7 +191,9 @@ async def main():
     
     # Initialize database at application startup
     init_database()
+    init_eval_database()
     queue_manager = ModelQueueManager()
+    eval_manager = EvalLeaderboardManager()
 
     async def resync_metagraph():
         while True:
@@ -325,7 +328,27 @@ async def main():
         except Exception as e:
             logging.error(f"Error posting post_model_score: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
+    
+
+    @app.post("/get-leaderboard-data")
+    async def get_leaderboard_data(
+        hotkey: Annotated[str, Depends(get_hotkey)] = None,
+    ):
+        if not authenticate_with_bittensor(hotkey, metagraph):
+            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Valid hotkey required.",
+            )
         
+        try:
+            data = eval_manager.get_v1_leaderboard()
+            print(f"Leaderboard data: {data}")
+            return data
+        except Exception as e:
+            logging.error(f"Error getting leaderboard data: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error.")
+
     @app.post("/get-all-model-scores")
     async def get_all_model_scores(
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
