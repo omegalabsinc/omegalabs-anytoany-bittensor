@@ -187,9 +187,29 @@ async def main():
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "https://sn21.ai", "https://omega-v2v-git-eval-dashboard-omegalabs.vercel.app"],
+        allow_origins=[
+            "http://localhost:3000",
+            "https://sn21.ai",
+            "https://omega-v2v-git-eval-dashboard-omegalabs.vercel.app"
+        ],
         allow_credentials=True,
-        max_age=3600,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+        allow_headers=[
+            "Access-Control-Allow-Headers",
+            "Access-Control-Allow-Origin",
+            "Authorization",
+            "Content-Type",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "Access-Control-Request-Method",
+            "Access-Control-Request-Headers"
+        ],
+        expose_headers=[
+            "Access-Control-Allow-Origin",
+            "Access-Control-Allow-Credentials"
+        ],
+        max_age=3600
     )
 
     subtensor = bittensor.subtensor(network=NETWORK)
