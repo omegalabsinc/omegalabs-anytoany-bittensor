@@ -187,7 +187,7 @@ async def main():
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "https://sn21.ai", "https://omega-v2v-git-eval-dashboard-omegalabs.vercel.app/chat"],
+        allow_origins=["http://localhost:3000", "https://sn21.ai", "https://omega-v2v-git-eval-dashboard-omegalabs.vercel.app"],
         allow_credentials=True,
         max_age=3600,
     )
