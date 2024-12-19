@@ -326,20 +326,13 @@ async def main():
     
 
     @app.post("/get-leaderboard-data")
-    async def get_leaderboard_data(
-        hotkey: Annotated[str, Depends(get_hotkey)] = None,
-    ):
-        if not authenticate_with_bittensor(hotkey, metagraph):
-            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Valid hotkey required.",
-            )
-        
+    async def get_leaderboard_data():
         try:
             data = eval_manager.get_v1_leaderboard()
-            print(f"Leaderboard data: {data}")
-            return data
+            return {
+                "success": True,
+                "data": data
+            }
         except Exception as e:
             logging.error(f"Error getting leaderboard data: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
@@ -387,7 +380,7 @@ async def main():
                     else:
                         all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
-                            'competition_id': None,
+                            'competition_id': data['competition_id'],
                             'score': None,
                             'scored_at': None,
                             'block': None,
