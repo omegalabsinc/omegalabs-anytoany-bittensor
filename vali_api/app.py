@@ -12,6 +12,7 @@ from fastapi.security import HTTPBasicCredentials, HTTPBasic
 from starlette import status
 from substrateinterface import Keypair
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.eval_leaderboard import init_database as init_eval_database, EvalLeaderboardManager
@@ -182,6 +183,13 @@ class ModelScoreResponse(BaseModel):
 
 async def main():
     app = FastAPI()
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000", "https://sn21.ai", "https://omega-v2v-git-eval-dashboard-omegalabs.vercel.app/chat"],
+        allow_credentials=True,
+        max_age=3600,
+    )
 
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
