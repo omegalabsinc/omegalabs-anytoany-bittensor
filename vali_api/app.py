@@ -325,7 +325,7 @@ async def main():
             raise HTTPException(status_code=500, detail="Internal server error.")
     
 
-    @app.post("/get-leaderboard-data")
+    @app.get("/get-leaderboard-data")
     async def get_leaderboard_data():
         try:
             data = eval_manager.get_v1_leaderboard()
