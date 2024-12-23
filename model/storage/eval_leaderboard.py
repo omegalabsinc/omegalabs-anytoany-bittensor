@@ -101,50 +101,61 @@ class EvalLeaderboardManager:
                 bt.logging.error(f"Error executing operation: {str(e)}")
                 raise
 
-    def get_v1_leaderboard(self) -> List[Dict]:
+    def get_metrics_timeseries(self) -> Dict[str, List[Dict]]:
         """
-        Get turn metrics leaderboard data for competition_id 'v1'.
-        Returns IPU, Pause, and Gap Duration metrics.
+        Get time series data for all turn metrics.
+        Returns data in format {metric_name: [{date: "", model1: 123, model2: 456}, ...]}
+        Groups multiple models under the same date.
         """
-        def _get_metrics():
+        def _get_timeseries():
             with self.session_scope() as session:
-                results = []
+                # Get all evaluations ordered by date
+                evals = session.query(EvaluationModel).order_by(EvaluationModel.eval_date).all()
                 
-                # Query evaluations for v1 competition
-                evals = session.query(EvaluationModel).filter(
-                    EvaluationModel.competition_id == 'v1'
+                # First pass: identify all available metrics
+                metrics = set()
+                sample_results = session.query(EvaluationResult).filter(
+                    EvaluationResult.task == 'turn_metrics'
                 ).all()
+                for result in sample_results:
+                    if result.result_name.startswith('mean_') and result.result_name.endswith('_duration'):
+                        metric_name = result.result_name[5:-9]  # Remove 'mean_' and '_duration'
+                        metrics.add(metric_name)
                 
+                # Initialize data containers for each metric
+                timeseries_data = {metric: {} for metric in metrics}
+                
+                # Process all evaluations
                 for eval in evals:
-                    metrics = {
-                        'Miner Model': eval.model_name,
-                        'Model': eval.model_type,
-                        'IPU': None,
-                        'Pause': None,
-                        'Gap Duration': None
-                    }
+                    date_str = eval.eval_date.strftime('%Y-%m-%d')
+                    model_name = eval.model_name
                     
-                    # Get turn metrics from results
+                    # Get all turn metrics results for this evaluation
                     turn_results = [r for r in eval.results if r.task == 'turn_metrics']
                     for result in turn_results:
-                        if result.result_name == 'mean_ipu_duration':
-                            metrics['IPU'] = round(result.result, 2)
-                        elif result.result_name == 'mean_pause_duration':
-                            metrics['Pause'] = round(result.result, 2)
-                        elif result.result_name == 'mean_gap_duration':
-                            metrics['Gap Duration'] = round(result.result, 2)
-                    
-                    # Only add if we have any turn metrics
-                    if any(v is not None for v in [metrics['IPU'], metrics['Pause'], metrics['Gap Duration']]):
-                        results.append(metrics)
+                        if result.result_name.startswith('mean_') and result.result_name.endswith('_duration'):
+                            metric_name = result.result_name[5:-9]
+                            if metric_name in metrics:
+                                # Initialize date entry if it doesn't exist
+                                if date_str not in timeseries_data[metric_name]:
+                                    timeseries_data[metric_name][date_str] = {'date': date_str}
+                                # Add model's metric value to the date entry
+                                timeseries_data[metric_name][date_str][model_name] = round(result.result, 2)
                 
-                return results
+                # Convert to final format and filter out entries with only date
+                return {
+                    metric: [
+                        data_point for data_point in sorted(data.values(), key=lambda x: x['date'])
+                        if len(data_point) > 1  # More than just the date field
+                    ]
+                    for metric, data in timeseries_data.items()
+                }
 
         try:
-            return self.execute_with_retry(_get_metrics)
+            return self.execute_with_retry(_get_timeseries)
         except Exception as e:
-            bt.logging.error(f"Failed to get v1 leaderboard: {str(e)}")
-            return []
+            bt.logging.error(f"Failed to get metrics timeseries: {str(e)}")
+            return {}
 
     def close(self):
         """Safely close the session."""

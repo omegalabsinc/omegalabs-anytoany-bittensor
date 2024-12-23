@@ -358,10 +358,10 @@ async def main():
             raise HTTPException(status_code=500, detail="Internal server error.")
     
 
-    @app.get("/get-leaderboard-data")
-    async def get_leaderboard_data():
+    @app.get("/get-eval-metrics")
+    async def get_eval_metrics():
         try:
-            data = eval_manager.get_v1_leaderboard()
+            data = eval_manager.get_metrics_timeseries()
             return {
                 "success": True,
                 "data": data
