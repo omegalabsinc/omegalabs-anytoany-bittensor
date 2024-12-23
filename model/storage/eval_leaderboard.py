@@ -101,18 +101,17 @@ class EvalLeaderboardManager:
                 bt.logging.error(f"Error executing operation: {str(e)}")
                 raise
 
+
     def get_metrics_timeseries(self) -> Dict[str, List[Dict]]:
         """
         Get time series data for all turn metrics.
-        Returns data in format {metric_name: [{date: "", model1: 123, model2: 456}, ...]}
-        Groups multiple models under the same date.
+        Returns data in format {metric_name: [{date: "", models: {model1: 123, model2: 456}}, ...]}
+        Groups multiple models under the models key for each date.
         """
         def _get_timeseries():
             with self.session_scope() as session:
-                # Get all evaluations ordered by date
                 evals = session.query(EvaluationModel).order_by(EvaluationModel.eval_date).all()
                 
-                # First pass: identify all available metrics
                 metrics = set()
                 sample_results = session.query(EvaluationResult).filter(
                     EvaluationResult.task == 'turn_metrics'
@@ -122,31 +121,28 @@ class EvalLeaderboardManager:
                         metric_name = result.result_name[5:-9]  # Remove 'mean_' and '_duration'
                         metrics.add(metric_name)
                 
-                # Initialize data containers for each metric
                 timeseries_data = {metric: {} for metric in metrics}
                 
-                # Process all evaluations
                 for eval in evals:
                     date_str = eval.eval_date.strftime('%Y-%m-%d')
                     model_name = eval.model_name
                     
-                    # Get all turn metrics results for this evaluation
                     turn_results = [r for r in eval.results if r.task == 'turn_metrics']
                     for result in turn_results:
                         if result.result_name.startswith('mean_') and result.result_name.endswith('_duration'):
                             metric_name = result.result_name[5:-9]
                             if metric_name in metrics:
-                                # Initialize date entry if it doesn't exist
                                 if date_str not in timeseries_data[metric_name]:
-                                    timeseries_data[metric_name][date_str] = {'date': date_str}
-                                # Add model's metric value to the date entry
-                                timeseries_data[metric_name][date_str][model_name] = round(result.result, 2)
+                                    timeseries_data[metric_name][date_str] = {
+                                        'date': date_str,
+                                        'models': {}
+                                    }
+                                timeseries_data[metric_name][date_str]['models'][model_name] = round(result.result, 2)
                 
-                # Convert to final format and filter out entries with only date
                 return {
                     metric: [
                         data_point for data_point in sorted(data.values(), key=lambda x: x['date'])
-                        if len(data_point) > 1  # More than just the date field
+                        if data_point['models']  # Filter out entries with empty models dict
                     ]
                     for metric, data in timeseries_data.items()
                 }
@@ -156,6 +152,7 @@ class EvalLeaderboardManager:
         except Exception as e:
             bt.logging.error(f"Failed to get metrics timeseries: {str(e)}")
             return {}
+
 
     def close(self):
         """Safely close the session."""
