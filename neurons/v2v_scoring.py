@@ -74,7 +74,7 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
                 overall_dataset[k].append(value)
 
             # Stop after collecting 16 valid samples
-            if len(overall_dataset['audio']) >= 16:
+            if len(overall_dataset['audio']) >= 8:
                 break
 
         # Check if we found enough valid samples
