@@ -241,7 +241,7 @@ class ModelQueueManager:
             bt.logging.error(f"Failed to store model after {self.max_retries} attempts: {str(e)}")
             return False
 
-    def get_next_model_to_score(self):
+    def get_next_model_to_score(self, competition_id: str):
         """Get next model to score with retry logic."""
         def _get_next_model():
             with self.session_scope() as session:
@@ -253,7 +253,8 @@ class ModelQueueManager:
                         func.count(ScoreHistory.id).label('score_count'),
                         func.max(ScoreHistory.scored_at).label('last_scored_at')
                     ).filter(
-                        ScoreHistory.is_archived == False
+                        ScoreHistory.is_archived == False,
+                        ScoreHistory.competition_id == competition_id
                     ).group_by(
                         ScoreHistory.hotkey, 
                         ScoreHistory.uid
@@ -267,6 +268,7 @@ class ModelQueueManager:
                         )
                     ).filter(
                         ModelQueue.is_being_scored == False,
+                        ModelQueue.competition_id == competition_id
                     ).order_by(
                         desc(ModelQueue.is_new),
                         (subquery.c.score_count == None).desc(),
