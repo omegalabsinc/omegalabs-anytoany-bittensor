@@ -1,0 +1,65 @@
+[project]
+name = "validator"
+version = "0.1.0"
+description = "Audio model validator with sandbox"
+requires-python = "==3.10.*"
+dependencies = [
+    # PyTorch ecosystem with fixed versions
+    "torch==2.4.1",
+    "torchaudio==2.4.1", 
+    "torchvision==0.19.1",
+    "torchdata==0.10.0",
+    
+    # HuggingFace ecosystem
+    "transformers==4.46.3",
+    "huggingface-hub==0.27.1",
+    "safetensors==0.5.1",
+    "accelerate>=0.20.0",
+    "datasets==3.1.0",
+    
+    # HTTP and utils
+    "requests==2.32.3",
+    "urllib3==2.2.3",
+    "pyyaml==6.0.2",
+    "einops>=0.6.1",
+    "ulid-py==1.1.0",
+    "tqdm>=4.65.0",
+    
+    # NLP and text processing
+    "sentencepiece==0.2.0",
+    "jiwer==3.0.5",
+    
+    # Data processing
+    "numpy==1.24.4",
+    "pandas==2.0.3",
+    "scikit-learn==1.5.2",
+    
+    # Audio processing
+    "pydub==0.25.1",
+    "librosa==0.10.2.post1",
+    "pyannote.audio==3.1.1",
+    "pesq==0.0.4",
+    
+    # Metrics and evaluation
+    "torchmetrics==1.6.0"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
