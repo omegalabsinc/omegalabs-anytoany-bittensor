@@ -1079,7 +1079,7 @@ class Validator:
                     sample_per_uid[uid][2] if sample_per_uid[uid] is not None else None
                 ),
             }
-        table = Table(title="Step")
+        table = Table(title=f"Step ({competition_id})")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("score", style="magenta")
         table.add_column("win_rate", style="magenta")

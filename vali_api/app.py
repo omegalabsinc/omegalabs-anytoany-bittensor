@@ -217,7 +217,7 @@ async def main():
     async def check_stale_scoring_tasks():
         while True:
             # check and reset any stale scoring tasks
-            reset_count = queue_manager.reset_stale_scoring_tasks()
+            reset_count = queue_manager.reset_stale_scoring_tasks(max_scoring_time_minutes=30)
             print(f"Reset {reset_count} stale scoring tasks")
 
             # Check every 1 minute to see if we have any newly flagged stale scoring tasks
