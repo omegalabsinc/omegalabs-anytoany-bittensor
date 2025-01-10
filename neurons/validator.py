@@ -1297,7 +1297,7 @@ class Validator:
                     # Sleep for 5 minutes before resycing metagraph
                     await asyncio.sleep(60 * 5)
                 else:
-                    await self.try_run_step(ttl=60 * 15) # 15 minute timeout. Same as the timeout for resetting stale models being scored.
+                    await self.try_run_step(ttl=60 * 30) # 30 minute timeout. Same as the timeout for resetting stale models being scored.
                 
                 self.global_step += 1
 

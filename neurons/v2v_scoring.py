@@ -144,9 +144,9 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                 path
             )
             if is_model_unique:
-                bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
+                bt.logging.info(f"Model {model_id} with hash {model_hash} on block {block} is unique.")
             else:
-                bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
+                bt.logging.warning(f"*** Model {model_id} with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
                 cleanup_gpu_memory()
                 log_gpu_memory('after model clean-up')
                 return 0
