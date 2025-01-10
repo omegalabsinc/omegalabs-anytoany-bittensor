@@ -110,6 +110,14 @@ def compute_wins(
     """
     wins = {uid: 0 for uid in uids}
     win_rate = {uid: 0 for uid in uids}
+
+    # If there is only one score, then the winning uid is the one with the score.
+    if len([score for score in scores_per_uid.values() if score != 0]) == 1:
+        winning_uid = [uid for uid, score in scores_per_uid.items() if score != 0][0]
+        wins[winning_uid] = 1
+        win_rate[winning_uid] = 1.0
+        return wins, win_rate
+
     for i, uid_i in enumerate(uids):
         total_matches = 0
         block_i = uid_to_block[uid_i]
@@ -565,78 +573,93 @@ class Validator:
         # Execute the win-rate competition
         #load_model_perf = PerfMonitor("Eval: Load model")
         #compute_loss_perf = PerfMonitor("Eval: Compute loss")
-        competition_parameters = constants.COMPETITION_SCHEDULE[
-            self.global_step % len(constants.COMPETITION_SCHEDULE)
-        ]
-        uids = self.metagraph.uids.tolist()
-        # convert uids to int
-        uids = [int(uid) for uid in uids]
-        
-        # Initialize with default values (0 for scores, None for blocks)
-        scores_per_uid = {uid: 0 for uid in uids}
-        uid_to_block = {uid: None for uid in uids}
-        uid_to_hash = {uid: None for uid in uids}
-        sample_per_uid = {muid: None for muid in uids}
 
-        # Iterate through each UID and its associated models
-        for uid, models_data in all_model_scores.items():
-            if not models_data:  # Skip if no models for this UID
-                continue
-           
-            # Convert UID to int
-            uid = int(uid)
-            # Take the first model's data (assuming one model per UID)
-            model_data = models_data[0]
-            
-            # Extract score and block, defaulting to None if not present
-            score = model_data.get('score', 0)
-            block = model_data.get('block', 0)
-            model_hash = model_data.get('model_hash', None)
-            if model_hash == "":
-                model_hash = None
-            
-            if score is not None:
-                scores_per_uid[uid] = score
-            if block is not None:
-                uid_to_block[uid] = block
-            if model_hash is not None:
-                uid_to_hash[uid] = model_hash
-
-        # Compute wins and win rates per uid.
-        wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
-
-        # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
-        uids_penalized_for_hash_duplication = set()
-        for uid in uids:
-            if uid_to_hash[uid] is None and uid_to_block[uid] is None:
-                continue
-            for uid2 in uids:
-                if uid == uid2 or uid_to_hash[uid] is None or uid_to_block[uid2] is None:
-                    continue
-                if uid != uid2 and uid_to_hash[uid] == uid_to_hash[uid2]:
-                    if uid_to_block[uid] < uid_to_block[uid2]:
-                        scores_per_uid[uid2] = 0
-                        uids_penalized_for_hash_duplication.add(uid2)
-                        bt.logging.warning(f"uid {uid2} at block {uid_to_block[uid2]} has duplicate model hash of uid {uid} at block {uid_to_block[uid]}. Penalizing uid {uid2} with score of 0.")
-                    else:
-                        scores_per_uid[uid] = 0
-                        uids_penalized_for_hash_duplication.add(uid)
-                        bt.logging.warning(f"uid {uid} at block {uid_to_block[uid]} has duplicate model hash of uid {uid2} at block {uid_to_block[uid2]}. Penalizing uid {uid} with score of 0.")
-
-        # Compute softmaxed weights based on win rate.
-        model_weights = torch.tensor(
-            [win_rate[uid] for uid in uids], dtype=torch.float32
-        )
-        step_weights = torch.softmax(model_weights / constants.temperature, dim=0)
-        # Update weights based on moving average.
         new_weights = torch.zeros_like(self.metagraph.S)
-        for i, uid_i in enumerate(uids):
-            new_weights[uid_i] = step_weights[i]
-        scale = (
-            len(constants.COMPETITION_SCHEDULE)
-            * competition_parameters.reward_percentage
-        )
-        new_weights *= scale / new_weights.sum()
+
+        for competition_parameters in constants.COMPETITION_SCHEDULE:
+            curr_comp_weights = torch.zeros_like(self.metagraph.S)
+            uids = self.metagraph.uids.tolist()
+            # convert uids to int
+            uids = [int(uid) for uid in uids]
+            
+            # Initialize with default values (0 for scores, None for blocks)
+            scores_per_uid = {uid: 0 for uid in uids}
+            uid_to_block = {uid: None for uid in uids}
+            uid_to_hash = {uid: None for uid in uids}
+            sample_per_uid = {muid: None for muid in uids}
+
+            # Iterate through each UID and its associated models
+            curr_model_scores = {
+                uid: models_data
+                for uid, models_data in all_model_scores.items()
+                if models_data[0]["competition_id"] == competition_parameters.competition_id
+            }
+            for uid, models_data in curr_model_scores.items():
+                if not models_data:  # Skip if no models for this UID
+                    continue
+            
+                # Convert UID to int
+                uid = int(uid)
+                # Take the first model's data (assuming one model per UID)
+                model_data = models_data[0]
+                
+                # Extract score and block, defaulting to None if not present
+                score = model_data.get('score', 0)
+                block = model_data.get('block', 0)
+                model_hash = model_data.get('model_hash', None)
+                if model_hash == "":
+                    model_hash = None
+                
+                if score is not None:
+                    scores_per_uid[uid] = score
+                if block is not None:
+                    uid_to_block[uid] = block
+                if model_hash is not None:
+                    uid_to_hash[uid] = model_hash
+
+            # Compute wins and win rates per uid.
+            wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
+
+            # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
+            uids_penalized_for_hash_duplication = set()
+            for uid in uids:
+                if uid_to_hash[uid] is None and uid_to_block[uid] is None:
+                    continue
+                for uid2 in uids:
+                    if uid == uid2 or uid_to_hash[uid] is None or uid_to_block[uid2] is None:
+                        continue
+                    if uid != uid2 and uid_to_hash[uid] == uid_to_hash[uid2]:
+                        if uid_to_block[uid] < uid_to_block[uid2]:
+                            scores_per_uid[uid2] = 0
+                            uids_penalized_for_hash_duplication.add(uid2)
+                            bt.logging.warning(f"uid {uid2} at block {uid_to_block[uid2]} has duplicate model hash of uid {uid} at block {uid_to_block[uid]}. Penalizing uid {uid2} with score of 0.")
+                        else:
+                            scores_per_uid[uid] = 0
+                            uids_penalized_for_hash_duplication.add(uid)
+                            bt.logging.warning(f"uid {uid} at block {uid_to_block[uid]} has duplicate model hash of uid {uid2} at block {uid_to_block[uid2]}. Penalizing uid {uid} with score of 0.")
+
+            # Compute softmaxed weights based on win rate.
+            model_weights = torch.tensor(
+                [win_rate[uid] for uid in uids], dtype=torch.float32
+            )
+            step_weights = torch.softmax(model_weights / constants.temperature, dim=0)
+            for i, uid_i in enumerate(uids):
+                curr_comp_weights[uid_i] = step_weights[i]
+            scale = competition_parameters.reward_percentage
+            curr_comp_weights *= scale / curr_comp_weights.sum()
+            new_weights += curr_comp_weights
+
+            self.log_step(
+                competition_parameters.competition_id,
+                uids,
+                uid_to_block,
+                wins,
+                win_rate,
+                scores_per_uid,
+                sample_per_uid,
+            )
+
+        # Do EMA with existing (self.weights) and new (new_weights) weights.
         if new_weights.shape[0] < self.weights.shape[0]:
             self.weights = self.weights[: new_weights.shape[0]]
         elif new_weights.shape[0] > self.weights.shape[0]:
@@ -654,18 +677,6 @@ class Validator:
         # Log the performance of the eval loop.
         #bt.logging.debug(load_model_perf.summary_str())
         #bt.logging.debug(compute_loss_perf.summary_str())
-
-        # Log to screen.
-        self.log_step(
-            competition_parameters.competition_id,
-            uids,
-            uid_to_block,
-            wins,
-            win_rate,
-            scores_per_uid,
-            sample_per_uid,
-        )
-        
 
     @staticmethod
     def adjust_for_vtrust(weights: np.ndarray, consensus: np.ndarray, vtrust_min: float = 0.5):
@@ -850,7 +861,7 @@ class Validator:
         uids = []
         # Query API for next model to score.
         bt.logging.info(f"Getting model to score...")
-        uid = await self.get_model_to_score()
+        uid = await self.get_model_to_score(competition_parameters.competition_id)
 
         if uid is not None:
             uids = [uid]
@@ -1068,7 +1079,7 @@ class Validator:
                     sample_per_uid[uid][2] if sample_per_uid[uid] is not None else None
                 ),
             }
-        table = Table(title="Step")
+        table = Table(title=f"Step ({competition_id})")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("score", style="magenta")
         table.add_column("win_rate", style="magenta")
@@ -1153,7 +1164,7 @@ class Validator:
         # Sink step log.
         #bt.logging.info(f"Step results: {step_log}")
 
-    async def get_model_to_score(self) -> str:
+    async def get_model_to_score(self, competition_id: str) -> str:
         """
         Queries the SN21 API for the next model to score.
 
@@ -1169,7 +1180,7 @@ class Validator:
                 async with session.post(
                     self.get_model_endpoint,
                     auth=BasicAuth(hotkey, signature),
-                    json=None,
+                    json={"competition_id": competition_id},
                 ) as response:
                     response.raise_for_status()
                     response_json = await response.json()
@@ -1286,7 +1297,7 @@ class Validator:
                     # Sleep for 5 minutes before resycing metagraph
                     await asyncio.sleep(60 * 5)
                 else:
-                    await self.try_run_step(ttl=60 * 15) # 15 minute timeout. Same as the timeout for resetting stale models being scored.
+                    await self.try_run_step(ttl=60 * 30) # 30 minute timeout. Same as the timeout for resetting stale models being scored.
                 
                 self.global_step += 1
 
