@@ -4,16 +4,17 @@ import torch
 from typing import Dict, Any, Optional
 import time
 import numpy as np
-
+import json
 from neurons.validator.server import InferenceServer
 
 logger = logging.getLogger(__name__)
 
-def create_router(inference_server: Optional[InferenceServer]) -> APIRouter:
+def create_router(inference_server_dict: Dict[str, Any]) -> APIRouter:
     """Create and configure API router with access to inference server"""
     router = APIRouter()
 
-    logger.info(f"Inference server state: {inference_server}")
+    logger.info(f"inside endpoints.py, Inference server state: {inference_server_dict}")
+    inference_server = inference_server_dict["inference_server"]
     
     @router.get("/")
     async def root():
@@ -48,18 +49,11 @@ def create_router(inference_server: Optional[InferenceServer]) -> APIRouter:
     @router.get("/score")
     async def get_scores():
         """Get model scores"""
-        if not inference_server or not inference_server._is_running:
-            return {
-                "status": "initializing",
-                "message": "Inference server is starting up"
-            }
         
         try:
-            scores = inference_server.get_latest_scores()
-            return {
-                "status": "success",
-                "scores": scores
-            }
+            with open("/sandbox/results.json", "r") as f:
+                return json.load(f)
+
         except Exception as e:
             logger.error(f"Failed to get scores: {e}")
             return {"status": "error", "error": str(e)}
@@ -74,7 +68,7 @@ def create_router(inference_server: Optional[InferenceServer]) -> APIRouter:
             }
             
         try:
-            metrics = inference_server.get_metrics()
+            metrics = inference_server.get_latest_scores()
             return {
                 "status": "success",
                 "metrics": metrics

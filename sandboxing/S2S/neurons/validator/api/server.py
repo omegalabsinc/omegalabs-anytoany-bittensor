@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Global server instance
 inference_server = None
+inference_server_dict = {"inference_server": inference_server}
 
 def setup_inference_server():
     """Initialize inference server with configuration"""
@@ -47,11 +48,15 @@ def setup_inference_server():
     )
     
     inference_server = InferenceServer(config)
+    inference_server_dict["inference_server"] = inference_server
     inference_server.start()
     
     # Run initial scoring
     try:
         scores = inference_server.score_model(num_samples=16)
+        pth = Path("/sandbox/results.json")
+        inference_server.save_results(scores, pth)
+        
         logger.info(f"Initial model scores: {scores}")
     except Exception as e:
         logger.error(f"Initial scoring failed: {e}")
@@ -78,7 +83,8 @@ def create_app():
         try:
             logger.info("Initializing inference server...")
             setup_inference_server()
-            logger.info("Inference server initialized successfully")
+            logger.info("Inference server initialized successfully inside startup_event")
+            logger.info(f"inside startup_event log 1, Inference server state: {inference_server}")
         except Exception as e:
             logger.error(f"Failed to initialize inference server: {str(e)}", exc_info=True)
             raise
@@ -93,7 +99,8 @@ def create_app():
     
     # Create and mount router
     from .endpoints import create_router
-    router = create_router(inference_server)
+    logger.info(f"inside create_app, Inference server state: {inference_server}")
+    router = create_router(inference_server_dict)
     app.include_router(router, prefix="/api/v1")
     
     return app

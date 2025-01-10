@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import torch
 import numpy as np
+import json
 
 from .config import ValidatorConfig, ModelConfig
 from .sandbox.manager import SandboxManager
@@ -137,7 +138,7 @@ class InferenceServer:
             # Collect scores
             all_scores = []
             logger.info(f"Evaluating {min(len(dataset), num_samples)} samples")
-            for i in range(2):
+            for i in range(len(dataset)):
                 sample = self.data_processor.prepare_sample(dataset[i])
                 if sample:  # Only evaluate if sample preparation succeeded
                     scores = self.evaluate_sample(sample)
@@ -162,9 +163,46 @@ class InferenceServer:
             logger.error(f"Model scoring failed: {e}")
             return None
 
-    def save_config(self, path: str):
-        """Save current configuration"""
-        self.config.save_config(path)
+    
+    def save_results(self, scores, path: str="/sandbox/results.json"):
+        """Save scores to file"""
+        model_config = self.config.model
+        data_config = self.config.data
+        metrics_config = self.config.metrics
+        config_dict = {
+            "model": {
+                "model_id": model_config.model_id,
+                "revision": model_config.revision,
+                "device": model_config.device
+            },
+            "data": {
+                "dataset_name": data_config.dataset_name,
+                "data_prefix": data_config.data_prefix,
+                "min_age": data_config.min_age,
+                "max_files": data_config.max_files,
+                "sampling_rate": data_config.sampling_rate,
+                "min_segment_duration": data_config.min_segment_duration
+            },
+            "metrics": {
+                name: {
+                    "enabled": metric.enabled,
+                    "weight": metric.weight,
+                    "threshold": metric.threshold,
+                    "parameters": metric.parameters
+                }
+                for name, metric in metrics_config.metrics.items()
+            },
+            "scores": scores
+        }
+        
+        with open(path, 'w') as f:
+            json.dump(config_dict, f, indent=2)
+
+    
+    def get_latest_scores(self, path: str="/sandbox/results.json"):
+        """Get latest scores"""
+        with open(path, 'r') as f:
+            return json.load(f)
 
 def main():
     import argparse
