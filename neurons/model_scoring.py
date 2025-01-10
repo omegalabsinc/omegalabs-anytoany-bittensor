@@ -127,9 +127,9 @@ def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_trac
             config.checkpointer.checkpoint_dir + "/" + config.checkpointer.checkpoint_files[0]
         )
         if is_model_unique:
-            bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
+            bt.logging.info(f"Model {hf_repo_id} with hash {model_hash} on block {block} is unique.")
         else:
-            bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
+            bt.logging.warning(f"*** Model {hf_repo_id} with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
             cleanup_gpu_memory()
             log_gpu_memory('after model clean-up')
             return 0

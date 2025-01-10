@@ -217,7 +217,7 @@ async def main():
     async def check_stale_scoring_tasks():
         while True:
             # check and reset any stale scoring tasks
-            reset_count = queue_manager.reset_stale_scoring_tasks()
+            reset_count = queue_manager.reset_stale_scoring_tasks(max_scoring_time_minutes=30)
             print(f"Reset {reset_count} stale scoring tasks")
 
             # Check every 1 minute to see if we have any newly flagged stale scoring tasks
@@ -231,8 +231,12 @@ async def main():
     async def trigger_error():
         division_by_zero = 1 / 0
     
+    class GetModelToScoreRequest(BaseModel):
+        competition_id: str = "o1"
+
     @app.post("/get-model-to-score")
     async def get_model_to_score(
+        request: GetModelToScoreRequest = Body(default=GetModelToScoreRequest()),
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
     ):
         if not authenticate_with_bittensor(hotkey, metagraph):
@@ -245,7 +249,7 @@ async def main():
         uid = metagraph.hotkeys.index(hotkey)
 
         try:
-            next_model = queue_manager.get_next_model_to_score()
+            next_model = queue_manager.get_next_model_to_score(request.competition_id)
             if next_model:
                 success = queue_manager.mark_model_as_being_scored(next_model['hotkey'], next_model['uid'], hotkey)
                 print(f"Next model to score: {next_model['hotkey'], next_model['uid']} for validator uid {uid}, hotkey {hotkey}")
