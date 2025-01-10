@@ -39,7 +39,7 @@ WORKDIR /app
 # Install dependencies
 COPY --chown=sandbox:sandbox neurons /app/neurons/
 COPY --chown=sandbox:sandbox evaluation /app/evaluation/
-COPY --chown=sandbox:sandbox tests /app/tests/
+# COPY --chown=sandbox:sandbox tests /app/tests/
 COPY --chown=sandbox:sandbox setup.py pyproject.toml /app/
 RUN pip install -e .
 RUN pip install "fastapi>=0.68.0" "uvicorn>=0.15.0"
