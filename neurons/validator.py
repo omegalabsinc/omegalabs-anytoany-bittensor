@@ -72,6 +72,7 @@ from neurons.v2v_scoring import (
 )
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 MINS_TO_SLEEP = 10
 GPU_MEM_GB_REQD = 39
 
@@ -943,9 +944,6 @@ class Validator:
             
         #bt.logging.info("Looking at model metadata", uid_to_hotkey_and_model_metadata)
 
-       
-        log_gpu_memory('after pulling dataset')
-        
         print(uid_to_hotkey_and_model_metadata)
 
         for uid_i, (
@@ -964,6 +962,7 @@ class Validator:
                         # Update the block this uid last updated their model.
                         uid_to_block[uid_i] = model_i_metadata.block
                         hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
+                        start_time = time.time()
                         if competition_parameters.competition_id == "o1":
                             eval_data = pull_latest_omega_dataset()
                             if eval_data is None:
@@ -995,7 +994,7 @@ class Validator:
                                 block=model_i_metadata.block,
                                 model_tracker=self.model_tracker
                             )
-                        bt.logging.info(f"Score for {model_i_metadata} is {score}")
+                        bt.logging.info(f"Score for {model_i_metadata} is {score}, took {time.time() - start_time} seconds")
                     except Exception as e:
                         bt.logging.error(
                             f"Error in eval loop: {e}. Setting score for uid: {uid_i} to 0. \n {traceback.format_exc()}"
@@ -1031,7 +1030,8 @@ class Validator:
                     model_hash = ""
                     if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
                         model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
-                    await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
+                    if not self.config.offline:
+                        await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
                 except Exception as e:
                     bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
                     bt.logging.error(traceback.format_exc())
@@ -1207,7 +1207,7 @@ class Validator:
         keypair = self.dendrite.keypair
         hotkey = keypair.ss58_address
         signature = f"0x{keypair.sign(hotkey).hex()}"
-        
+
         try:
             async with ClientSession() as session:
                 async with session.post(
