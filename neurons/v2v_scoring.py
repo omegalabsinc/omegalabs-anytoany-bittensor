@@ -113,7 +113,7 @@ def load_ckpt_from_hf(model_id: str, hf_repo_id: str, local_dir: str, device: st
     try:
         target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
         with open(target_file_path, 'r') as file:
-            target_file_contents = file.read()
+            target_file_contents = file.read().strip()
     except huggingface_hub.utils._errors.EntryNotFoundError:
         print(f"Warning: File '{target_file}' not found in the repository.")
     except Exception as e:
