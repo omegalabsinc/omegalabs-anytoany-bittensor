@@ -1,3 +1,4 @@
+import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,8 +25,8 @@ def setup_inference_server():
     
     config = ValidatorConfig(
         model=ModelConfig(
-            model_id="tezuesh/moshi_general",
-            revision="main",
+            model_id=os.getenv("VALIDATOR_MODEL_ID", "tezuesh/moshi_general"),
+            revision=os.getenv("VALIDATOR_MODEL_REVISION", "main"),
             device="cuda" if torch.cuda.is_available() else "cpu"
         ),
         metrics=MetricsConfig(

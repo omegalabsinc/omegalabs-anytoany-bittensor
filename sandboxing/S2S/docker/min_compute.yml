@@ -44,6 +44,8 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
       - OMP_NUM_THREADS=4
       - CUDA_LAUNCH_BLOCKING=0
+      - VALIDATOR_MODEL_ID=${VALIDATOR_MODEL_ID:-tezuesh/moshi_general}
+      - VALIDATOR_MODEL_REVISION=${VALIDATOR_MODEL_REVISION:-main}
     security_opt:
       - no-new-privileges:true
     cap_drop:
