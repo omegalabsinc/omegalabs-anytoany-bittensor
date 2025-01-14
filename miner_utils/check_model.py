@@ -1,5 +1,4 @@
 import bittensor as bt
-from bittensor.extrinsics.serving import get_metadata
 import asyncio
 from model.data import ModelId
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore

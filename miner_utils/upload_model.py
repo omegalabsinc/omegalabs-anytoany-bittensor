@@ -95,7 +95,7 @@ def validate_repo(ckpt_dir, epoch, model_type):
 
 async def main(config: bt.config):
     # Create bittensor objects.
-    bt.logging(config=config)
+    bt.logging.set_config(config=config.logging)
 
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)

@@ -1,6 +1,6 @@
 from typing import Any, ClassVar, Dict, Optional, Type
 # from transformers import PreTrainedModel, PreTrainedTokenizerBase
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import BaseModel, Field, PositiveInt, ConfigDict
 
 # The maximum bytes for metadata on the chain.
 MAX_METADATA_BYTES = 128
@@ -63,8 +63,7 @@ class ModelId(BaseModel):
 class Model(BaseModel):
     """Represents a pre trained foundation model."""
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     id: ModelId = Field(description="Identifier for this model.")
     local_repo_dir: str = Field(description="Local repository with the required files.")
