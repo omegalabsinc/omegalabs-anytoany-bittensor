@@ -16,9 +16,19 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import os
+os.environ["USE_TORCH"] = "1"
+os.environ["BT_LOGGING_INFO"] = "1"
+
+# this snippet below is necessary to avoid double logging and extraneous logging caused by torchtune
+import logging
+import torchtune
+logging.root.handlers = []
+logging.root.manager.loggerDict = {}
+logging.root.level = logging.root.level
+
 from collections import defaultdict
 import datetime as dt
-import os
 import math
 import time
 import torch
@@ -303,8 +313,7 @@ class Validator:
 
     def __init__(self):
         self.config = Validator.config()
-        bt.logging(config=self.config)
-
+        bt.logging.set_config(config=self.config.logging)
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
 
@@ -335,7 +344,6 @@ class Validator:
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
         self.score_model_endpoint = f"{api_root}/score-model"
         self.get_all_model_scores_endpoint = f"{api_root}/get-all-model-scores"
-
 
         # Dont check registration status if offline.
         if not self.config.offline:
