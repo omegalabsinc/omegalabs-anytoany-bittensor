@@ -220,7 +220,7 @@ class Validator:
             help="Where to store downloaded models",
         )
         parser.add_argument(
-            "--netuid", type=str, default=constants.SUBNET_UID, help="The subnet UID."
+            "--netuid", type=int, default=constants.SUBNET_UID, help="The subnet UID."
         )
         parser.add_argument(
             "--genesis",
