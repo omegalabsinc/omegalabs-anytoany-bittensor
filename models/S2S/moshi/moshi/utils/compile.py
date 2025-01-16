@@ -48,7 +48,11 @@ def torch_compile_lazy(fun):
         if _compile_disabled:
             return fun(*args, **kwargs)
         if fun_compiled is None:
-            fun_compiled = torch.compile(fun)
+            try:
+                fun_compiled = torch.compile(fun)
+            except Exception as e:
+                print(f"Error compiling function {fun.__name__}: {e}. Using original function.")
+                fun_compiled = fun
         return fun_compiled(*args, **kwargs)
 
     return _wrapped
