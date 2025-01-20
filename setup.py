@@ -30,7 +30,7 @@ def read_requirements(path):
     return requirements
 
 
-requirements = read_requirements("requirements.txt")
+requirements = read_requirements("requirements_new.txt")
 here = path.abspath(path.dirname(__file__))
 
 with open(path.join(here, "README.md"), encoding="utf-8") as f:

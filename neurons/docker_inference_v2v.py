@@ -13,6 +13,8 @@ import torch
 import bittensor as bt
 from pathlib import Path
 from neurons.docker_manager import DockerManager
+from evaluation.S2S.distance import S2SMetrics
+
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
@@ -94,7 +96,6 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
             repo_id=hf_repo_id,
             gpu_id=0 if device == 'cuda' else None
         )
-        breakpoint()
         # Check hotkey if provided
         if hotkey is not None:
             try:
@@ -149,9 +150,11 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
             if len(diar_sample) < min_samples or len(diar_gt) < min_samples:
                 continue
 
+            # Reshape audio to [C,T] format (mono -> 1 channel)
+            diar_sample = diar_sample.reshape(1, -1)
+
             # Perform inference using Docker container
             try:
-                breakpoint()
                 result = docker_manager.inference(
                     url=container_url,
                     audio_array=diar_sample,
@@ -206,7 +209,7 @@ if __name__ == "__main__":
     temp_dir_cache = TempDirCache(10)
     
     for epoch in range(2):
-        for hf_repo_id in ["tezuesh/moshi_general", "tezuesh/moshi7"]:
+        for hf_repo_id in ["tezuesh/moshi_general", "tezuesh/moshi_general"]:
             start_time = time.time()
             diar_time = time.time()
             

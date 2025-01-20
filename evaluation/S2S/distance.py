@@ -1,338 +1,340 @@
-from jiwer import wer
-import librosa
+import numpy as np
+from dataclasses import dataclass
+from typing import Dict, Optional, List, Any, Tuple
 import torch
 import torchaudio.functional as F
-from evaluation.S2S.rawnet.inference import RawNet3Inference
+from jiwer import wer
+import librosa
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 from transformers import (
-    WhisperForConditionalGeneration,
+    WhisperForConditionalGeneration, 
     WhisperProcessor,
+    MimiModel,
+    AutoFeatureExtractor
 )
-import bittensor as bt
-from models.S2S.moshi.moshi.models.loaders import get_mimi
-from models.S2S.moshi.inference import load_audio_from_array, encode_audio
-from huggingface_hub import hf_hub_download
+from evaluation.S2S.rawnet.inference import RawNet3Inference
+
+import logging
+import os
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
 
 class S2SMetrics:
-    def __init__(self, cache_dir: str, device: str='cuda'):
-        
-        # Load the Whisper large model and processor
-        self.device = torch.device(device)
-        MIMI_NAME = "tokenizer-e351c8d8-checkpoint125.safetensors"
+    """Speech-to-Speech evaluation metrics"""
+    
+    def __init__(self, cache_dir: str = ".score_cache/"):
+        """Initialize metrics with configuration"""
+        # Setup cache directories
+        self.cache_dir = cache_dir
+        os.makedirs(self.cache_dir, exist_ok=True)
 
-        mimi_weight_path = hf_hub_download(repo_id="tezuesh/mimi", filename=MIMI_NAME, local_dir=cache_dir)
         
-        self.mimi_model = get_mimi(mimi_weight_path, device=self.device)
-        self.mimi_model.set_num_codebooks(4)  # up to 32 for mimi, but limited to 8 for moshi
-
-
-        self.processor = WhisperProcessor.from_pretrained("openai/whisper-large-v2", cache_dir=cache_dir)
-        self.model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large-v2", cache_dir=cache_dir).to(self.device)
+        # Set device
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
+        # Load MIMI model
+        logger.info("Loading MIMI model...")
+        self.mimi = MimiModel.from_pretrained(
+            "kyutai/mimi",
+            cache_dir=self.cache_dir
+        ).to(self.device).eval()
+        self.feature_extractor = AutoFeatureExtractor.from_pretrained(
+            "kyutai/mimi",
+            cache_dir=self.cache_dir
+        )
+
+        # Load RawNet3 (anti-spoofing)
+        logger.info("Loading RawNet3...")
+        self.anti_spoofing_inference = RawNet3Inference(model_name = 'jungjee/RawNet3',repo_dir = self.cache_dir, device=self.device)
+        
+
+        # Load Whisper
+        logger.info("Loading Whisper...")
+        self.processor = WhisperProcessor.from_pretrained(
+            "openai/whisper-large-v2", 
+            cache_dir=self.cache_dir
+        )
+        self.model = WhisperForConditionalGeneration.from_pretrained(
+            "openai/whisper-large-v2", 
+            cache_dir=self.cache_dir
+        ).to(self.device).eval()
+        
+        # Initialize PESQ
         self.nb_pesq = PerceptualEvaluationSpeechQuality(16000, 'nb')
         self.wb_pesq = PerceptualEvaluationSpeechQuality(16000, 'wb')
-        self.anti_spoofing_inference = RawNet3Inference(model_name = 'jungjee/RawNet3', device=self.device)
         
-    
-    def convert_audio(self, audio_arr, from_rate, to_rate, to_channels):
+        
+
+    def convert_audio(self, 
+                     audio_arr: np.ndarray, 
+                     from_rate: int, 
+                     to_rate: int, 
+                     to_channels: int = 1) -> Optional[np.ndarray]:
+        """Convert audio array to target sample rate and channels"""
         try:
             audio = librosa.resample(audio_arr, orig_sr=from_rate, target_sr=to_rate)
-            if to_channels == 1:
-                if len(audio.shape) > 1:
-                    audio = audio.mean(axis=0, keepdims=True)
+            if to_channels == 1 and len(audio.shape) > 1:
+                audio = audio.mean(axis=0, keepdims=True)
+            return audio
         except Exception as e:
-            bt.logging.info(f"An error occurred while converting audio: {e}")
+            logger.error(f"Audio conversion error: {e}")
             return None
-        return audio
 
-    def transcribe_audio(self, audio_arr, sample_rate):
-        """
-        Transcribe the audio file using the Whisper large model and translate to English.
-
-        Args:
-            file_path (str): Path to the audio file.
-
-        Returns:
-            str: Transcribed and translated text in English.
-        """
+    def mimi_scoring(self, 
+                    gt_audio_arr: np.ndarray,
+                    generated_audio_arr: np.ndarray, 
+                    sample_rate_gt: int,
+                    sample_rate_generated: int) -> float:
+        """Calculate MIMI-based similarity score between ground truth and generated audio"""
         try:
+            # Convert to MIMI sample rate
+            gt_audio = librosa.resample(
+                gt_audio_arr, 
+                orig_sr=sample_rate_gt, 
+                target_sr=self.feature_extractor.sampling_rate
+            )
+            generated_audio = librosa.resample(
+                generated_audio_arr, 
+                orig_sr=sample_rate_generated, 
+                target_sr=self.feature_extractor.sampling_rate
+            )
+
+            # Match lengths by truncating to shorter sequence
+            min_len = min(len(gt_audio), len(generated_audio))
+            gt_audio = gt_audio[:min_len]
+            generated_audio = generated_audio[:min_len]
+
+            # Prepare inputs
+            gt_inputs = self.feature_extractor(
+                raw_audio=gt_audio,
+                sampling_rate=self.feature_extractor.sampling_rate,
+                return_tensors="pt"
+            ).to(self.device)
+            
+            generated_inputs = self.feature_extractor(
+                raw_audio=generated_audio,
+                sampling_rate=self.feature_extractor.sampling_rate,
+                return_tensors="pt"
+            ).to(self.device)
+
+            # Get encodings
+            with torch.no_grad():
+                gt_encoding = self.mimi.encode(
+                    gt_inputs["input_values"], 
+                    gt_inputs["padding_mask"]
+                )
+                generated_encoding = self.mimi.encode(
+                    generated_inputs["input_values"],
+                    generated_inputs["padding_mask"]
+                )
+
+                # Compare codes
+                gt_codes = gt_encoding.audio_codes
+                generated_codes = generated_encoding.audio_codes
+                
+                # Calculate scores per codebook
+                scores = []
+                for i in range(gt_codes.shape[1]):
+                    gt_seq = gt_codes[:, i][0]
+                    gen_seq = generated_codes[:, i][0]
+                    
+                    # Calculate edit distance
+                    edit_dist = F.edit_distance(gt_seq, gen_seq)
+                    max_len = max(len(gt_seq), len(gen_seq))
+                    score = 1 - (edit_dist / max_len if max_len > 0 else 0)
+                    scores.append(score)
+                
+                return float(sum(scores) / len(scores))
+
+        except Exception as e:
+            logger.error(f"MIMI scoring error: {e}")
+            return 0.0
+
+    def transcribe_audio(self, 
+                        audio_arr: np.ndarray, 
+                        sample_rate: int) -> Optional[str]:
+        """Transcribe audio using Whisper"""
+        try:
+            # Resample to 16kHz for Whisper
             audio = librosa.resample(audio_arr, orig_sr=sample_rate, target_sr=16000)
-            input_features = self.processor(audio, sampling_rate=16000, return_tensors="pt").input_features
             
-            # Calculate the attention mask
-            input_length = input_features.shape[-1]
-            attention_mask = torch.ones(input_features.shape[:2], dtype=torch.long)
+            # Prepare input features
+            input_features = self.processor(
+                audio, 
+                sampling_rate=16000, 
+                return_tensors="pt"
+            ).input_features.to(self.device)
             
-            # Specify English as the target language
-            forced_decoder_ids = self.processor.get_decoder_prompt_ids(language="en", task="transcribe")
+            # Generate transcription
+            forced_decoder_ids = self.processor.get_decoder_prompt_ids(
+                language="en", 
+                task="transcribe"
+            )
             
             predicted_ids = self.model.generate(
-                input_features.to(self.device),
-                attention_mask=attention_mask.to(self.device),
+                input_features,
                 forced_decoder_ids=forced_decoder_ids
             )
-            transcription = self.processor.batch_decode(predicted_ids, skip_special_tokens=True)
             
-            return transcription[0]
-        
+            return self.processor.batch_decode(
+                predicted_ids, 
+                skip_special_tokens=True
+            )[0]
+            
         except Exception as e:
-            bt.logging.info(f"An error occurred while transcribing the audio: {e}")
+            logger.error(f"Transcription error: {e}")
             return None
 
-    
-
-    def mimi_scoring(self, gt_audio_arr, generated_audio_arr, sample_rate_gt, sample_rate_generated):
-        """
-        Calculate the MIMI (Multi-channel Improved Metric for Intelligibility) score for a set of ground truth and generated audio paths.
-
-        This method computes the MIMI score by comparing the tokenized representations of ground truth
-        and generated audio samples using the Levenshtein distance.
-
-        Args:
-            gt_audio_paths (list): List of file paths to ground truth audio files.
-            generated_audio_paths (list): List of file paths to generated audio files.
-
-        Returns:
-            float: The average MIMI score across all pairs of ground truth and generated audio samples.
-                   Lower scores indicate higher similarity between the ground truth and generated audio.
-
-        Note:
-            - Audio samples shorter than 1000 frames receive a penalty instead of being skipped.
-            - The score is calculated per channel and then averaged.
-            - The final score is the average of all audio pair scores, including penalized ones.
-        """
-        
-        gt_wav = load_audio_from_array(gt_audio_arr, sample_rate_gt, self.mimi_model)
-        generated_wav = load_audio_from_array(generated_audio_arr, sample_rate_generated, self.mimi_model)
-
-        if generated_wav is None:
-            return 0
-        if gt_wav is None:
-            return 1
-        
-        
-        metric = []
-        if gt_wav.shape[2] < 1000 or generated_wav.shape[2] < 1000:
-            # Apply a penalty instead of skipping
-            penalty = 0  # You can adjust this value
-            metric.append(penalty)
-        else:
-
-            gt_codes = encode_audio(self.mimi_model, gt_wav, self.device)
-            generated_codes = encode_audio(self.mimi_model, generated_wav, self.device)
-            # print("After encoding")
-            gt_codes = torch.cat(gt_codes, dim=2)
-            generated_codes = torch.cat(generated_codes, dim=2)
+    def compute_wer(self,
+                   gt_transcript: Optional[str],
+                   generated_transcript: Optional[str]) -> float:
+        """Compute Word Error Rate between transcripts"""
+        if not gt_transcript or not generated_transcript:
+            return 0.0
             
-            num_channels = gt_codes.shape[1]
-            channel_losses = []
-            for channel_idx in range(num_channels):
-                gt_sample = gt_codes[0, channel_idx, :]
-                generated_sample = generated_codes[0, channel_idx, :]
-               
-                edit_dist = F.edit_distance(gt_sample, generated_sample)
-                channel_losses.append(1 - edit_dist/max(len(gt_sample), len(generated_sample)))
-            metric.append(sum(channel_losses) / num_channels)
-        return sum(metric) / len(metric)
-    
-    def compute_wer(self, gt_transcript, generated_transcript):
-        """
-        Compute the Word Error Rate (WER) between the ground truth transcript and the predicted transcript.
-
-        This function calculates the WER between two given transcripts.
-
-        Args:
-            gt_transcript (str): The ground truth transcript.
-            pred_transcript (str): The predicted transcript.
-
-        Returns:
-            float: The Word Error Rate between the ground truth and predicted transcripts.
-        """
-        if gt_transcript is None or generated_transcript is None:
-            return 0
-        if len(gt_transcript.split(" ")) < len(generated_transcript.split(" ")):
-            gt_transcript, generated_transcript = generated_transcript, gt_transcript
-        
-        wer_score = wer(gt_transcript, generated_transcript)
-        return 1 - wer_score
-
-
-    def calculate_pesq(self, gt_audio_arr, generated_audio_arr, sample_rate_gt, sample_rate_generated):
-        
-
-        # Initialize PESQ metrics for narrowband and wideband
-        
-        """
-        Calculate the Perceptual Evaluation of Speech Quality (PESQ) score using torchaudio.
-
-        This function computes the PESQ score between the ground truth and generated audio files.
-        PESQ is an objective measure for predicting the perceived quality of speech.
-
-        Args:
-            gt_audio_path (str): Path to the ground truth audio file.
-            generated_audio_path (str): Path to the generated audio file.
-
-        Returns:
-            float: The calculated PESQ score. Higher scores indicate better quality.
-                   Returns None if an error occurs.
-
-        Note:
-            This function requires torchaudio with PESQ support.
-            Both audio files should have the same sampling rate (default is 16000 Hz).
-        """
         try:
-            # Convert both audio files to the required format (16kHz, mono)
-            gt_audio = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=16000, to_channels=1)
-            gen_audio = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=16000, to_channels=1)
+            return 1 - wer(gt_transcript, generated_transcript)/max(len(gt_transcript), len(generated_transcript))
+        except Exception as e:
+            logger.error(f"WER computation error: {e}")
+            return 0.0
 
-            if gen_audio is None:
-                return 0
-            if gt_audio is None:
-                return 1
+    def calculate_pesq(self,
+                      gt_audio_arr: np.ndarray,
+                      generated_audio_arr: np.ndarray, 
+                      sample_rate_gt: int,
+                      sample_rate_generated: int) -> float:
+        """Calculate PESQ score"""
+        try:
+            # Convert both to 16kHz mono
+            gt_audio = self.convert_audio(gt_audio_arr, sample_rate_gt, 16000, 1)
+            gen_audio = self.convert_audio(generated_audio_arr, sample_rate_generated, 16000, 1)
 
+            if gen_audio is None or gt_audio is None:
+                return 0.0
 
-            # Ensure both audio tensors have the same length by trimming to the shorter one
-            min_length = min(gt_audio.shape[0], gen_audio.shape[0])
+            # Match lengths
+            min_length = min(gt_audio.shape[-1], gen_audio.shape[-1])
             gt_audio = gt_audio[:min_length]
             gen_audio = gen_audio[:min_length]
-        
-            # Calculate narrowband PESQ score
-            # Convert numpy arrays to torch tensors
-            gen_audio_tensor = torch.from_numpy(gen_audio).unsqueeze(0)
-            gt_audio_tensor = torch.from_numpy(gt_audio).unsqueeze(0)
-            # Calculate narrowband PESQ score
-            nb_pesq_score = (self.nb_pesq(gen_audio_tensor, gt_audio_tensor).clip(-0.5, 4.5) + 0.5) / 5.0   # Normalize from [-0.5, 4.5] to [0, 1]
 
-            # Calculate wideband PESQ score
-            wb_pesq_score = (self.wb_pesq(gen_audio_tensor, gt_audio_tensor).clip(-0.5, 4.5) + 0.5) / 5.0   # Normalize from [-0.5, 4.5] to [0, 1]
+            # Convert to tensors
+            gt_tensor = torch.from_numpy(gt_audio).unsqueeze(0)
+            gen_tensor = torch.from_numpy(gen_audio).unsqueeze(0)
+
+            # Calculate scores
+            nb_score = (self.nb_pesq(gen_tensor, gt_tensor).clip(-0.5, 4.5) + 0.5) / 5.0
+            wb_score = (self.wb_pesq(gen_tensor, gt_tensor).clip(-0.5, 4.5) + 0.5) / 5.0
             
-            # Combine the scores 
-            # Use appropriate weightage for narrowband and wideband PESQ scores
-            # Wideband PESQ is generally considered more accurate for modern speech quality assessment
-            combined_pesq_score = 0.3 * nb_pesq_score + 0.7 * wb_pesq_score
+            # Weight narrow-band and wide-band scores
+            return (0.3 * nb_score + 0.7 * wb_score).detach().cpu().item()
             
-            return combined_pesq_score.detach().cpu().item()
-        
         except Exception as e:
-            bt.logging.info(f"An error occurred while calculating PESQ score: {e}")
-            return 0
-        
-    def calculate_length_penalty(self, gt_audio_arr, generated_audio_arr, sample_rate_gt, sample_rate_generated):
-        """
-        Calculate the length penalty between ground truth and generated audio.
-
-        This function computes a penalty based on the difference in duration
-        between the ground truth and generated audio files. The penalty
-        increases as the difference in duration increases.
-
-        Args:
-            gt_audio_arr (numpy.ndarray): Ground truth audio array
-            generated_audio_arr (numpy.ndarray): Generated audio array 
-            sample_rate_gt (int): Sample rate of ground truth audio
-            sample_rate_generated (int): Sample rate of generated audio
-
-        Returns:
-            float: The calculated length penalty. A value of 1 indicates
-                  perfect length match, with lower values for mismatched lengths.
-        """
-        try:
-            gt_audio = self.convert_audio(gt_audio_arr, from_rate=sample_rate_gt, to_rate=16000, to_channels=1)
-            generated_audio = self.convert_audio(generated_audio_arr, from_rate=sample_rate_generated, to_rate=16000, to_channels=1)
-
-            if generated_audio is None:
-                return 0
-            if gt_audio is None:
-                return 1
-
-            gt_duration = gt_audio.shape[0] / 16000  # Assuming 16kHz sample rate
-            generated_duration = generated_audio.shape[0] / 16000
-            
-            duration_diff = abs(gt_duration - generated_duration)/max(gt_duration, generated_duration)
-            
-            # Calculate penalty: 1 for perfect match, decreasing as difference increases
-            penalty =  1 / (1 + duration_diff)
-            
-            return penalty
-        
-        except Exception as e:
-            bt.logging.info(f"An error occurred while calculating length penalty: {e}")
-            return 0  # Return 0 as the maximum penalty in case of error
-
+            logger.error(f"PESQ calculation error: {e}")
+            return 0.0
 
     def calculate_anti_spoofing_score(self, generated_audio_arr, gt_audio_arr, gt_sample_rate, generated_sample_rate):
         try:
-            generated_embedding = self.anti_spoofing_inference.extract_speaker_embd(generated_audio_arr,generated_sample_rate, 48000, 10)
+            generated_embedding = self.anti_spoofing_inference.extract_speaker_embd(generated_audio_arr, generated_sample_rate, 48000, 10)
             gt_embedding = self.anti_spoofing_inference.extract_speaker_embd(gt_audio_arr, gt_sample_rate, 48000, 10)
             return 1/(1+((generated_embedding - gt_embedding) ** 2).mean()).detach().cpu().item()
         except Exception as e:
-            bt.logging.info(f"An error occurred while calculating anti-spoofing score: {e}")
+            logger.info(f"An error occurred while calculating anti-spoofing score: {e}")
             return 0
         
-    def compute_distance(self, gt_audio_arrs, generated_audio_arrs):
-        gt_transcripts = [self.transcribe_audio(gt_audio_arr[0], gt_audio_arr[1]) for gt_audio_arr in gt_audio_arrs]
-        generated_transcripts = [self.transcribe_audio(generated_audio_arr[0], generated_audio_arr[1]) for generated_audio_arr in generated_audio_arrs]
-   
-        mimi_score = [self.mimi_scoring(gt_audio_arr[0], generated_audio_arr[0], gt_audio_arr[1], generated_audio_arr[1]) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]
-        wer_score = [self.compute_wer(gt_transcript, generated_transcript) for gt_transcript, generated_transcript in zip(gt_transcripts, generated_transcripts)]
-        length_penalty = [self.calculate_length_penalty(gt_audio_arr[0], generated_audio_arr[0], gt_audio_arr[1], generated_audio_arr[1]) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]    
-        pesq_score = [self.calculate_pesq(gt_audio_arr[0], generated_audio_arr[0], gt_audio_arr[1], generated_audio_arr[1] ) for gt_audio_arr, generated_audio_arr in zip(gt_audio_arrs, generated_audio_arrs)]
-        anti_spoofing_score = [self.calculate_anti_spoofing_score(generated_audio_arr[0], gt_audio_arr[0], generated_audio_arr[1], gt_audio_arr[1]) for generated_audio_arr, gt_audio_arr in zip(generated_audio_arrs, gt_audio_arrs)]
-        # Calculate combined metric using geometric and arithmetic means
-        combined_scores = []
-        for m, w, l, p, a in zip(mimi_score, wer_score, length_penalty, pesq_score, anti_spoofing_score):
-            # Calculate geometric mean for pesq and anti-spoofing scores
-            try:
-                geometric_mean = (p * a) ** (1/2)
-                # Calculate arithmetic mean for mimi and inverted WER scores
-                arithmetic_mean = (m + w) / 2
-                # Combine geometric and arithmetic means, then apply length penalty
-                combined = (geometric_mean * 0.6 + arithmetic_mean * 0.4) * l
-                combined_scores.append(combined)
-            except Exception as e:
-                bt.logging.info(f"An error occurred while calculating combined score: {e}")
-                combined_scores.append(0)
+    def compute_distance(self, 
+                        gt_audio_arrs: List[Tuple[np.ndarray, int]],
+                        generated_audio_arrs: List[Tuple[np.ndarray, int]]) -> Dict[str, List[float]]:
+        """Compute all metrics between ground truth and generated audio"""
         
-        return {
-            'mimi_score': mimi_score,
-            'wer_score': wer_score,
-            'length_penalty': length_penalty,
-            'pesq_score': pesq_score,
-            'anti_spoofing_score': anti_spoofing_score,
-            'combined_score': combined_scores
-        }
+        try:
+            # Calculate all scores
+            mimi_scores = []
+            wer_scores = []
+            pesq_scores = []
+            anti_spoofing_scores = []
+            
+            for (gt_arr, gt_rate), (gen_arr, gen_rate) in zip(
+                gt_audio_arrs, generated_audio_arrs
+            ):
+                logger.info(f"Calculating metrics for {gt_arr} and {gen_arr}")  
+                # MIMI score
+                mimi_scores.append(
+                    self.mimi_scoring(gt_arr, gen_arr, gt_rate, gen_rate)
+                )
+                
+                # Transcription & WER
+                gt_transcript = self.transcribe_audio(gt_arr, gt_rate)
+                gen_transcript = self.transcribe_audio(gen_arr, gen_rate)
+                logger.info(f"Transcription: {gt_transcript} and {gen_transcript}")
+                wer_scores.append(
+                    self.compute_wer(gt_transcript, gen_transcript)
+                )
+                logger.info(f"WER: {wer_scores}")   
+                # PESQ
+                pesq_scores.append(
+                    self.calculate_pesq(gt_arr, gen_arr, gt_rate, gen_rate)
+                )
+                logger.info(f"PESQ: {pesq_scores}")
+                # Anti-spoofing
+                anti_spoofing_scores.append(
+                    self.calculate_anti_spoofing_score(
+                        gen_arr, gt_arr, gen_rate, gt_rate
+                    )
+                )
+                logger.info(f"Anti-spoofing: {anti_spoofing_scores}")
+            
+            # Calculate combined scores
+            length_penalty = [1.0] * len(mimi_scores)  # Simplified
+            combined_scores = []
+            
+            for scores in zip(
+                mimi_scores, 
+                wer_scores, 
+                length_penalty,
+                pesq_scores,
+                anti_spoofing_scores
+            ):
+                try:
+                    m, w, l, p, a = scores
+                    geometric_mean = (p * a) ** 0.5
+                    arithmetic_mean = (m + w) / 2
+                    combined = (geometric_mean * 0.6 + arithmetic_mean * 0.4) * l
+                    combined_scores.append(combined)
+                except Exception as e:
+                    logger.error(f"Combined score calculation error: {e}")
+                    combined_scores.append(0.0)
+            
+            # Get compute efficiency score
+            
+            return {
+                'mimi_score': mimi_scores,
+                'wer_score': wer_scores,
+                'length_penalty': length_penalty,
+                'pesq_score': pesq_scores,
+                'anti_spoofing_score': anti_spoofing_scores,
+                'combined_score': combined_scores,
+                # 'compute_score': compute_score
+            }
+            
+        except Exception as e:
+            logger.error(f"Overall metric computation error: {e}")
+            return {
+                'mimi_score': [0.0],
+                'wer_score': [0.0],
+                'length_penalty': [0.0],
+                'pesq_score': [0.0],
+                'anti_spoofing_score': [0.0],
+                'combined_score': [0.0],
+                'compute_score': [0.0]
+            }
 
- 
- 
-if __name__ == "__main__":      
-    # Example usage
-    import librosa
-
-    # Load audio files first
-    gt_audio_arrs = []
-    generated_audio_arrs = []
-    
-    gt_paths = [
-        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav',
-        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav'
-    ]
-    generated_paths = [
-        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000049013.wav',
-        '/workspace/tezuesh/omega-v2v/.filtered/Fresh_Air_Remembering_Gospel_Singer_Cissy_Houston_MLB_Legend_Pete_Rose_sample/0000223993.wav'
-    ]
-
-    # Load each audio file and store as (audio_array, sample_rate) tuples
-    for gt_path, gen_path in zip(gt_paths, generated_paths):
-        gt_audio, gt_sr = librosa.load(gt_path, sr=None)
-        gen_audio, gen_sr = librosa.load(gen_path, sr=None)
-        duration = librosa.get_duration(y=gt_audio, sr=gt_sr)
-        print(f"Duration of {gt_path}: {duration} seconds")
-        duration = librosa.get_duration(y=gen_audio, sr=gen_sr)
-        print(f"Duration of {gen_path}: {duration} seconds")
-        
-        gt_audio_arrs.append((gt_audio, gt_sr))
-        generated_audio_arrs.append((gen_audio, gen_sr))
-    
-    repo_dir = '/workspace/tezuesh/cached_models/'
-
-    metric = S2SMetrics(cache_dir=repo_dir)
-    print(metric.compute_distance(gt_audio_arrs, generated_audio_arrs))
+    def load_rawnet3(self, model_path: str, device: str = "cuda") -> RawNet3Inference:
+        try:
+            rawnet = RawNet3Inference(model_path, device)
+            return rawnet
+        except Exception as e:
+            logger.error(f"Error loading RawNet3: {str(e)}")
+            raise
