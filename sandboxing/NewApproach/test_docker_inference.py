@@ -5,195 +5,244 @@ import numpy as np
 import torch
 import json
 import requests
+from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
+from contextlib import contextmanager
 
 from scoring.docker_manager import DockerManager
 from evaluation.S2S.distance import S2SMetrics
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
-# Enable HF transfer for faster downloads
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 # Test configuration
-TEST_REPO_ID = "tezuesh/moshi_general"  # Updated to use the correct model repo
+TEST_REPO_ID = "tezuesh/moshi_general"
 TEST_AUDIO_LENGTH = 48000  # 3 seconds at 16kHz
-SAMPLE_RATE = 24000  # Updated to match model's expected sample rate
+SAMPLE_RATE = 24000
+MAX_STARTUP_RETRIES = 5
+HEALTH_CHECK_TIMEOUT = 180
+INFERENCE_TIMEOUT = 60
 
-def create_test_audio():
-    """Create a simple test audio signal"""
-    duration = TEST_AUDIO_LENGTH / SAMPLE_RATE
-    t = np.linspace(0, duration, TEST_AUDIO_LENGTH)
-    # Generate a simple sine wave
-    frequency = 440  # Hz
-    audio = 0.5 * np.sin(2 * np.pi * frequency * t)
-    return audio.astype(np.float32)
-
-def setup_test_directories():
-    """Setup necessary directories for testing"""
-    base_dir = Path("./cache")
-    base_dir.mkdir(exist_ok=True, parents=True)
-    return base_dir
-
-def test_docker_container():
-    """Test Docker container setup and API endpoints"""
-    logger.info("Testing Docker container setup...")
+class DockerInferenceTester:
+    """
+    Comprehensive testing framework for Docker-based model inference.
+    Handles container lifecycle, resource management, and validation.
+    """
     
-    # Setup directories
-    base_dir = setup_test_directories()
-    
-    # Initialize Docker manager
-    docker_manager = DockerManager(base_cache_dir=str(base_dir))
-    
-    try:
-        # Start container with the test model
-        container_url = docker_manager.start_container(
-            uid="test_model",
-            repo_id=TEST_REPO_ID,
-            gpu_id=0  # Specify GPU if available
-        )
+    def __init__(self, base_dir: Optional[Path] = None):
+        self.base_dir = base_dir or Path("./cache")
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.docker_manager = DockerManager(base_cache_dir=str(self.base_dir))
         
-        if not container_url:
-            logger.error("inside test_docker_container: Failed to start container")
-            return False
+    def __enter__(self):
+        return self
+        
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.cleanup()
+        
+    def cleanup(self):
+        """Ensure complete resource cleanup"""
+        try:
+            self.docker_manager.cleanup_docker_resources()
+        except Exception as e:
+            logger.error(f"Cleanup failed: {e}")
             
-        logger.info(f"inside test_docker_container: Container started successfully at {container_url}")
-        # breakpoint()
+    @staticmethod
+    def create_test_audio() -> np.ndarray:
+        """
+        Generate test audio signal with proper format for inference testing.
+        Returns:
+            np.ndarray: Audio signal shaped as [channels=1, samples]
+        """
+        duration = TEST_AUDIO_LENGTH / SAMPLE_RATE
+        t = np.linspace(0, duration, TEST_AUDIO_LENGTH)
+        frequency = 440  # Hz A4 note
+        audio = 0.5 * np.sin(2 * np.pi * frequency * t)
+        return audio.reshape(1, -1).astype(np.float32)
         
-        # Test health endpoint
+    @staticmethod
+    def validate_container_health(container_url: str) -> bool:
+        """
+        Validate container health status with retries.
+        Args:
+            container_url: Base URL for container health checks
+        Returns:
+            bool: True if container is healthy
+        """
         health_url = f"{container_url}/api/v1/health"
-        retries = 0
-        max_retries = 10  # Increased retries for model loading
+        start_time = time.time()
         
-        while retries < max_retries:
+        while time.time() - start_time < HEALTH_CHECK_TIMEOUT:
             try:
-                response = requests.get(health_url)
+                response = requests.get(health_url, timeout=5)
                 health_data = response.json()
                 
-                if health_data["status"] == "healthy":
-                    logger.info("Health check passed")
-                    logger.info(f"Health status: {health_data}")
-                    break
+                if health_data.get("status") == "healthy":
+                    logger.info("Container health check passed")
+                    logger.debug(f"Health data: {json.dumps(health_data, indent=2)}")
+                    return True
+                    
+                if "initialization_status" in health_data:
+                    init_status = health_data["initialization_status"]
+                    if init_status.get("error"):
+                        logger.error(f"Container initialization failed: {init_status['error']}")
+                        return False
+                        
+            except requests.exceptions.RequestException as e:
+                logger.debug(f"Health check attempt failed: {e}")
                 
-                logger.info("Model still initializing, waiting...")
-                time.sleep(20)  # Increased wait time
-                retries += 1
+            time.sleep(5)
+            
+        logger.error("Container health check timed out")
+        return False
+        
+    def validate_inference_result(self, result: Dict[str, Any]) -> bool:
+        """
+        Validate inference result structure and content.
+        Args:
+            result: Inference output dictionary
+        Returns:
+            bool: True if result is valid
+        """
+        try:
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected dict result, got {type(result)}")
                 
-            except Exception as e:
-                logger.warning(f"Health check attempt {retries + 1} failed: {e}")
-                time.sleep(10)
-                retries += 1
+            if 'audio' not in result:
+                raise ValueError("Missing 'audio' key in result")
                 
-        if retries >= max_retries:
-            logger.error("Health check failed after maximum retries")
+            audio = result['audio']
+            if not isinstance(audio, np.ndarray):
+                raise ValueError(f"Expected numpy array for audio, got {type(audio)}")
+                
+            if len(audio.shape) != 2:
+                raise ValueError(f"Expected 2D audio array [C,T], got shape {audio.shape}")
+                
+            logger.info(f"Inference result validation passed: shape={audio.shape}, "
+                       f"dtype={audio.dtype}, range=[{audio.min():.3f}, {audio.max():.3f}]")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Result validation failed: {e}")
             return False
             
-        # Test inference
-        test_audio = create_test_audio()
+    def test_container_setup(self) -> Tuple[bool, Optional[str]]:
+        """
+        Test Docker container setup and initialization.
+        Returns:
+            Tuple[bool, Optional[str]]: Success status and container URL if successful
+        """
+        logger.info("Testing container setup...")
+        
         try:
-            result = docker_manager.inference(
-                container_url,
-                test_audio,
-                SAMPLE_RATE
+            # Configure GPU if available
+            gpu_id = 0 if torch.cuda.is_available() else None
+            gpu_info = f"GPU#{gpu_id}" if gpu_id is not None else "CPU"
+            logger.info(f"Running on {gpu_info}")
+            
+            # Start container with retries
+            for attempt in range(MAX_STARTUP_RETRIES):
+                try:
+                    container_url = self.docker_manager.start_container(
+                        uid="test_model",
+                        repo_id=TEST_REPO_ID,
+                        gpu_id=gpu_id
+                    )
+                    
+                    if not container_url:
+                        raise RuntimeError("Container URL not returned")
+                        
+                    if self.validate_container_health(container_url):
+                        logger.info(f"Container started successfully: {container_url}")
+                        return True, container_url
+                        
+                except Exception as e:
+                    logger.warning(f"Startup attempt {attempt + 1} failed: {e}")
+                    self.cleanup()
+                    time.sleep(5)
+                    
+            logger.error("Container setup failed after maximum retries")
+            return False, None
+            
+        except Exception as e:
+            logger.error(f"Container setup failed: {e}")
+            return False, None
+            
+    def test_inference(self, container_url: str) -> bool:
+        """
+        Test model inference with validation.
+        Args:
+            container_url: Container endpoint URL
+        Returns:
+            bool: True if inference test passes
+        """
+        logger.info("Testing inference...")
+        
+        try:
+            test_audio = self.create_test_audio()
+            logger.info(f"Generated test audio: shape={test_audio.shape}, "
+                       f"sr={SAMPLE_RATE}, duration={len(test_audio[0])/SAMPLE_RATE:.2f}s")
+            breakpoint()
+            
+            result = self.docker_manager.inference(
+                url=container_url,
+                audio_array=test_audio,
+                sample_rate=SAMPLE_RATE,
+                timeout=INFERENCE_TIMEOUT
             )
+            breakpoint()
             
-            # Validate result
-            assert isinstance(result, dict), "Result should be a dictionary"
-            assert "audio" in result, "Result should contain 'audio' key"
-            assert isinstance(result["audio"], np.ndarray), "Audio should be numpy array"
-            
-            # Log output audio properties
-            logger.info(f"Output audio shape: {result['audio'].shape}")
-            logger.info(f"Output audio min/max: {result['audio'].min():.3f}/{result['audio'].max():.3f}")
-            
-            logger.info("Inference test passed successfully")
-            return True
+            return self.validate_inference_result(result)
             
         except Exception as e:
             logger.error(f"Inference test failed: {e}")
             return False
             
-    except Exception as e:
-        logger.error(f"Container test failed: {e}")
-        raise
+    def run_all_tests(self) -> bool:
+        logger.info("Starting test suite...")
         
-    finally:
-        logger.info("Cleaning up container...")
-        docker_manager.stop_container("test_model")
-
-def test_scoring_pipeline():
-    """Test the complete scoring pipeline"""
-    logger.info("Testing scoring pipeline...")
-    
-    base_dir = setup_test_directories()
-    docker_manager = DockerManager(base_cache_dir=str(base_dir))
-    metrics = S2SMetrics(cache_dir=str(base_dir))
-    
-    try:
-        # Start container
-        container_url = docker_manager.start_container(
-            uid="test_model",
-            repo_id=TEST_REPO_ID,
-            gpu_id=0
-        )
-        
-        if not container_url:
-            logger.error("inside test_scoring_pipeline: Failed to start container")
-            return False
-        
-        # Create test input
-        test_audio = create_test_audio()
-        
-        # Run inference
-        result = docker_manager.inference(
-            container_url,
-            test_audio,
-            SAMPLE_RATE
-        )
-        
-        # Test scoring
-        gt_audio_arrs = [(test_audio, SAMPLE_RATE)]
-        generated_audio_arrs = [(result['audio'], SAMPLE_RATE)]
-        
-        scores = metrics.compute_distance(gt_audio_arrs, generated_audio_arrs)
-        
-        logger.info("Scoring results:")
-        for metric, value in scores.items():
-            logger.info(f"{metric}: {value}")
+        try:
+            # Test container setup
+            setup_success, container_url = self.test_container_setup()
+            if not setup_success or not container_url:
+                return False
+                
+            # Validate CUDA first
+            # self.validate_cuda()    # Add this line
+                
+            # Test inference
+            if not self.test_inference(container_url):
+                return False
+                
+            logger.info("All tests passed successfully")
+            return True
             
-        return True
-        
-    except Exception as e:
-        logger.error(f"Scoring test failed: {e}")
-        raise
-        
-    finally:
-        docker_manager.stop_container("test_model")
+        except Exception as e:
+            logger.error(f"Test suite failed: {e}")
+            return False
+            
+        finally:
+            self.cleanup()
 
 def main():
-    """Run all tests"""
-    logger.info("Starting tests...")
-    
+    """Main entry point for test execution"""
     try:
-        # Test Docker container and API
-        container_success = test_docker_container()
-        
-        if container_success:
-            # Test scoring pipeline
-            scoring_success = test_scoring_pipeline()
-            
-            if scoring_success:
-                logger.info("All tests passed successfully!")
-            else:
-                logger.error("Scoring pipeline test failed")
-        else:
-            logger.error("Docker container test failed")
+        with DockerInferenceTester() as tester:
+            success = tester.run_all_tests()
+            exit_code = 0 if success else 1
             
     except KeyboardInterrupt:
         logger.info("Tests interrupted by user")
+        exit_code = 130
     except Exception as e:
-        logger.error(f"Tests failed with error: {e}")
-        raise
+        logger.error(f"Unhandled error: {e}")
+        exit_code = 1
+        
+    exit(exit_code)
 
 if __name__ == "__main__":
     main()

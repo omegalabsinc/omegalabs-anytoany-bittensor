@@ -86,22 +86,12 @@ class DockerManager:
     def _create_compose_config(
         self, 
         container_name: str, 
-        miner_dir: Path, 
-        repo_id: str, 
+        miner_dir: Path,
+        repo_id: str,
         gpu_id: Optional[int]
     ) -> Dict[str, Any]:
         """
-        Create resource-optimized docker-compose configuration with proper GPU allocation
-        and memory management.
-        
-        Args:
-            container_name: Unique container identifier
-            miner_dir: Source directory containing model files
-            repo_id: HuggingFace repository identifier
-            gpu_id: Optional GPU device index for CUDA acceleration
-            
-        Returns:
-            Dict[str, Any]: Composable docker configuration
+        Create resource-optimized docker-compose configuration with proper GPU allocation.
         """
         compose_config = {
             'version': '3',
@@ -115,36 +105,33 @@ class DockerManager:
                     'container_name': container_name,
                     'ports': ['8000:8000'],
                     'volumes': [
-                        f'{str(miner_dir)}:/app/src:ro'  # Unified source mount
+                        f'{str(miner_dir)}:/app/src:ro'  
                     ],
                     'environment': [
                         'NVIDIA_VISIBLE_DEVICES=all',
-                        'NVIDIA_DRIVER_CAPABILITIES=compute,utility',
+                        'NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics',  # Added graphics
                         'PYTHONUNBUFFERED=1',
                         f'MODEL_ID={repo_id}',
                         f'REPO_ID={repo_id}'
                     ],
                     'deploy': {
                         'resources': {
-                            'limits': {
-                                'cpus': '4.0',
-                                'memory': '8G'
+                            'reservations': {  # Changed from limits to reservations
+                                'devices': [{
+                                    'driver': 'nvidia',
+                                    'count': 'all',
+                                    'capabilities': ['gpu', 'utility', 'compute']
+                                }]
                             }
                         }
                     },
+                    'runtime': 'nvidia',  # Added explicit nvidia runtime
                     'ulimits': {
                         'memlock': -1,
                         'stack': 67108864
                     },
                     'shm_size': '2gb',
-                    'restart': 'unless-stopped',
-                    'healthcheck': {
-                        'test': ['CMD', 'curl', '-f', 'http://localhost:8000/api/v1/health'],
-                        'interval': '10s',
-                        'timeout': '5s',
-                        'retries': 3,
-                        'start_period': '20s'
-                    }
+                    'restart': 'unless-stopped'
                 }
             }
         }
@@ -154,24 +141,11 @@ class DockerManager:
             compose_config['services'][container_name]['environment'].append(
                 f'CUDA_VISIBLE_DEVICES={gpu_id}'
             )
-            # Extend deploy config with GPU specifications
-            compose_config['services'][container_name]['deploy']['resources']['reservations'] = {
-                'devices': [{
-                    'driver': 'nvidia',
-                    'count': 'all',
-                    'capabilities': ['gpu', 'utility', 'compute']
-                }]
-            }
-        else:
-            # CPU-only optimizations
-            compose_config['services'][container_name]['deploy']['resources']['limits']['cpus'] = '8.0'
-            compose_config['services'][container_name]['deploy']['resources']['limits']['memory'] = '12G'
 
         return compose_config
+    
     def start_container(self, uid: str, repo_id: str, gpu_id: Optional[int] = None) -> str:
-        """
-        Start a container with proper cache directory setup.
-        """
+        """Start a container with proper GPU configuration."""
         container_name = f"miner_{uid}"
         
         try:
@@ -194,11 +168,6 @@ class DockerManager:
             # Download miner files
             miner_dir = self._download_miner_files(repo_id, uid)
             
-            # Verify Dockerfile exists
-            dockerfile_path = miner_dir / "Dockerfile"
-            if not dockerfile_path.exists():
-                raise FileNotFoundError(f"Dockerfile not found at {dockerfile_path}")
-                
             # Create compose config with updated paths
             compose_config = self._create_compose_config(
                 container_name=container_name,
@@ -212,35 +181,43 @@ class DockerManager:
             with open(compose_file, 'w') as f:
                 yaml.safe_dump(compose_config, f)
 
-            # Build and start container
-            logger.info(f"inside docker_manager: Building container image: {container_name}")
+            # Build and start container with GPU support
+            logger.info(f"Building container image: {container_name}")
             image, build_logs = self.client.images.build(
                 path=str(miner_dir),
-                dockerfile=str(dockerfile_path),
+                dockerfile=str(miner_dir / "Dockerfile"),
                 tag=f"{container_name}:latest",
                 rm=True
             )
             
-            logger.info(f"inside docker_manager: Starting container: {container_name}")
+            logger.info(f"Starting container: {container_name}")
             container = self.client.containers.run(
                 image.id,
                 name=container_name,
                 detach=True,
                 ports={'8000/tcp': 8000},
                 environment={
-                    'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "",
+                    'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
                     'MODEL_PATH': '/app/cache',
                     'HF_HOME': '/app/cache',
                     'PYTHONUNBUFFERED': '1',
                     'MODEL_ID': repo_id,
-                    'REPO_ID': repo_id
+                    'REPO_ID': repo_id,
+                    'NVIDIA_VISIBLE_DEVICES': 'all',
+                    'NVIDIA_DRIVER_CAPABILITIES': 'compute,utility,graphics'
                 },
                 volumes={
                     str(miner_dir): {'bind': '/app/src', 'mode': 'ro'},
                     str(self.base_cache_dir): {'bind': '/app/cache', 'mode': 'rw'}
-                }
+                },
+                runtime='nvidia',  # Explicitly use nvidia runtime
+                device_requests=[  # Add explicit GPU device request
+                    docker.types.DeviceRequest(
+                        count=-1,  # Use all available GPUs
+                        capabilities=[['gpu', 'utility', 'compute']]
+                    )
+                ]
             )
-            # breakpoint()
             
             # Wait for container to be healthy
             self._wait_for_container(container)

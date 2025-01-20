@@ -56,6 +56,7 @@ test_health() {
 # Function to test inference endpoint
 test_inference() {
     echo
+    start_time=$(date +%s)
     echo "Testing inference endpoint..."
     local audio_data=$(generate_test_audio)
     
@@ -68,6 +69,9 @@ test_inference() {
             echo "Inference request failed"
             exit 1
         }
+    end_time=$(date +%s)
+    duration=$((end_time - start_time))
+    echo "Inference request completed in ${duration} seconds"
 }
 
 main() {
