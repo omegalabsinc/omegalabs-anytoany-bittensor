@@ -1,4 +1,4 @@
-import os
+import os; os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 from datasets import load_dataset, Audio, DownloadConfig
 import huggingface_hub
 from tempfile import TemporaryDirectory
@@ -14,8 +14,6 @@ import bittensor as bt
 from pathlib import Path
 from neurons.docker_manager import DockerManager
 from evaluation.S2S.distance import S2SMetrics
-
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
 HF_DATASET = "omegalabsinc/omega-voice"
@@ -88,7 +86,6 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
     
     # Initialize Docker manager
     docker_manager = DockerManager(base_cache_dir=local_dir)
-    
     try:
         # Start Docker container for the model
         container_url = docker_manager.start_container(
