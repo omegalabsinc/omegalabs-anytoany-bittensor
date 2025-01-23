@@ -19,7 +19,7 @@ from evaluation.S2S.distance import S2SMetrics
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
 MIN_AGE = 8 * 60 * 60  # 8 hours
-MAX_FILES = 8
+MAX_FILES = 2
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
@@ -152,7 +152,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
 
             # Perform inference using Docker container
             try:
-                result = docker_manager.inference(
+                result = docker_manager.inference_v2v(
                     url=container_url,
                     audio_array=diar_sample,
                     sample_rate=sample_rate

@@ -10,7 +10,7 @@ from pathlib import Path
 import huggingface_hub
 import yaml
 import shutil
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from docker.models.containers import Container
 
 logging.basicConfig(level=logging.INFO)
@@ -39,6 +39,7 @@ class DockerManager:
         
         if cleanup_on_init:
             self.cleanup_docker_resources()
+    
     def _download_miner_files(self, repo_id: str, uid: str) -> Path:
         """
         Downloads required files from HuggingFace.
@@ -271,7 +272,7 @@ class DockerManager:
             logger.error(f"inside docker_manager: Failed to cleanup Docker resources: {str(e)}")
             raise
 
-    def inference(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 30) -> Dict[str, Any]:
+    def inference_v2v(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 30) -> Dict[str, Any]:
         """
         Send inference request to container.
         
@@ -319,6 +320,45 @@ class DockerManager:
             logger.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
             raise
     
+
+    def inference_ibllama(self, url: str, video_embed: List[float], timeout: int = 30) -> Dict[str, Any]:
+        """
+        Send inference request to container for IBLlama model.
+        
+        Args:
+            url: Container API URL
+            video_embed: Input video embedding as list of floats
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Dict containing inference results with generated captions
+        """
+        try:
+            # Send request
+            response = requests.post(
+                f"{url}/api/v1/inference",
+                json={
+                    "embedding": video_embed
+                },
+                timeout=timeout
+            )
+            
+            response.raise_for_status()
+            
+            # Parse response
+            result = response.json()
+            
+            return {
+                "captions": result.get("texts", [])
+            }
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Inference request failed: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
+            raise
+
     def _wait_for_container(self, container: Container, timeout: int = 180) -> None:
         """
         Implements a robust health check mechanism for container initialization.

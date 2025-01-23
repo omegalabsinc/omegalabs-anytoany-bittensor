@@ -1,0 +1,237 @@
+import os
+from typing import Optional, Dict, Any
+from pathlib import Path
+import numpy as np
+import time
+import torch
+import ulid
+import huggingface_hub
+from datasets import load_dataset, Dataset, DownloadConfig
+# import bittensor as bt
+
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
+from scoring_utils.ib_wrapper import ImageBind
+
+from neurons.docker_manager import DockerManager
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+# Constants
+HF_DATASET = "omegalabsinc/omega-multimodal"
+DATA_FILES_PREFIX = "default/train/"
+MIN_AGE = 20 * 60 * 60  # 20 hours
+MAX_FILES = 1
+MODEL_FILE_PREFIX = "meta_model"
+
+
+
+class IBModel:
+    def __init__(self):
+        self.embed_model = ImageBind(v2=True)
+
+    def embed_text(self, text):
+        return self.embed_model.embed_text(text)
+
+
+def get_timestamp_from_filename(filename: str):
+    """Extract timestamp from filename using ULID."""
+    return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
+
+def pull_latest_dataset() -> Optional[Dataset]:
+    """Pull latest dataset from HuggingFace."""
+    try:
+        omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
+        recent_files = [
+            f.rfilename
+            for f in omega_ds_files if
+            f.rfilename.startswith(DATA_FILES_PREFIX) and
+            time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
+        ][:MAX_FILES]
+
+        if len(recent_files) == 0:
+            return None
+
+        download_config = DownloadConfig(download_desc="Downloading Omega Multimodal Dataset")
+        temp_dir = './data_cache'
+        os.makedirs(temp_dir, exist_ok=True)
+        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
+        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+    except Exception as e:
+        logging.error(f"Error pulling dataset: {str(e)}")
+        return None
+    return omega_dataset
+
+def cleanup_gpu_memory():
+    """Clean up GPU memory."""
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+
+def log_gpu_memory(msg=''):
+    """Log GPU memory usage."""
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    logging.info(f"GPU-MEM {msg} Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
+
+def verify_hotkey(hf_repo_id: str, local_dir: str, hotkey: str) -> bool:
+    """Verify hotkey matches the one in the repository."""
+    try:
+        target_file_path = huggingface_hub.hf_hub_download(
+            repo_id=hf_repo_id,
+            filename="hotkey.txt",
+            local_dir=Path(local_dir) / hf_repo_id
+        )
+        with open(target_file_path, 'r') as file:
+            hotkey_contents = file.read()
+        if hotkey_contents != hotkey:
+            logging.warning("Hotkey mismatch. Returning score of 0.")
+            return False
+        return True
+    except huggingface_hub.utils._errors.EntryNotFoundError:
+        logging.info("No hotkey file found in repository")
+        return True
+    except Exception as e:
+        logging.error(f"Error reading hotkey file: {str(e)}")
+        return False
+
+def compute_model_score(
+    hf_repo_id: str,
+    local_dir: str,
+    mini_batch: Dataset,
+    hotkey: Optional[str] = None,
+    block: Optional[int] = None,
+    model_tracker: Any = None,
+    device: str = 'cuda'
+) -> float:
+    """
+    Compute model score using Docker-based inference.
+    
+    Args:
+        hf_repo_id: HuggingFace repository ID
+        local_dir: Local directory for caching
+        mini_batch: Dataset batch to process
+        hotkey: Optional hotkey to verify
+        block: Optional block number
+        model_tracker: Optional model tracker
+        device: Device to use for computation
+    
+    Returns:
+        float: Computed score
+    """
+    cleanup_gpu_memory()
+    log_gpu_memory('before container start')
+
+    embed_model = IBModel()
+
+    # Initialize Docker manager
+    docker_manager = DockerManager(base_cache_dir=local_dir)
+
+    try:
+        # Start Docker container
+        container_url = docker_manager.start_container(
+            uid=f"{int(time.time())}",
+            repo_id=hf_repo_id,
+            gpu_id=0 if device == 'cuda' else None
+        )
+
+        # Verify hotkey if provided
+        if hotkey and not verify_hotkey(hf_repo_id, local_dir, hotkey):
+            return 0
+
+        log_gpu_memory('after container start')
+
+        # Process batch and compute scores
+        similarities = []
+        batch_size = 4  # Process one at a time since server expects single embeddings
+        print("len(mini_batch['video_embed'])", len(mini_batch["video_embed"]))
+
+        for idx in range(0, len(mini_batch["video_embed"]), batch_size):
+            print("idx", idx)
+            video_embed = torch.tensor(mini_batch["video_embed"][idx:idx+batch_size])
+            actual_caption = mini_batch["description"][idx:idx+batch_size]
+            print("video_embed", video_embed.shape)
+            
+            # Perform inference using Docker container
+            try:
+                # Convert tensor batch to list of float lists
+                video_embed_list = video_embed.flatten().tolist()
+                
+
+                # Get generated captions from Docker container
+                result = docker_manager.inference(
+                    url=container_url,
+                    video_embed=video_embed_list
+                )
+                
+                generated_caption = result.get('captions', [])
+                
+                if not generated_caption:
+                    continue
+
+                # Get text embeddings for similarity computation
+                text_embeddings = embed_model.embed_text(
+                    text=generated_caption + actual_caption
+                )
+                print("text embedding", text_embeddings.shape)
+                
+                if text_embeddings is None:
+                    continue
+
+                # Compute similarity between generated and actual captions
+                text_similarity = torch.nn.functional.cosine_similarity(
+                    text_embeddings[0:1],  # First embedding (generated)
+                    text_embeddings[1:],   # Second embedding (actual)
+                    dim=-1
+                )
+                # print("text_similarity", text_similarity)
+                similarities.extend(text_similarity.tolist())
+
+            except Exception as e:
+                logging.error(f"Error during inference: {str(e)}")
+                continue
+
+        mean_similarity = torch.tensor(similarities).mean().item() if similarities else 0
+        logging.info(f"Scoring {hf_repo_id} complete: {mean_similarity:0.5f}")
+
+        return mean_similarity
+
+    except Exception as e:
+        logging.error(f"Error in compute_model_score: {str(e)}")
+        return 0
+
+    finally:
+        # Cleanup
+        try:
+            docker_manager.cleanup_docker_resources()
+        except Exception as e:
+            logging.error(f"Error cleaning up Docker resources: {str(e)}")
+        cleanup_gpu_memory()
+        log_gpu_memory('after cleanup')
+
+if __name__ == "__main__":
+    # Example usage
+    for epoch in range(1):
+        mini_batch = pull_latest_dataset()
+
+        if mini_batch is None:
+            logging.error("Failed to pull dataset")
+            continue
+
+        for hf_repo_id in ["tezuesh/IBLlama_v1"]:
+            start_time = time.time()
+            local_dir = './model_cache'
+            os.makedirs(local_dir, exist_ok=True)
+            score = compute_model_score(
+                hf_repo_id=hf_repo_id,
+                mini_batch=mini_batch,
+                local_dir=local_dir,
+                hotkey=None,
+                block=1,
+                model_tracker=None
+            )
+            
+            end_time = time.time()
+            logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
+            logging.info(f"Score: {score}")
