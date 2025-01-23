@@ -25,6 +25,11 @@ class ChainModelMetadataStore(ModelMetadataStore):
         )
         self.subnet_uid = subnet_uid
 
+        # this is a hacky way to prime the get_metadata function
+        SN21_OWNER_KEY = "5GsHpHeCGhxstoEEZTR64VUashnDP4n7ir7LbNdRfXpkMU7R"
+        metadata = bt.extrinsics_subpackage.serving.get_metadata(self.subtensor, self.subnet_uid, SN21_OWNER_KEY)
+        bt.logging.debug(f"primed get_metadata call successfully: metadata={metadata} (ok to be None)")
+
     async def store_model_metadata(self, hotkey: str, model_id: ModelId):
         """Stores model metadata on this subnet for a specific wallet."""
         if self.wallet is None:
@@ -44,7 +49,7 @@ class ChainModelMetadataStore(ModelMetadataStore):
 
         # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
         partial = functools.partial(
-            bt.extrinsics.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
+            bt.extrinsics_subpackage.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
         )
 
         metadata = utils.run_in_subprocess(partial, 60)

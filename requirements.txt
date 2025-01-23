@@ -1,4 +1,4 @@
-bittensor==6.9.4
+bittensor[torch]==8.5.1
 transformers==4.41.0
 torch==2.3.0
 pandas==2.2.2
@@ -20,8 +20,8 @@ ulid-py==1.1.0
 imagebind @ git+https://github.com/omegalabsinc/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
 llama3 @ git+https://github.com/meta-llama/llama3.git@af6eedf7042fb51d00b2b26d8ef1ceaab73e1670
 pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@28fe037d212663c6a24f373b94cc5d478c8c1a1d
-wandb==0.17.1
-numpy==1.26.4
+wandb==0.19.1
+numpy==2.0.2
 SQLAlchemy
 torchaudio==2.3.0
 jiwer==3.0.5
@@ -31,6 +31,7 @@ scikit-learn==1.5.2
 torch-audiomentations==0.11.1
 pydub==0.25.1
 huggingface-hub==0.24.0
+huggingface_hub[hf_transfer]
 librosa==0.10.2.post1
 asteroid-filterbanks==0.4.0
 torchmetrics==1.6.0

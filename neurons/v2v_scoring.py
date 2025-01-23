@@ -113,7 +113,7 @@ def load_ckpt_from_hf(model_id: str, hf_repo_id: str, local_dir: str, device: st
     try:
         target_file_path = hf_api.hf_hub_download(repo_id=hf_repo_id, filename=target_file, local_dir=repo_dir)
         with open(target_file_path, 'r') as file:
-            target_file_contents = file.read()
+            target_file_contents = file.read().strip()
     except huggingface_hub.utils._errors.EntryNotFoundError:
         print(f"Warning: File '{target_file}' not found in the repository.")
     except Exception as e:
@@ -144,9 +144,9 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                 path
             )
             if is_model_unique:
-                bt.logging.info(f"Model with hash {model_hash} on block {block} is unique.")
+                bt.logging.info(f"Model {model_id} with hash {model_hash} on block {block} is unique.")
             else:
-                bt.logging.warning(f"*** Model with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
+                bt.logging.warning(f"*** Model {model_id} with hash {model_hash} on block {block} is not unique. Returning score of 0. ***")
                 cleanup_gpu_memory()
                 log_gpu_memory('after model clean-up')
                 return 0

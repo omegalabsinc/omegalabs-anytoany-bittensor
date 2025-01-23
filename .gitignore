@@ -168,3 +168,5 @@ cython_debug/
 Thumbs.db
 .vscode/
 logs/
+
+scores*.json
