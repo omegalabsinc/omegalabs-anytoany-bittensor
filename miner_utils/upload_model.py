@@ -119,6 +119,8 @@ async def main(config: bt.config):
         name=repo_name,
         epoch=config.epoch,
         competition_id=config.competition_id,
+        commit="",
+        hash="",
     )
 
     model = Model(id=model_id, local_repo_dir=config.model_dir)
