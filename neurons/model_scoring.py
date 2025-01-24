@@ -15,11 +15,11 @@ import bittensor as bt
 
 from tune_recipes.gen import InferenceRecipe
 from models.imagebind_wrapper import ImageBind
+from constants import O1_MIN_AGE
 
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 4 * 60 * 60  # 4 hours 
 MAX_FILES = 8
 MODEL_FILE_PREFIX = "meta_model"
 CONFIG_FILE = "training_config.yml"
@@ -35,7 +35,7 @@ def pull_latest_omega_dataset() -> Optional[Dataset]:
         f.rfilename
         for f in omega_ds_files if
         f.rfilename.startswith(DATA_FILES_PREFIX) and 
-        time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
+        time.time() - get_timestamp_from_filename(f.rfilename) < O1_MIN_AGE
     ][:MAX_FILES]
     
     if len(recent_files) == 0:

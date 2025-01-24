@@ -55,3 +55,11 @@ alpha = 0.9
 temperature = 0.08
 # validator score boosting for earlier models.
 timestamp_epsilon = 0.01
+
+# ---------------------------------
+# Model scoring parameters.
+# ---------------------------------
+
+O1_MIN_AGE = 4 * 60 * 60  # 4 hours
+V2V_MIN_AGE = 4 * 60 * 60  # 4 hours
+MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes

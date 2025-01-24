@@ -184,12 +184,14 @@ class DockerManager:
 
             # Build and start container with GPU support
             logger.info(f"Building container image: {container_name}")
+            start = time.time()
             image, build_logs = self.client.images.build(
                 path=str(miner_dir),
                 dockerfile=str(miner_dir / "Dockerfile"),
                 tag=f"{container_name}:latest",
                 rm=True
             )
+            logger.info(f"Finished building image for {container_name} in {time.time() - start} seconds")
             
             logger.info(f"Starting container: {container_name}")
             container = self.client.containers.run(

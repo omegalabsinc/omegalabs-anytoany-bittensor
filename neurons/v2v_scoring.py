@@ -21,10 +21,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from models.S2S import inference as s2s_inference
 from evaluation.S2S.distance import S2SMetrics
+from constants import V2V_MIN_AGE
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 8 * 60 * 60  # 8 hours
 MAX_FILES = 8
 
 
@@ -38,7 +38,7 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
         f.rfilename
         for f in omega_ds_files if
         f.rfilename.startswith(DATA_FILES_PREFIX) and
-        time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
+        time.time() - get_timestamp_from_filename(f.rfilename) < V2V_MIN_AGE
     ][:MAX_FILES]
 
     download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")

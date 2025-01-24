@@ -1,20 +1,22 @@
-from neurons.validator import Validator
 from typing import Annotated, Optional
-from fastapi import FastAPI, HTTPException, Depends, Path
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.security import HTTPBasicCredentials, HTTPBasic
 from starlette import status
 from substrateinterface import Keypair
-import bittensor as bt
 import uvicorn
 import argparse
 import asyncio
 from datetime import datetime
+from neurons.scoring_manager import ScoringManager, ModelScoreTaskData, ScoreModelInputs, ModelScoreStatus
+
 
 async def main():
-    config = Validator.config()
-    wallet = bt.wallet(config=config)
-    VALI_HOTKEY = wallet.hotkey.ss58_address
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vali_hotkey", type=str, required=True)
+    parser.add_argument("--port", type=int, default=8000)
+    args = parser.parse_args()
 
+    scoring_manager = ScoringManager()
     app = FastAPI()
     security = HTTPBasic()
 
@@ -29,7 +31,7 @@ async def main():
             )
 
         # Only allow configured validator hotkey
-        if credentials.username != VALI_HOTKEY:
+        if credentials.username != args.vali_hotkey:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized validator",
@@ -41,36 +43,38 @@ async def main():
     async def root():
         return { "now": datetime.now().isoformat() }
 
-    @app.post("/api/add_to_scoring_queue")
-    async def add_to_scoring_queue(
+    @app.post("/api/start_model_scoring")
+    async def start_model_scoring(
+        request: ScoreModelInputs,
+        background_tasks: BackgroundTasks,
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
     ):
-        """Add model to scoring queue"""
-        # TODO: Implement queue logic
+        current_task = scoring_manager.get_current_task()
+        if current_task and current_task.status == ModelScoreStatus.SCORING:
+            return {
+                "success": False,
+                "message": f"Model {current_task.hf_repo_id} is already being scored"
+            }
+
+        background_tasks.add_task(scoring_manager.start_scoring, request)
+
         return {
             "success": True,
-            "message": f"Added to scoring queue"
+            "message": f"Added {request.hf_repo_id} to scoring queue"
         }
 
-    @app.get("/api/check_scoring_status/{model_id}")
+    @app.get("/api/check_scoring_status")
     async def check_scoring_status(
-        model_id: str = Path(...),
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
-    ):
-        """Check scoring status for a model"""
-        # TODO: Implement status check logic
-        return {
-            "success": True,
-            "model_id": model_id,
-            "status": "pending"
-        }
+    ) -> Optional[ModelScoreTaskData]:
+        return scoring_manager.get_current_task()
 
     await asyncio.gather(
         asyncio.to_thread(
             uvicorn.run,
             app,
             host="0.0.0.0", 
-            port=8000
+            port=args.port
         )
     )
 

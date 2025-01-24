@@ -201,34 +201,32 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
         cleanup_gpu_memory()
         log_gpu_memory('after cleanup')
 
-if __name__ == "__main__":
-    from utilities.temp_dir_cache import TempDirCache
-    temp_dir_cache = TempDirCache(10)
+def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str):
+    start_time = time.time()
+    diar_time = time.time()
     
+    mini_batch = pull_latest_diarization_dataset()
+    bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
+    
+    local_dir = './model_cache'
+    
+    vals = compute_s2s_metrics(
+        model_id="moshi",
+        hf_repo_id=hf_repo_id,
+        mini_batch=mini_batch,
+        local_dir=local_dir,
+        hotkey=hotkey,
+        block=block,
+        model_tracker=model_tracker
+    )
+    
+    end_time = time.time()
+    bt.logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
+    bt.logging.info(f"Combined score: {vals}")
+
+
+if __name__ == "__main__":
     for epoch in range(2):
         for hf_repo_id in ["tezuesh/moshi_general", "tezuesh/moshi_general"]:
-            start_time = time.time()
-            diar_time = time.time()
-            
-            mini_batch = pull_latest_diarization_dataset()
-            bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
-            
-            local_dir = './model_cache'
-            hotkey = None
-            block = 1
-            model_tracker = None
-            
-            vals = compute_s2s_metrics(
-                model_id="moshi",
-                hf_repo_id=hf_repo_id,
-                mini_batch=mini_batch,
-                local_dir=local_dir,
-                hotkey=hotkey,
-                block=block,
-                model_tracker=model_tracker
-            )
-            
-            end_time = time.time()
-            bt.logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
-            bt.logging.info(f"Combined score: {vals}")
+            run_v2v_scoring(hf_repo_id)
             exit(0)
