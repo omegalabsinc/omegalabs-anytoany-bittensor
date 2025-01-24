@@ -9,7 +9,7 @@ import huggingface_hub
 from datasets import load_dataset, Dataset, DownloadConfig
 # import bittensor as bt
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+# os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 from scoring_utils.ib_wrapper import ImageBind
 
@@ -160,7 +160,7 @@ def compute_model_score(
                 
 
                 # Get generated captions from Docker container
-                result = docker_manager.inference(
+                result = docker_manager.inference_ibllama(
                     url=container_url,
                     video_embed=video_embed_list
                 )
