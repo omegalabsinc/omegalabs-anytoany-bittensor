@@ -201,14 +201,12 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
         cleanup_gpu_memory()
         log_gpu_memory('after cleanup')
 
-def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str):
+def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str, local_dir: str):
     start_time = time.time()
     diar_time = time.time()
     
     mini_batch = pull_latest_diarization_dataset()
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
-    
-    local_dir = './model_cache'
     
     vals = compute_s2s_metrics(
         model_id="moshi",
@@ -223,6 +221,7 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
     end_time = time.time()
     bt.logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
     bt.logging.info(f"Combined score: {vals}")
+    return vals
 
 
 if __name__ == "__main__":

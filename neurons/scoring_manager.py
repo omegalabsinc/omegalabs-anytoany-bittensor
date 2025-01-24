@@ -17,6 +17,11 @@ from pydantic import BaseModel
 
 from model.model_tracker import ModelTracker
 from constants import MODEL_EVAL_TIMEOUT
+from neurons.docker_inference_v2v import run_v2v_scoring
+from neurons.docker_model_scoring import run_o1_scoring
+from utilities.temp_dir_cache import TempDirCache
+from utilities.gpu import get_gpu_memory
+
 # from neurons.model_scoring import (
 #     get_model_score,
 #     pull_latest_omega_dataset,
@@ -49,61 +54,36 @@ class ModelScoreTaskData(BaseModel):
 class ScoringManager:
     def __init__(self):
         self.current_task: Optional[ModelScoreTaskData] = None
-        # self.model_tracker = ModelTracker()
+        self.model_tracker = ModelTracker()
         bt.logging.error("Note to self: ModelTracker is not implemented yet")
 
-        # try:
-        #     # early exit if GPU memory insufficient
-        #     total_gb, used_gb, avail_gb = get_gpu_memory()
-        #     if avail_gb < GPU_MEM_GB_REQD:
-        #         m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
-        #         bt.logging.error(m)
-        #         raise RuntimeError(m)
-        # except Exception as e:
-        #     bt.logging.error(f"Failed to get GPU memory: {e}: {traceback.format_exc()}")
+        self.temp_dir_cache = TempDirCache(self.config.cached_models)
+
+        try:
+            # early exit if GPU memory insufficient
+            total_gb, used_gb, avail_gb = get_gpu_memory()
+            if avail_gb < GPU_MEM_GB_REQD:
+                m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
+                bt.logging.error(m)
+                raise RuntimeError(m)
+        except Exception as e:
+            bt.logging.error(f"Failed to get GPU memory: {e}: {traceback.format_exc()}")
         
         # TODO: add a background WandB reloading task
 
     def _score_model(self, inputs: ScoreModelInputs):
         """ Actual model scoring logic """
         start_time = time.time()
-        while time.time() - start_time < 60:
-            print(f"Running score for {inputs}")
-            time.sleep(30)
-        return 0.95
-        # if inputs.competition_id == "o1":
-        #     eval_data = pull_latest_omega_dataset()
-        #     if eval_data is None:
-        #         bt.logging.warning(
-        #             f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
-        #         )
-        #         time.sleep(MINS_TO_SLEEP * 60)
-        #     score = get_model_score(
-        #         inputs.hf_repo_id,
-        #         mini_batch=eval_data,
-        #         local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
-        #         hotkey=inputs.hotkey,
-        #         block=inputs.block,
-        #         model_tracker=self.model_tracker
-        #     )
-        # elif inputs.competition_id == "v1":
-        #     eval_data_v2v = pull_latest_diarization_dataset()
-        #     if eval_data_v2v is None:
-        #         bt.logging.warning(
-        #             f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
-        #         )
-        #         time.sleep(MINS_TO_SLEEP * 60)
-        #     score = compute_s2s_metrics(
-        #         model_id="moshi", # update this to the model id as we support more models.
-        #         hf_repo_id=inputs.hf_repo_id,
-        #         mini_batch=eval_data_v2v,
-        #         local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
-        #         hotkey=inputs.hotkey,
-        #         block=inputs.block,
-        #         model_tracker=self.model_tracker
-        #     )
-        # bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
-        # return score
+        fn_to_call = run_o1_scoring if inputs.competition_id == "o1" else run_v2v_scoring
+        score = fn_to_call(
+            hf_repo_id=inputs.hf_repo_id,
+            hotkey=inputs.hotkey,
+            block=inputs.block,
+            model_tracker=self.model_tracker,
+            local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
+        )
+        bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
+        return score
 
     def _score_model_wrapped(self, inputs: ScoreModelInputs, result_queue: Queue):
         """ Wraps the scoring process in a queue to get the result """
@@ -148,7 +128,7 @@ class ScoringManager:
                 self.current_task.score = None
                 return
 
-            self.current_task.status = ModelScoreStatus.COMPLETED
+            self.current_task.status = ModelScoreStatus.COMPLETED if result is not None else ModelScoreStatus.FAILED
             self.current_task.score = result
 
         else:

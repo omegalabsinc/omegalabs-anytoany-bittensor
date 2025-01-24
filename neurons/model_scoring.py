@@ -3,7 +3,6 @@ from tempfile import TemporaryDirectory
 import time
 from typing import List, Optional
 from pathlib import Path
-import subprocess
 
 import torch
 import ulid
@@ -16,7 +15,7 @@ import bittensor as bt
 from tune_recipes.gen import InferenceRecipe
 from models.imagebind_wrapper import ImageBind
 from constants import O1_MIN_AGE
-
+from utilities.gpu import cleanup_gpu_memory, log_gpu_memory
 
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
@@ -85,25 +84,6 @@ def load_ckpt_from_hf(hf_repo_id: str, local_dir: str, target_file: str = "hotke
     inference_recipe = InferenceRecipe(train_cfg)
     inference_recipe.setup(cfg=train_cfg)
     return inference_recipe, train_cfg, target_file_contents
-
-
-def get_gpu_memory():
-    # system-level
-    output = subprocess.check_output(['nvidia-smi', '--query-gpu=memory.total,memory.used', '--format=csv,nounits,noheader'])
-    total_gb, used_gb = map(lambda s: int(s) / 1e3, output.decode('utf-8').split(','))
-    return total_gb, used_gb, total_gb - used_gb
-
-def log_gpu_memory(msg=''):
-    # process-level
-    t = torch.cuda.get_device_properties(0).total_memory
-    r = torch.cuda.memory_reserved(0)
-    a = torch.cuda.memory_allocated(0)
-    bt.logging.info(f"GPU-MEM {msg} Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
-
-def cleanup_gpu_memory():
-    torch.cuda.empty_cache()
-    torch.cuda.ipc_collect()
-
 
 def get_model_score(hf_repo_id, mini_batch, local_dir, hotkey, block, model_tracker):
     cleanup_gpu_memory()

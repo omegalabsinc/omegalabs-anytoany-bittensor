@@ -1,4 +1,4 @@
-import os
+import os; os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 from typing import Optional, Dict, Any
 from pathlib import Path
 import numpy as np
@@ -7,16 +7,12 @@ import torch
 import ulid
 import huggingface_hub
 from datasets import load_dataset, Dataset, DownloadConfig
-# import bittensor as bt
-
-# os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+import bittensor as bt
 
 from scoring_utils.ib_wrapper import ImageBind
 
 from neurons.docker_manager import DockerManager
-import logging
-
-logging.basicConfig(level=logging.INFO)
+from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
 
 # Constants
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -24,7 +20,6 @@ DATA_FILES_PREFIX = "default/train/"
 MIN_AGE = 20 * 60 * 60  # 20 hours
 MAX_FILES = 1
 MODEL_FILE_PREFIX = "meta_model"
-
 
 
 class IBModel:
@@ -59,21 +54,9 @@ def pull_latest_dataset() -> Optional[Dataset]:
         omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
         omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
     except Exception as e:
-        logging.error(f"Error pulling dataset: {str(e)}")
+        bt.logging.error(f"Error pulling dataset: {str(e)}")
         return None
     return omega_dataset
-
-def cleanup_gpu_memory():
-    """Clean up GPU memory."""
-    torch.cuda.empty_cache()
-    torch.cuda.ipc_collect()
-
-def log_gpu_memory(msg=''):
-    """Log GPU memory usage."""
-    t = torch.cuda.get_device_properties(0).total_memory
-    r = torch.cuda.memory_reserved(0)
-    a = torch.cuda.memory_allocated(0)
-    logging.info(f"GPU-MEM {msg} Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
 
 def verify_hotkey(hf_repo_id: str, local_dir: str, hotkey: str) -> bool:
     """Verify hotkey matches the one in the repository."""
@@ -86,14 +69,14 @@ def verify_hotkey(hf_repo_id: str, local_dir: str, hotkey: str) -> bool:
         with open(target_file_path, 'r') as file:
             hotkey_contents = file.read()
         if hotkey_contents != hotkey:
-            logging.warning("Hotkey mismatch. Returning score of 0.")
+            bt.logging.warning("Hotkey mismatch. Returning score of 0.")
             return False
         return True
     except huggingface_hub.utils._errors.EntryNotFoundError:
-        logging.info("No hotkey file found in repository")
+        bt.logging.info("No hotkey file found in repository")
         return True
     except Exception as e:
-        logging.error(f"Error reading hotkey file: {str(e)}")
+        bt.logging.error(f"Error reading hotkey file: {str(e)}")
         return False
 
 def compute_model_score(
@@ -189,16 +172,16 @@ def compute_model_score(
                 similarities.extend(text_similarity.tolist())
 
             except Exception as e:
-                logging.error(f"Error during inference: {str(e)}")
+                bt.logging.error(f"Error during inference: {str(e)}")
                 continue
 
         mean_similarity = torch.tensor(similarities).mean().item() if similarities else 0
-        logging.info(f"Scoring {hf_repo_id} complete: {mean_similarity:0.5f}")
+        bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_similarity:0.5f}")
 
         return mean_similarity
 
     except Exception as e:
-        logging.error(f"Error in compute_model_score: {str(e)}")
+        bt.logging.error(f"Error in compute_model_score: {str(e)}")
         return 0
 
     finally:
@@ -206,32 +189,31 @@ def compute_model_score(
         try:
             docker_manager.cleanup_docker_resources()
         except Exception as e:
-            logging.error(f"Error cleaning up Docker resources: {str(e)}")
+            bt.logging.error(f"Error cleaning up Docker resources: {str(e)}")
         cleanup_gpu_memory()
         log_gpu_memory('after cleanup')
 
+def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str, local_dir: str):
+    mini_batch = pull_latest_dataset()
+
+    if mini_batch is None:
+        bt.logging.error("Failed to pull dataset")
+        return
+
+    start_time = time.time()
+    score = compute_model_score(
+        hf_repo_id=hf_repo_id,
+        mini_batch=mini_batch,
+        local_dir=local_dir,
+        hotkey=hotkey,
+        block=block,
+        model_tracker=model_tracker
+    )
+    
+    end_time = time.time()
+    bt.logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
+    bt.logging.info(f"Score: {score}")
+    return score
 if __name__ == "__main__":
     # Example usage
-    for epoch in range(1):
-        mini_batch = pull_latest_dataset()
-
-        if mini_batch is None:
-            logging.error("Failed to pull dataset")
-            continue
-
-        for hf_repo_id in ["tezuesh/IBLlama_v1"]:
-            start_time = time.time()
-            local_dir = './model_cache'
-            os.makedirs(local_dir, exist_ok=True)
-            score = compute_model_score(
-                hf_repo_id=hf_repo_id,
-                mini_batch=mini_batch,
-                local_dir=local_dir,
-                hotkey=None,
-                block=1,
-                model_tracker=None
-            )
-            
-            end_time = time.time()
-            logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
-            logging.info(f"Score: {score}")
+    run_o1_scoring(hf_repo_id="tezuesh/IBLlama_v1", hotkey=None, block=1, model_tracker=None, local_dir="./model_cache")
