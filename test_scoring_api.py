@@ -52,7 +52,7 @@ inputs = ScoreModelInputs(
 # )
 
 status = "scoring"
-# print(requests.post(post_url, auth=HTTPBasicAuth(hotkey, signature), json=json.loads(inputs.model_dump_json())).json())
+print(requests.post(post_url, auth=HTTPBasicAuth(hotkey, signature), json=json.loads(inputs.model_dump_json())).json())
 while status == "scoring":
     response = requests.get(get_url, auth=HTTPBasicAuth(hotkey, signature)).json()
     print(response)
