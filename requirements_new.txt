@@ -13,7 +13,9 @@ transformers==4.46.3
 tqdm==4.67.1
 ulid-py==1.1.0
 uv==0.5.18
-bittensor==8.5.2
+bittensor[torch]==8.5.1
 torch==2.4.1
 pesq==0.0.4
 librosa==0.10.2.post1
+wandb==0.19.1
+python-dotenv==1.0.1

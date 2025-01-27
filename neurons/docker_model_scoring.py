@@ -9,7 +9,7 @@ import huggingface_hub
 from datasets import load_dataset, Dataset, DownloadConfig
 import bittensor as bt
 
-from scoring_utils.ib_wrapper import ImageBind
+from evaluation.VideoCapt.ib_wrapper import ImageBind
 
 from neurons.docker_manager import DockerManager
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory

@@ -196,6 +196,8 @@ class S2SMetrics:
             return 0.0
             
         try:
+            if len(gt_transcript.split(" ")) < len(generated_transcript.split(" ")):
+                gt_transcript, generated_transcript = generated_transcript, gt_transcript
             return 1 - wer(gt_transcript, generated_transcript)
         except Exception as e:
             logger.error(f"WER computation error: {e}")
@@ -208,6 +210,14 @@ class S2SMetrics:
                       sample_rate_generated: int) -> float:
         """Calculate PESQ score"""
         try:
+            # Check for invalid audio data
+            if (np.isnan(gt_audio_arr).any() or 
+                np.isnan(generated_audio_arr).any() or
+                np.all(generated_audio_arr == 0) or
+                np.all(gt_audio_arr == 0)):
+                logger.warning("Invalid audio data detected (NaN or all zeros)")
+                return 0.0
+
             # Convert both to 16kHz mono
             gt_audio = self.convert_audio(gt_audio_arr, sample_rate_gt, 16000, 1)
             gen_audio = self.convert_audio(generated_audio_arr, sample_rate_generated, 16000, 1)
@@ -215,14 +225,23 @@ class S2SMetrics:
             if gen_audio is None or gt_audio is None:
                 return 0.0
 
+            # Normalize audio
+            gt_audio = gt_audio / (np.max(np.abs(gt_audio)) + 1e-6)
+            gen_audio = gen_audio / (np.max(np.abs(gen_audio)) + 1e-6)
+
             # Match lengths
             min_length = min(gt_audio.shape[-1], gen_audio.shape[-1])
             gt_audio = gt_audio[:min_length]
             gen_audio = gen_audio[:min_length]
 
+            # Ensure minimum length for PESQ (at least 32ms at 16kHz = 512 samples)
+            if min_length < 512:
+                logger.warning("Audio too short for PESQ calculation")
+                return 0.0
+
             # Convert to tensors
-            gt_tensor = torch.from_numpy(gt_audio).unsqueeze(0)
-            gen_tensor = torch.from_numpy(gen_audio).unsqueeze(0)
+            gt_tensor = torch.from_numpy(gt_audio).float().unsqueeze(0)
+            gen_tensor = torch.from_numpy(gen_audio).float().unsqueeze(0)
 
             # Calculate scores
             nb_score = (self.nb_pesq(gen_tensor, gt_tensor).clip(-0.5, 4.5) + 0.5) / 5.0

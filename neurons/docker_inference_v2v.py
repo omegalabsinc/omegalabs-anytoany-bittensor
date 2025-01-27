@@ -80,19 +80,27 @@ def cleanup_gpu_memory():
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
 
-def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
+def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
     cleanup_gpu_memory()
     log_gpu_memory('before container start')
     
     # Initialize Docker manager
     docker_manager = DockerManager(base_cache_dir=local_dir)
     try:
+        # Sanitize the repository name for Docker tag
+        # Replace invalid characters and ensure it follows Docker tag naming rules
+        sanitized_name = hf_repo_id.split('/')[-1].lower()
+        sanitized_name = ''.join(c if c.isalnum() else '_' for c in sanitized_name)
+        container_uid = f"{sanitized_name}_{int(time.time())}"
+        
         # Start Docker container for the model
         container_url = docker_manager.start_container(
-            uid=f"{model_id}_{int(time.time())}", 
+            uid=container_uid,
             repo_id=hf_repo_id,
             gpu_id=0 if device == 'cuda' else None
         )
+
+        bt.logging.info(f"i am here inside compute_s2s_metrics {container_uid}, hotkey: {hotkey}")
         # Check hotkey if provided
         if hotkey is not None:
             try:
@@ -168,6 +176,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                     continue
 
                 metrics['total_samples'] += 1
+
                 
                 # Compute metrics using S2SMetrics
                 s2s_metrics = S2SMetrics(cache_dir="./model_cache")
@@ -184,7 +193,7 @@ def compute_s2s_metrics(model_id: str, hf_repo_id: str, local_dir: str, mini_bat
                 continue
 
         mean_score = np.mean(metrics['combined_score'])
-        bt.logging.info(f"Scoring {model_id} {hf_repo_id} complete: {mean_score:0.5f}")
+        bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_score:0.5f}")
         
         return mean_score
         
@@ -209,7 +218,6 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
     
     vals = compute_s2s_metrics(
-        model_id="moshi",
         hf_repo_id=hf_repo_id,
         mini_batch=mini_batch,
         local_dir=local_dir,
@@ -227,5 +235,6 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
 if __name__ == "__main__":
     for epoch in range(2):
         for hf_repo_id in ["tezuesh/moshi_general", "tezuesh/moshi_general"]:
-            run_v2v_scoring(hf_repo_id)
+            vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
+            print(vals)
             exit(0)

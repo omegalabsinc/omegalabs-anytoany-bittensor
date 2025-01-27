@@ -10,7 +10,7 @@ from imagebind.models.multimodal_preprocessors import SimpleTokenizer, TextPrepr
 
 V2_URL = "https://huggingface.co/jondurbin/videobind-v0.2/resolve/main/videobind.pth"
 V2_PATH = "./.checkpoints/videobind-v0.2.pth"
-BPE_PATH = "./scoring_utils/bpe_simple_vocab_16e6.txt.gz"
+BPE_PATH = "./evaluation/VideoCapt/bpe_simple_vocab_16e6.txt.gz"
 TOKENIZER = SimpleTokenizer(bpe_path=BPE_PATH)
 LENGTH_TOKENIZER = SimpleTokenizer(bpe_path=BPE_PATH, context_length=1024)
 TOKEN_CHUNK_SIZE = 74
