@@ -217,10 +217,13 @@ class DockerManager:
     def cleanup_docker_resources(self) -> None:
         """Clean up all Docker resources."""
         try:
+            images_to_clean = []
+
             # Stop all active containers
             for uid in list(self.active_containers.keys()):
+                images_to_clean.append(self.active_containers[uid].image.id)
                 self.stop_container(uid)
-            
+
             # Remove all stopped containers
             containers = self.client.containers.list(all=True)
             for container in containers:
@@ -229,13 +232,19 @@ class DockerManager:
                 except Exception as e:
                     logger.warning(f"inside docker_manager: Failed to remove container {container.name}: {str(e)}")
 
+            for image_id in images_to_clean:
+                try:
+                    self.client.images.remove(image_id, force=True)
+                except Exception as e:
+                    logger.warning(f"inside docker_manager: Failed to remove image {image_id}: {str(e)}")
+
             # Prune resources
             self.client.images.prune()
             self.client.containers.prune()
             self.client.volumes.prune()
-            
+
             logger.info("inside docker_manager: Docker resources cleaned up successfully")
-            
+
         except Exception as e:
             logger.error(f"inside docker_manager: Failed to cleanup Docker resources: {str(e)}")
             raise

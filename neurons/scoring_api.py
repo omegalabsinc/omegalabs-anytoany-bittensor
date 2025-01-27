@@ -5,24 +5,16 @@ from fastapi.security import HTTPBasicCredentials, HTTPBasic
 from starlette import status
 from substrateinterface import Keypair
 import uvicorn
-import argparse
 import asyncio
 from datetime import datetime
-from neurons.scoring_manager import ScoringManager, ModelScoreTaskData, ScoreModelInputs, ModelScoreStatus
+from neurons.scoring_manager import (
+    ScoringManager, ModelScoreTaskData, ScoreModelInputs, ModelScoreStatus, get_scoring_config
+)
 import bittensor as bt
-from constants import SUBNET_UID
 from dotenv import load_dotenv; load_dotenv("vali.env")
 
 async def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--vali_hotkey", type=str)
-    parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--wandb.off", action="store_true")
-    parser.add_argument("--auto_update", action="store_true")
-    parser.add_argument("--netuid", type=int, default=SUBNET_UID, help="The subnet UID.")
-    bt.subtensor.add_args(parser)
-    bt.logging.add_args(parser)
-    config = bt.config(parser)
+    config = get_scoring_config()
     assert config.vali_hotkey, "vali_hotkey is required"
 
     scoring_manager = ScoringManager(config)
@@ -68,7 +60,7 @@ async def main():
         if current_task and current_task.status == ModelScoreStatus.SCORING:
             return {
                 "success": False,
-                "message": f"Model {current_task.hf_repo_id} is already being scored"
+                "message": f"Model {current_task.inputs.hf_repo_id} is already being scored"
             }
 
         background_tasks.add_task(scoring_manager.start_scoring, request)

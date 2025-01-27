@@ -1,4 +1,5 @@
 import os
+import argparse
 from datetime import datetime, timedelta
 from typing import Optional
 from enum import Enum
@@ -17,7 +18,7 @@ from pydantic import BaseModel, computed_field, Field
 import wandb
 
 from model.model_tracker import ModelTracker
-from constants import MODEL_EVAL_TIMEOUT, NUM_CACHED_MODELS
+from constants import MODEL_EVAL_TIMEOUT, NUM_CACHED_MODELS, SUBNET_UID
 from neurons.docker_inference_v2v import run_v2v_scoring
 from neurons.docker_model_scoring import run_o1_scoring
 from utilities.temp_dir_cache import TempDirCache
@@ -47,12 +48,27 @@ class ModelScoreTaskData(BaseModel):
     def runtime_seconds(self) -> float:
         return (datetime.now() - self.started_at).total_seconds()
 
+def get_argparse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--vali_hotkey", type=str)
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--wandb.off", action="store_true")
+    parser.add_argument("--offline", action="store_true", help="Don't connect to metagraph")
+    parser.add_argument("--auto_update", action="store_true")
+    parser.add_argument("--netuid", type=int, default=SUBNET_UID, help="The subnet UID.")
+    bt.subtensor.add_args(parser)
+    bt.logging.add_args(parser)
+    return parser
+
+def get_scoring_config():
+    parser = get_argparse()
+    return bt.config(parser)
+
 class ScoringManager:
     def __init__(self, config):
         self.config = config
         self.current_task: Optional[ModelScoreTaskData] = None
         self.model_tracker = ModelTracker(thread_safe=False)
-        bt.logging.error("Note to self: ModelTracker is not implemented yet")
         self.current_process: Optional[multiprocessing.Process] = None
 
         self.temp_dir_cache = TempDirCache(NUM_CACHED_MODELS)
@@ -72,9 +88,12 @@ class ScoringManager:
         self.update_check_interval = 1800  # 30 minutes
 
         # get UID
-        subtensor = bt.subtensor(network=self.config.subtensor.network)
-        metagraph: bt.metagraph = subtensor.metagraph(self.config.netuid)
-        self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
+        if self.config.offline:
+            self.uid = 0
+        else:
+            subtensor = bt.subtensor(network=self.config.subtensor.network)
+            metagraph: bt.metagraph = subtensor.metagraph(self.config.netuid)
+            self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
 
         # init wandb
         self.wandb_run_start = None
@@ -213,3 +232,27 @@ class ScoringManager:
                 bt.logging.warning("Force killing scoring process...")
                 self.current_process.kill()
                 self.current_process.join(timeout=1)
+
+
+if __name__ == "__main__":
+    parser = get_argparse()
+    parser.add_argument("--hf_repo_id", type=str)
+    parser.add_argument("--competition_id", type=str)
+    parser.add_argument("--block", type=int, default=0)
+    parser.add_argument("--hotkey", type=str)
+    config = bt.config(parser)
+    scoring_manager = ScoringManager(config)
+    scoring_inputs = ScoreModelInputs(
+        hf_repo_id=config.hf_repo_id,
+        competition_id=config.competition_id,
+        hotkey=config.hotkey,
+        block=config.block
+    )
+    scoring_manager.current_task = ModelScoreTaskData(inputs=scoring_inputs)
+    score = scoring_manager._score_model(scoring_inputs)
+    current_task = scoring_manager.get_current_task()
+    current_task.score = score
+    current_task.status = ModelScoreStatus.COMPLETED
+    print(current_task)
+    with open("scoring_task_result.json", "w") as f:
+        f.write(current_task.model_dump_json(indent=4))
