@@ -141,7 +141,6 @@ class DockerManager:
                 user='nobody',
                 security_opt=[
                     'no-new-privileges:true',
-                    'seccomp=default-docker-profile.json'
                 ],
                 cap_drop=['ALL'],
                 mem_limit=self.get_memory_limit(),
