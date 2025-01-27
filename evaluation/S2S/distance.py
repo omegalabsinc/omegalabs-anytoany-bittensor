@@ -196,7 +196,7 @@ class S2SMetrics:
             return 0.0
             
         try:
-            return 1 - wer(gt_transcript, generated_transcript)/max(len(gt_transcript), len(generated_transcript))
+            return 1 - wer(gt_transcript, generated_transcript)
         except Exception as e:
             logger.error(f"WER computation error: {e}")
             return 0.0
