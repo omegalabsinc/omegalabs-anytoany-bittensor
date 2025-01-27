@@ -17,10 +17,6 @@ config = bt.config(parser)
 wallet = bt.wallet(config=config)
 keypair = wallet.hotkey
 
-def hit_api(url: str, data: dict):
-    response = requests.post(url, json=data)
-    return response.json()
-
 if len(sys.argv) < 2:
     print("Please provide the API URL as a command line argument")
     sys.exit(1)

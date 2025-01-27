@@ -13,12 +13,11 @@ from evaluation.VideoCapt.ib_wrapper import ImageBind
 
 from neurons.docker_manager import DockerManager
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
+from constants import MAX_DS_FILES, MIN_AGE
 
 # Constants
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 20 * 60 * 60  # 20 hours
-MAX_FILES = 1
 MODEL_FILE_PREFIX = "meta_model"
 
 
@@ -43,7 +42,7 @@ def pull_latest_dataset() -> Optional[Dataset]:
             for f in omega_ds_files if
             f.rfilename.startswith(DATA_FILES_PREFIX) and
             time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
-        ][:MAX_FILES]
+        ][:MAX_DS_FILES]
 
         if len(recent_files) == 0:
             return None

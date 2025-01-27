@@ -12,9 +12,8 @@ import psutil
 import shutil
 from typing import Optional, Dict, Any, List
 from docker.models.containers import Container
+import bittensor as bt
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 # Enable HF transfer for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
@@ -35,7 +34,7 @@ class DockerManager:
         self.base_cache_dir.mkdir(parents=True, exist_ok=True)
         self.active_containers: Dict[str, Container] = {}
         
-        logger.info(f"Initializing DockerManager with cache directory: {self.base_cache_dir}")
+        bt.logging.info(f"Initializing DockerManager with cache directory: {self.base_cache_dir}")
         
         if cleanup_on_init:
             self.cleanup_docker_resources()
@@ -56,7 +55,7 @@ class DockerManager:
             miner_dir = self.base_cache_dir / repo_name
             miner_dir.mkdir(parents=True, exist_ok=True)
             
-            logger.info(f"Downloading files from {repo_id} to {miner_dir}")
+            bt.logging.info(f"Downloading files from {repo_id} to {miner_dir}")
             
             try:
                 downloaded_path = huggingface_hub.snapshot_download(
@@ -64,15 +63,15 @@ class DockerManager:
                     local_dir=miner_dir,
                     local_dir_use_symlinks=False
                 )
-                logger.info(f"Downloaded files to {downloaded_path}")
+                bt.logging.info(f"Downloaded files to {downloaded_path}")
             except Exception as e:
-                logger.error(f"Failed to download repo: {str(e)}")
+                bt.logging.error(f"Failed to download repo: {str(e)}")
                 raise
                 
             return miner_dir
                 
         except Exception as e:
-            logger.error(f"Failed to download miner files: {str(e)}")
+            bt.logging.error(f"Failed to download miner files: {str(e)}")
             raise
 
     def get_memory_limit(self):
@@ -86,7 +85,7 @@ class DockerManager:
         free_gb = free / (1024 * 1024 * 1024)
         
         if free_gb < required_gb:
-            logger.warning(f"Low disk space ({free_gb:.2f}GB free), cleaning cache directory")
+            bt.logging.warning(f"Low disk space ({free_gb:.2f}GB free), cleaning cache directory")
             shutil.rmtree(str(self.base_cache_dir))
             self.base_cache_dir.mkdir(parents=True, exist_ok=True)
   
@@ -106,7 +105,7 @@ class DockerManager:
             # Remove existing container if any
             try:
                 old_container = self.client.containers.get(container_name)
-                logger.info(f"Removing existing container: {container_name}")
+                bt.logging.info(f"Removing existing container: {container_name}")
                 old_container.remove(force=True)
             except docker.errors.NotFound:
                 pass
@@ -121,7 +120,7 @@ class DockerManager:
                 self.client.networks.create('isolated_network', driver='bridge', internal=True)
             
             # Build and start container with GPU support
-            logger.info(f"Building container image: {container_name}")
+            bt.logging.info(f"Building container image: {container_name}")
             start = time.time()
             dockerfile_path = str(miner_dir / "Dockerfile")
             self._validate_dockerfile(dockerfile_path)
@@ -131,9 +130,9 @@ class DockerManager:
                 tag=f"{container_name}:latest",
                 rm=True
             )
-            logger.info(f"Finished building image for {container_name} in {time.time() - start} seconds")
+            bt.logging.info(f"Finished building image for {container_name} in {time.time() - start} seconds")
             
-            logger.info(f"Starting container: {container_name}")
+            bt.logging.info(f"Starting container: {container_name}")
             container = self.client.containers.run(
                 image.id,
                 name=container_name,
@@ -185,7 +184,7 @@ class DockerManager:
             return "http://localhost:8000"
 
         except Exception as e:
-            logger.error(f"Failed to start container: {str(e)}")
+            bt.logging.error(f"Failed to start container: {str(e)}")
             self.stop_container(uid)
             raise
 
@@ -206,12 +205,12 @@ class DockerManager:
         try:
             if uid in self.active_containers:
                 container = self.active_containers[uid]
-                logger.info(f"Stopping container: {container.name}")
+                bt.logging.info(f"Stopping container: {container.name}")
                 container.stop(timeout=10)
                 container.remove(force=True)
                 del self.active_containers[uid]
         except Exception as e:
-            logger.error(f"inside docker_manager: Failed to stop container: {str(e)}")
+            bt.logging.error(f"inside docker_manager: Failed to stop container: {str(e)}")
             raise
 
     def cleanup_docker_resources(self) -> None:
@@ -230,23 +229,24 @@ class DockerManager:
                 try:
                     container.remove(force=True)
                 except Exception as e:
-                    logger.warning(f"inside docker_manager: Failed to remove container {container.name}: {str(e)}")
+                    bt.logging.warning(f"inside docker_manager: Failed to remove container {container.name}: {str(e)}")
 
             for image_id in images_to_clean:
                 try:
                     self.client.images.remove(image_id, force=True)
+                    bt.logging.debug(f"inside docker_manager: Removed image {image_id}")
                 except Exception as e:
-                    logger.warning(f"inside docker_manager: Failed to remove image {image_id}: {str(e)}")
+                    bt.logging.warning(f"inside docker_manager: Failed to remove image {image_id}: {str(e)}")
 
             # Prune resources
             self.client.images.prune()
             self.client.containers.prune()
             self.client.volumes.prune()
 
-            logger.info("inside docker_manager: Docker resources cleaned up successfully")
+            bt.logging.info("inside docker_manager: Docker resources cleaned up successfully")
 
         except Exception as e:
-            logger.error(f"inside docker_manager: Failed to cleanup Docker resources: {str(e)}")
+            bt.logging.error(f"inside docker_manager: Failed to cleanup Docker resources: {str(e)}")
             raise
 
     def inference_v2v(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 30) -> Dict[str, Any]:
@@ -291,10 +291,10 @@ class DockerManager:
             }
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Inference request failed: {str(e)}")
+            bt.logging.error(f"Inference request failed: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
+            bt.logging.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
             raise
     
 
@@ -330,10 +330,10 @@ class DockerManager:
             }
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Inference request failed: {str(e)}")
+            bt.logging.error(f"Inference request failed: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
+            bt.logging.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
             raise
 
     def _wait_for_container(self, container: Container, timeout: int = 180) -> None:

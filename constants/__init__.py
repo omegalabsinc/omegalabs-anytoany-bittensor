@@ -62,7 +62,7 @@ timestamp_epsilon = 0.01
 # Model scoring parameters.
 # ---------------------------------
 
-O1_MIN_AGE = 4 * 60 * 60  # 4 hours
-V2V_MIN_AGE = 4 * 60 * 60  # 4 hours
+MIN_AGE = 4 * 60 * 60  # 4 hours
 MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
 NUM_CACHED_MODELS = 6
+MAX_DS_FILES = 8

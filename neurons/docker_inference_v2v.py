@@ -8,18 +8,15 @@ from datasets import Dataset
 import ulid
 import numpy as np
 import random
-import subprocess
-import torch
 import bittensor as bt
 from pathlib import Path
 from neurons.docker_manager import DockerManager
 from evaluation.S2S.distance import S2SMetrics
-
+from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
+from constants import MAX_DS_FILES, MIN_AGE
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
-MIN_AGE = 8 * 60 * 60  # 8 hours
-MAX_FILES = 2
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
@@ -31,7 +28,7 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
         for f in omega_ds_files if
         f.rfilename.startswith(DATA_FILES_PREFIX) and
         time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
-    ][:MAX_FILES]
+    ][:MAX_DS_FILES]
 
     download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")
 
@@ -64,21 +61,6 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
             return None
 
         return Dataset.from_dict(overall_dataset)
-
-def get_gpu_memory():
-    output = subprocess.check_output(['nvidia-smi', '--query-gpu=memory.total,memory.used', '--format=csv,nounits,noheader'])
-    total_gb, used_gb = map(lambda s: int(s) / 1e3, output.decode('utf-8').split(','))
-    return total_gb, used_gb, total_gb - used_gb
-
-def log_gpu_memory(msg=''):
-    t = torch.cuda.get_device_properties(0).total_memory
-    r = torch.cuda.memory_reserved(0)
-    a = torch.cuda.memory_allocated(0)
-    bt.logging.info(f"GPU-MEM {msg} Total: {t/1e9:.2f}GB, Reserved: {r/1e9:.2f}GB, Allocated: {a/1e9:.2f}GB")
-
-def cleanup_gpu_memory():
-    torch.cuda.empty_cache()
-    torch.cuda.ipc_collect()
 
 def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
     cleanup_gpu_memory()
