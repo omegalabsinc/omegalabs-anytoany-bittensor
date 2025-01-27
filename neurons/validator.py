@@ -20,13 +20,6 @@ import os
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 
-# this snippet below is necessary to avoid double logging and extraneous logging caused by torchtune
-import logging
-import torchtune
-logging.root.handlers = []
-logging.root.manager.loggerDict = {}
-logging.root.level = logging.root.level
-
 from collections import defaultdict
 import datetime as dt
 import math
@@ -34,7 +27,6 @@ import time
 import torch
 import numpy as np
 import shutil
-from subprocess import Popen, PIPE
 import asyncio
 from aiohttp import ClientSession, BasicAuth
 import requests
@@ -68,6 +60,7 @@ from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
 from utilities.temp_dir_cache import TempDirCache
+from utilities.git_utils import is_git_latest
 
 def iswin(score_i, score_j, block_i, block_j):
     """
@@ -248,7 +241,7 @@ class Validator:
         parser.add_argument(
             "--scoring_api_url",
             type=str,
-            default="http://localhost:8000",
+            default="http://localhost:8080",
             help="The scoring API node url to use.",
         )
 
@@ -809,20 +802,6 @@ class Validator:
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
-    def is_git_latest(self) -> bool:
-        p = Popen(['git', 'rev-parse', 'HEAD'], stdout=PIPE, stderr=PIPE)
-        out, err = p.communicate()
-        if err:
-            return False
-        current_commit = out.decode().strip()
-        p = Popen(['git', 'ls-remote', 'origin', 'HEAD'], stdout=PIPE, stderr=PIPE)
-        out, err = p.communicate()
-        if err:
-            return False
-        latest_commit = out.decode().split()[0]
-        bt.logging.info(f'Current commit: {current_commit}, Latest commit: {latest_commit}')
-        return current_commit == latest_commit
-
     def should_restart(self) -> bool:
         # Check if enough time has elapsed since the last update check, if not assume we are up to date.
         if (dt.datetime.now() - self.last_update_check).seconds < self.update_check_interval:
@@ -830,7 +809,7 @@ class Validator:
 
         self.last_update_check = dt.datetime.now()
 
-        return not self.is_git_latest()
+        return not is_git_latest()
 
     async def run_step(self):
         """

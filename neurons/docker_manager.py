@@ -8,7 +8,7 @@ import os
 import logging
 from pathlib import Path
 import huggingface_hub
-import yaml
+import psutil
 import shutil
 from typing import Optional, Dict, Any, List
 from docker.models.containers import Container
@@ -74,6 +74,17 @@ class DockerManager:
         except Exception as e:
             logger.error(f"Failed to download miner files: {str(e)}")
             raise
+
+    def get_memory_limit(self):
+        total_memory = psutil.virtual_memory().total
+        memory_limit = int(total_memory * 0.9)
+        return memory_limit
+
+    def get_cpu_limit(self):
+        total_cpu = psutil.cpu_count(logical=False)
+        cpu_limit = int(total_cpu * 0.9)
+        return cpu_limit
+
     def _check_disk_space(self, required_gb: int = 10) -> None:
         """Check available disk space and clean if necessary."""
         total, used, free = shutil.disk_usage(str(self.base_cache_dir))
@@ -83,153 +94,7 @@ class DockerManager:
             logger.warning(f"Low disk space ({free_gb:.2f}GB free), cleaning cache directory")
             shutil.rmtree(str(self.base_cache_dir))
             self.base_cache_dir.mkdir(parents=True, exist_ok=True)
-
-    # def _create_compose_config(
-    #     self, 
-    #     container_name: str, 
-    #     miner_dir: Path,
-    #     repo_id: str,
-    #     gpu_id: Optional[int]
-    # ) -> Dict[str, Any]:
-    #     """
-    #     Create resource-optimized docker-compose configuration with proper GPU allocation.
-    #     """
-    #     compose_config = {
-    #         'version': '3',
-    #         'services': {
-    #             container_name: {
-    #                 'build': {
-    #                     'context': str(miner_dir),
-    #                     'dockerfile': 'Dockerfile'
-    #                 },
-    #                 'image': f'{container_name}:latest',
-    #                 'container_name': container_name,
-    #                 'ports': ['8000:8000'],
-    #                 'volumes': [
-    #                     f'{str(miner_dir)}:/app/src:ro'  
-    #                 ],
-    #                 'environment': [
-    #                     'NVIDIA_VISIBLE_DEVICES=all',
-    #                     'NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics',  # Added graphics
-    #                     'PYTHONUNBUFFERED=1',
-    #                     f'MODEL_ID={repo_id}',
-    #                     f'REPO_ID={repo_id}'
-    #                 ],
-    #                 'deploy': {
-    #                     'resources': {
-    #                         'reservations': {  # Changed from limits to reservations
-    #                             'devices': [{
-    #                                 'driver': 'nvidia',
-    #                                 'count': 'all',
-    #                                 'capabilities': ['gpu', 'utility', 'compute']
-    #                             }]
-    #                         }
-    #                     }
-    #                 },
-    #                 'runtime': 'nvidia',  # Added explicit nvidia runtime
-    #                 'ulimits': {
-    #                     'memlock': -1,
-    #                     'stack': 67108864
-    #                 },
-    #                 'shm_size': '2gb',
-    #                 'restart': 'unless-stopped'
-    #             }
-    #         }
-    #     }
-
-    #     # Configure GPU resources if specified
-    #     if gpu_id is not None:
-    #         compose_config['services'][container_name]['environment'].append(
-    #             f'CUDA_VISIBLE_DEVICES={gpu_id}'
-    #         )
-
-    #     return compose_config
-    def _create_compose_config(
-        self, 
-        container_name: str, 
-        miner_dir: Path,
-        repo_id: str,
-        gpu_id: Optional[int]
-    ) -> Dict[str, Any]:
-        """
-        Create resource-optimized docker-compose configuration with proper GPU allocation
-        and network isolation.
-        
-        Args:
-            container_name: Name for the container
-            miner_dir: Path to the miner directory containing source code
-            repo_id: HuggingFace repository ID
-            gpu_id: Optional GPU ID to use (None for all GPUs)
-            
-        Returns:
-            Dict containing the docker-compose configuration
-        """
-        compose_config = {
-            'version': '3',
-            'networks': {
-                'isolated_network': {
-                    'driver': 'bridge',
-                    'internal': True  # Prevents internet access
-                }
-            },
-            'services': {
-                container_name: {
-                    'build': {
-                        'context': str(miner_dir),
-                        'dockerfile': 'Dockerfile'
-                    },
-                    'image': f'{container_name}:latest',
-                    'container_name': container_name,
-                    'ports': ['8000:8000'],
-                    'volumes': [
-                        f'{str(miner_dir)}:/app/src:ro',  # Read-only source code
-                        f'{str(self.base_cache_dir)}:/app/cache:rw'  # Read-write cache
-                    ],
-                    'environment': [
-                        'NVIDIA_VISIBLE_DEVICES=all',
-                        'NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics',
-                        'PYTHONUNBUFFERED=1',
-                        f'MODEL_ID={repo_id}',
-                        f'REPO_ID={repo_id}',
-                        'MODEL_PATH=/app/cache',
-                        'HF_HOME=/app/cache'
-                    ],
-                    'networks': ['isolated_network'],
-                    'deploy': {
-                        'resources': {
-                            'reservations': {
-                                'devices': [{
-                                    'driver': 'nvidia',
-                                    'count': 'all',
-                                    'capabilities': ['gpu', 'utility', 'compute']
-                                }]
-                            }
-                        }
-                    },
-                    'runtime': 'nvidia',
-                    'ulimits': {
-                        'memlock': -1,
-                        'stack': 67108864
-                    },
-                    'shm_size': '2gb',
-                    'restart': 'unless-stopped',
-                    'healthcheck': {
-                        'test': ['CMD', 'curl', '-f', 'http://localhost:8000/api/v1/health'],
-                        'interval': '30s',
-                        'timeout': '10s',
-                        'retries': 3
-                    }
-                }
-            }
-        }
-
-        # Configure specific GPU if provided
-        if gpu_id is not None:
-            compose_config['services'][container_name]['environment'].append(
-                f'CUDA_VISIBLE_DEVICES={gpu_id}'
-            )
-
-        return compose_config    
+  
     def start_container(self, uid: str, repo_id: str, gpu_id: Optional[int] = None) -> str:
         """Start a container with proper GPU configuration."""
         container_name = f"miner_{uid}"
@@ -263,9 +128,11 @@ class DockerManager:
             # Build and start container with GPU support
             logger.info(f"Building container image: {container_name}")
             start = time.time()
+            dockerfile_path = str(miner_dir / "Dockerfile")
+            self._validate_dockerfile(dockerfile_path)
             image, build_logs = self.client.images.build(
                 path=str(miner_dir),
-                dockerfile=str(miner_dir / "Dockerfile"),
+                dockerfile=dockerfile_path,
                 tag=f"{container_name}:latest",
                 rm=True
             )
@@ -276,7 +143,15 @@ class DockerManager:
                 image.id,
                 name=container_name,
                 detach=True,
-                ports={'8000/tcp': 8000},
+                user='nobody',
+                security_opt=[
+                    'no-new-privileges:true',
+                    'seccomp=default-docker-profile.json'
+                ],
+                cap_drop=['ALL'],
+                mem_limit=self.get_memory_limit(),
+                cpu_limit=self.get_cpu_limit(),
+                ports={'8000/tcp': ('0.0.0.0', 8000)},
                 environment={
                     'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
                     'MODEL_PATH': '/app/cache',
@@ -288,10 +163,17 @@ class DockerManager:
                     'NVIDIA_DRIVER_CAPABILITIES': 'compute,utility,graphics'
                 },
                 volumes={
-                    str(miner_dir): {'bind': '/app/src', 'mode': 'ro'},
-                    str(self.base_cache_dir): {'bind': '/app/cache', 'mode': 'rw'}
+                    str(miner_dir): {
+                        'bind': '/app/src',
+                        'mode': 'ro',
+                        'propagation': 'private'
+                    },
+                    str(self.base_cache_dir): {
+                        'bind': '/app/cache',
+                        'mode': 'rw',
+                        'propagation': 'private'
+                    }
                 },
-                network='isolated_network',  # Use the isolated network
                 runtime='nvidia',
                 device_requests=[
                     docker.types.DeviceRequest(
@@ -313,6 +195,18 @@ class DockerManager:
             logger.error(f"Failed to start container: {str(e)}")
             self.stop_container(uid)
             raise
+
+    def _validate_dockerfile(self, dockerfile_path: Path):
+        with open(dockerfile_path) as f:
+            content = f.read()
+            if any(dangerous_cmd in content.lower() for dangerous_cmd in [
+                'privileged',
+                'host',
+                'sudo',
+                'chmod 777',
+                '/var/run/docker.sock'
+            ]):
+                raise Exception("Dockerfile contains dangerous commands")
 
     def stop_container(self, uid: str) -> None:
         """Stop and remove container."""

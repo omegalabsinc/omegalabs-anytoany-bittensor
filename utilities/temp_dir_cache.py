@@ -7,10 +7,15 @@ def clean_directory(path):
     for item in os.listdir(path):
         item_path = os.path.join(path, item)
         if os.path.isfile(item_path) and '.keep' not in item:
-            os.remove(item_path)
+            try:
+                os.remove(item_path)
+            except Exception as e:
+                print(f"Failed to remove file {item_path}: {e}")
         elif os.path.isdir(item_path):
-            shutil.rmtree(item_path)
-
+            try:
+                shutil.rmtree(item_path)
+            except Exception as e:
+                print(f"Failed to remove directory {item_path}: {e}")
 
 class TempDirCache:
     def __init__(self, max_cached_dirs, cache_parent='./model_cache'):

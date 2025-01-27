@@ -26,18 +26,20 @@ SUBNET_START_BLOCK = 2635801
 ROOT_DIR = Path(__file__).parent.parent
 # The maximum bytes for the hugging face repo
 MAX_HUGGING_FACE_BYTES: int = 18 * 1024 * 1024 * 1024
+O1_MODEL_ID = "o1"
+V1_MODEL_ID = "v1"
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
         reward_percentage=0.5,
-        competition_id="o1",
+        competition_id=O1_MODEL_ID,
     ),
     CompetitionParameters(
         reward_percentage=0.5,
-        competition_id="v1",
+        competition_id=V1_MODEL_ID,
     ),
 ]
-ORIGINAL_COMPETITION_ID = "o1"
+ORIGINAL_COMPETITION_ID = O1_MODEL_ID
 BLOCK_DURATION = 12  # 12 seconds
 
 
@@ -63,3 +65,4 @@ timestamp_epsilon = 0.01
 O1_MIN_AGE = 4 * 60 * 60  # 4 hours
 V2V_MIN_AGE = 4 * 60 * 60  # 4 hours
 MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
+NUM_CACHED_MODELS = 6
