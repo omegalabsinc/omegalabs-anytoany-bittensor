@@ -80,11 +80,6 @@ class DockerManager:
         memory_limit = int(total_memory * 0.9)
         return memory_limit
 
-    def get_cpu_limit(self):
-        total_cpu = psutil.cpu_count(logical=False)
-        cpu_limit = int(total_cpu * 0.9)
-        return cpu_limit
-
     def _check_disk_space(self, required_gb: int = 10) -> None:
         """Check available disk space and clean if necessary."""
         total, used, free = shutil.disk_usage(str(self.base_cache_dir))
@@ -150,7 +145,6 @@ class DockerManager:
                 ],
                 cap_drop=['ALL'],
                 mem_limit=self.get_memory_limit(),
-                cpu_limit=self.get_cpu_limit(),
                 ports={'8000/tcp': ('0.0.0.0', 8000)},
                 environment={
                     'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
