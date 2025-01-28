@@ -113,66 +113,7 @@ NOTE: If you want to run on testnet, simply add `--subtensor.network test` at th
 
 ### For Validators
 
-#### Requirements
-- Python 3.11+ with pip
-- GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
-- At least 40 GB of CPU RAM
-- At least 300 GB of free storage space
-- If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
-- Install libatlas-base-dev: `apt install libatlas-base-dev`
-
-#### Running with Docker
-1. Clone the repo and `cd` into it:
-```bash
-git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
-cd omegalabs-anytoany-bittensor
-```
-2. Run the validator:
-```bash
-make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
-```
-##### Recommended
-- Setting up wandb. Open the `vali.env` file in the repo root directory and set the `WANDB_API_KEY`. Alternatively, you can disable W&B with `WANDB=off` in Step 2.
-<details>
-  <summary>To run with manually updating validator</summary>
-  
-  Simply run the following command instead:
-  ```bash
-  make manual-validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
-  ```
-</details>
-3. Check your logs: `make check-vali-logs`
-
-#### Running with PM2
-1. Clone the repo and `cd` into it:
-```bash
-git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
-cd omegalabs-anytoany-bittensor
-```
-2. Install the requirements: `apt install libatlas-base-dev` and `pip install -e .`
-3. Run the validator script:
-```bash
-pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
-    --wallet.name {wallet} \
-    --wallet.hotkey {hotkey} \
-    --axon.port {port} \
-    --logging.trace
-```
-##### Recommended
-- Setting up wandb. Set environment variable with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `--wandb.off`
-<details>
-  <summary>To run with manually updating validator</summary>
-  
-  Simply run the following command instead:
-  ```bash
-  pm2 start neurons/validator.py --name omega-a2a-validator -- \
-    --wallet.name {wallet} \
-    --wallet.hotkey {hotkey} \
-    --axon.port {port} \
-    --logging.trace
-  ```
-</details>
-4. Check the logs: `pm2 logs omega-a2a-validator`
+To read the validator set-up documentation, see [docs/validator_setup.md](docs/validator_setup.md).
 
 ## Current A2A Architecture 🤖
 

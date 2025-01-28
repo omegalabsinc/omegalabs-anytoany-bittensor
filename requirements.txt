@@ -1,37 +1,21 @@
-bittensor[torch]==8.5.1
-transformers==4.41.0
-torch==2.3.0
-pandas==2.2.2
-sentencepiece==0.2.0
-protobuf==4.25.3
-python-dotenv==1.0.1
-tiktoken==0.4.0
-threadpoolctl==3.5.0
-datasets==2.19.2
-peft==0.11.1
-six==1.16.0
-torchtune @ git+https://github.com/pytorch/torchtune.git@8f59c2fecd722691271eecca630a526719a32f76#egg=torchtune
-lm_eval==0.4
-torchvision==0.18.0
-torchdata @ git+https://github.com/pytorch/data.git@c78bbc7c69809172d13ce80cc8098ebc3715b96e#egg=torchdata
-diffusers==0.27.2
-sortedcontainers==2.4.0
-ulid-py==1.1.0
-imagebind @ git+https://github.com/omegalabsinc/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
-llama3 @ git+https://github.com/meta-llama/llama3.git@af6eedf7042fb51d00b2b26d8ef1ceaab73e1670
-pytorchvideo @ git+https://github.com/facebookresearch/pytorchvideo.git@28fe037d212663c6a24f373b94cc5d478c8c1a1d
-wandb==0.19.1
-numpy==2.0.2
-SQLAlchemy
-torchaudio==2.3.0
+imagebind @ git+https://github.com/facebookresearch/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
+accelerate==1.2.1
+datasets==3.1.0
+docker==7.1.0
+hf_transfer==0.1.9
 jiwer==3.0.5
 pesq==0.0.4
 pyannote.audio==3.1.1
-scikit-learn==1.5.2
-torch-audiomentations==0.11.1
 pydub==0.25.1
-huggingface-hub==0.24.0
-huggingface_hub[hf_transfer]
+torchdata==0.10.0
+torchvision==0.19.1
+transformers==4.46.3
+tqdm==4.67.1
+ulid-py==1.1.0
+uv==0.5.18
+bittensor[torch]==8.5.1
+torch==2.4.1
+pesq==0.0.4
 librosa==0.10.2.post1
-asteroid-filterbanks==0.4.0
-torchmetrics==1.6.0
+wandb==0.19.1
+python-dotenv==1.0.1

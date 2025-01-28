@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
+from constants import MODEL_EVAL_TIMEOUT
 
 import sentry_sdk
 print("SENTRY_DSN:", SENTRY_DSN)
@@ -217,7 +218,7 @@ async def main():
     async def check_stale_scoring_tasks():
         while True:
             # check and reset any stale scoring tasks
-            reset_count = queue_manager.reset_stale_scoring_tasks(max_scoring_time_minutes=30)
+            reset_count = queue_manager.reset_stale_scoring_tasks(max_scoring_time_minutes=MODEL_EVAL_TIMEOUT)
             print(f"Reset {reset_count} stale scoring tasks")
 
             # Check every 1 minute to see if we have any newly flagged stale scoring tasks
