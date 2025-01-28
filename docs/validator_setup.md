@@ -34,6 +34,15 @@ pm2 start auto_updating_scoring_api.sh --name omega-a2a-scoring-api -- \
 
 3. Check your logs: `pm2 logs omega-a2a-scoring-api`
 
+### Verifying the Scoring API
+After setting up your scoring node, you can verify that the API is accessible by making a simple HTTP request from your validator node:
+
+```bash
+curl http://{scoring_node_ip}:{scoring_node_port}/health
+```
+
+If the API is running and accessible, you should receive a response. If you can't connect, check your firewall settings and make sure the port is open and accessible from your validator node.
+
 ## Node 2: Validator Node Setup (CPU; sets weights)
 
 ## Requirements
@@ -50,8 +59,11 @@ cd omegalabs-anytoany-bittensor
 ```
 2. Run the validator:
 ```bash
-make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port}
+make validator WALLET_NAME={wallet} WALLET_HOTKEY={hotkey} PORT={port} SCORING_API_URL=http://{scoring_node_ip}:{scoring_node_port}
 ```
+
+The `SCORING_API_URL` should point to your scoring node's API endpoint (e.g., `http://123.45.67.89:8080`). If not specified, it defaults to `http://localhost:8080`.
+
 ### Recommended
 - Setting up wandb. Open the `vali.env` file in the repo root directory and set the `WANDB_API_KEY`. Alternatively, you can disable W&B with `WANDB=off` in Step 2.
 
@@ -70,8 +82,12 @@ pm2 start auto_updating_validator.sh --name omega-a2a-validator -- \
     --wallet.name {wallet} \
     --wallet.hotkey {hotkey} \
     --axon.port {port} \
+    --scoring_api_url http://{scoring_node_ip}:{scoring_node_port} \
     --logging.trace
 ```
+
+The `--scoring_api_url` flag should point to your scoring node's API endpoint (e.g., `http://123.45.67.89:8080`). If not specified, it defaults to `http://localhost:8080`.
+
 ### Recommended
 - Setting up wandb. Set environment variable with `export WANDB_API_KEY=<your API key>`. Alternatively, you can disable W&B with `--wandb.off`
 4. Check the logs: `pm2 logs omega-a2a-validator`
