@@ -6,7 +6,7 @@ from starlette import status
 from substrateinterface import Keypair
 import uvicorn
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from neurons.scoring_manager import (
     ScoringManager, ModelScoreTaskData, ScoreModelInputs, ModelScoreStatus, get_scoring_config
 )
@@ -76,31 +76,37 @@ async def main():
     ) -> Optional[ModelScoreTaskData]:
         return scoring_manager.get_current_task()
 
-    async def check_for_updates():
+    async def check_for_updates(server):
         if config.auto_update:
             while True:
                 if scoring_manager.should_restart():
                     bt.logging.info(f'Validator is out of date, quitting to restart.')
-                    raise KeyboardInterrupt
+                    await scoring_manager.cleanup()
+                    server.should_exit = True
+                    break
                 await asyncio.sleep(scoring_manager.update_check_interval + 10)
 
-    async def restart_wandb_session():
+    async def restart_wandb_session(server):
         if not config.wandb.off:
+            time_since_update = datetime.now()
             while True:
-                scoring_manager.check_wandb_run()
-                await asyncio.sleep(scoring_manager.update_check_interval)
+                if server.should_exit:
+                    bt.logging.info(f'Terminating restart_wandb_session thread')
+                    break
+
+                if time_since_update + timedelta(seconds=scoring_manager.update_check_interval) > datetime.now():
+                    scoring_manager.check_wandb_run()
+
+                # only sleep for 10 seconds, in order to respect the server shutdown
+                await asyncio.sleep(10)
 
     # Handle shutdown gracefully
     try:
+        server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=config.port))
         await asyncio.gather(
-            asyncio.to_thread(
-                uvicorn.run,
-                app,
-                host="0.0.0.0",
-                port=config.port,
-            ),
-            check_for_updates(),
-            restart_wandb_session(),
+            server.serve(),
+            check_for_updates(server),
+            restart_wandb_session(server),
         )
     except KeyboardInterrupt:
         await scoring_manager.cleanup()
