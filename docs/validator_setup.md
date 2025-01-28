@@ -6,6 +6,8 @@ Hello validator, welcome to SN21. We have a 2-node validator system:
 
 ## Node 1: Scoring Node Setup (GPU; runs model scoring)
 
+⚠️ **WARNING**: Make sure you DO NOT have your validator wallet on this GPU node. Since this node evaluates arbitrary code from miners, keeping your wallet on a separate machine is crucial for security.
+
 ## Requirements
 - Python 3.11+ with pip
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice
@@ -38,7 +40,7 @@ pm2 start auto_updating_scoring_api.sh --name omega-a2a-scoring-api -- \
 After setting up your scoring node, you can verify that the API is accessible by making a simple HTTP request from your validator node:
 
 ```bash
-curl http://{scoring_node_ip}:{scoring_node_port}/health
+curl http://{scoring_node_ip}:{scoring_node_port}/
 ```
 
 If the API is running and accessible, you should receive a response. If you can't connect, check your firewall settings and make sure the port is open and accessible from your validator node.
