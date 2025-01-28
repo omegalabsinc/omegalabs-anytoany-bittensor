@@ -9,6 +9,14 @@ import hashlib
 from model.data import ModelMetadata
 
 
+class NoopLock:
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
+
+
 class ModelTracker:
     """Tracks the current model for each miner.
 
@@ -17,6 +25,7 @@ class ModelTracker:
 
     def __init__(
         self,
+        thread_safe: bool = True,
     ):
         # Create a dict from miner hotkey to model metadata.
         self.miner_hotkey_to_model_metadata_dict: dict[str, ModelMetadata] = dict()
@@ -32,7 +41,7 @@ class ModelTracker:
 
         # Make this class thread safe because it will be accessed by multiple threads.
         # One for the downloading new models loop and one for the validating models loop.
-        self.lock = threading.RLock()
+        self.lock = threading.RLock() if thread_safe else NoopLock()
 
     def save_state(self, filepath):
         """Save the current state to the provided filepath."""

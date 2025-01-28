@@ -20,13 +20,6 @@ import os
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 
-# this snippet below is necessary to avoid double logging and extraneous logging caused by torchtune
-import logging
-import torchtune
-logging.root.handlers = []
-logging.root.manager.loggerDict = {}
-logging.root.level = logging.root.level
-
 from collections import defaultdict
 import datetime as dt
 import math
@@ -34,14 +27,13 @@ import time
 import torch
 import numpy as np
 import shutil
-from subprocess import Popen, PIPE
 import asyncio
 from aiohttp import ClientSession, BasicAuth
 import requests
 from requests.auth import HTTPBasicAuth
 import argparse
 import typing
-import random
+import json
 import constants
 
 import bittensor as bt
@@ -62,29 +54,13 @@ import threading
 import multiprocessing
 from rich.table import Table
 from rich.console import Console
+from neurons.scoring_manager import ScoreModelInputs
 
 from utilities.miner_iterator import MinerIterator
 from utilities import utils
 from utilities.perf_monitor import PerfMonitor
 from utilities.temp_dir_cache import TempDirCache
-from neurons.model_scoring import (
-    get_model_score,
-    pull_latest_omega_dataset,
-    MIN_AGE,
-    cleanup_gpu_memory,
-    log_gpu_memory,
-    get_gpu_memory
-)
-from neurons.v2v_scoring import (
-    compute_s2s_metrics,
-    pull_latest_diarization_dataset,
-    MIN_AGE as V2V_MIN_AGE,
-)
-
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-MINS_TO_SLEEP = 10
-GPU_MEM_GB_REQD = 39
+from utilities.git_utils import is_git_latest
 
 def iswin(score_i, score_j, block_i, block_j):
     """
@@ -262,6 +238,12 @@ class Validator:
             help="Runs wandb in offline mode.",
             default=False,
         )
+        parser.add_argument(
+            "--scoring_api_url",
+            type=str,
+            default="http://localhost:8080",
+            help="The scoring API node url to use.",
+        )
 
         bt.subtensor.add_args(parser)
         bt.logging.add_args(parser)
@@ -317,17 +299,6 @@ class Validator:
         bt.logging.info(f"Starting validator with config: {self.config}")
         disable_caching()
 
-        if not self.config.run_api:
-            try:
-                # early exit if GPU memory insufficient
-                total_gb, used_gb, avail_gb = get_gpu_memory()
-                if avail_gb < GPU_MEM_GB_REQD:
-                    m = f"Insufficient GPU Memory available: {avail_gb:.2f} GB available, out of total {total_gb:.2f} GB"
-                    bt.logging.error(m)
-                    raise RuntimeError(m)
-            except Exception as e:
-                bt.logging.error(f"Failed to get GPU memory: {e}: {traceback.format_exc()}")
-
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
         self.subtensor = bt.subtensor(config=self.config)
@@ -344,6 +315,8 @@ class Validator:
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
         self.score_model_endpoint = f"{api_root}/score-model"
         self.get_all_model_scores_endpoint = f"{api_root}/get-all-model-scores"
+        self.start_model_scoring_endpoint = f"{self.config.scoring_api_url}/api/start_model_scoring"
+        self.check_scoring_status_endpoint = f"{self.config.scoring_api_url}/api/check_scoring_status"
 
         # Dont check registration status if offline.
         if not self.config.offline:
@@ -465,7 +438,7 @@ class Validator:
         block_uploaded_at = model_metadata.block
         current_block = self.metagraph.block.item()
         model_age = (current_block - block_uploaded_at) * constants.BLOCK_DURATION
-        is_old_enough = model_age > MIN_AGE if model_metadata.id.competition_id == "o1" else model_age > V2V_MIN_AGE
+        is_old_enough = model_age > constants.O1_MIN_AGE if model_metadata.id.competition_id == "o1" else model_age > constants.V2V_MIN_AGE
         if not is_old_enough:
             bt.logging.debug(
                 f"Model {model_metadata.id} is too new to evaluate. Age: {model_age} seconds"
@@ -790,6 +763,11 @@ class Validator:
             # sleep for 1 minute before checking again
             time.sleep(60)
 
+    def get_basic_auth(self) -> HTTPBasicAuth:
+        keypair = self.dendrite.keypair
+        hotkey = keypair.ss58_address
+        signature = f"0x{keypair.sign(hotkey).hex()}"
+        return HTTPBasicAuth(hotkey, signature)
 
     async def try_sync_metagraph(self, ttl: int):
         def sync_metagraph(endpoint):
@@ -824,20 +802,6 @@ class Validator:
         except asyncio.TimeoutError:
             bt.logging.error(f"Failed to run step after {ttl} seconds")
 
-    def is_git_latest(self) -> bool:
-        p = Popen(['git', 'rev-parse', 'HEAD'], stdout=PIPE, stderr=PIPE)
-        out, err = p.communicate()
-        if err:
-            return False
-        current_commit = out.decode().strip()
-        p = Popen(['git', 'ls-remote', 'origin', 'HEAD'], stdout=PIPE, stderr=PIPE)
-        out, err = p.communicate()
-        if err:
-            return False
-        latest_commit = out.decode().split()[0]
-        bt.logging.info(f'Current commit: {current_commit}, Latest commit: {latest_commit}')
-        return current_commit == latest_commit
-
     def should_restart(self) -> bool:
         # Check if enough time has elapsed since the last update check, if not assume we are up to date.
         if (dt.datetime.now() - self.last_update_check).seconds < self.update_check_interval:
@@ -845,7 +809,7 @@ class Validator:
 
         self.last_update_check = dt.datetime.now()
 
-        return not self.is_git_latest()
+        return not is_git_latest()
 
     async def run_step(self):
         """
@@ -858,9 +822,6 @@ class Validator:
         6. Implements a blacklist mechanism to remove underperforming models from the evaluation set.
         7. Logs all relevant data for the step, including model IDs, pages, batches, wins, win rates, and losses.
         """
-        cleanup_gpu_memory()
-        log_gpu_memory('at start of run_step')
-
         # Update self.metagraph
         await self.try_sync_metagraph(ttl=60 * 5)
         competition_parameters = constants.COMPETITION_SCHEDULE[
@@ -971,37 +932,35 @@ class Validator:
                         uid_to_block[uid_i] = model_i_metadata.block
                         hf_repo_id = model_i_metadata.id.namespace + "/" + model_i_metadata.id.name
                         start_time = time.time()
-                        if competition_parameters.competition_id == "o1":
-                            eval_data = pull_latest_omega_dataset()
-                            if eval_data is None:
-                                bt.logging.warning(
-                                    f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
-                                )
-                                time.sleep(MINS_TO_SLEEP * 60)
-                            score = get_model_score(
-                                hf_repo_id,
-                                mini_batch=eval_data,
-                                local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
-                                hotkey=hotkey,
-                                block=model_i_metadata.block,
-                                model_tracker=self.model_tracker
+                        scoring_inputs = ScoreModelInputs(
+                            hf_repo_id=hf_repo_id,
+                            competition_id=competition_parameters.competition_id,
+                            hotkey=hotkey,
+                            block=model_i_metadata.block
+                        )
+                        start_response = requests.post(
+                            self.start_model_scoring_endpoint,
+                            auth=self.get_basic_auth(),
+                            json=json.loads(scoring_inputs.model_dump_json()),
+                            timeout=30,
+                        )
+                        start_response.raise_for_status()
+                        start_response_json = start_response.json()
+                        if not start_response_json.get("success", False):
+                            bt.logging.error(f"Failed to start scoring for {model_i_metadata}: {start_response_json.get('message', 'Unknown error')}")
+                            return
+                        is_scoring = True
+                        while is_scoring:
+                            time.sleep(15)
+                            scoring_response = requests.get(
+                                self.check_scoring_status_endpoint,
+                                auth=self.get_basic_auth(),
+                                timeout=30,
                             )
-                        elif competition_parameters.competition_id == "v1":
-                            eval_data_v2v = pull_latest_diarization_dataset()
-                            if eval_data_v2v is None:
-                                bt.logging.warning(
-                                    f"No data is currently available to evalute miner models on, sleeping for {MINS_TO_SLEEP} minutes."
-                                )
-                                time.sleep(MINS_TO_SLEEP * 60)
-                            score = compute_s2s_metrics(
-                                model_id="moshi", # update this to the model id as we support more models.
-                                hf_repo_id=hf_repo_id,
-                                mini_batch=eval_data_v2v,
-                                local_dir=self.temp_dir_cache.get_temp_dir(hf_repo_id),
-                                hotkey=hotkey,
-                                block=model_i_metadata.block,
-                                model_tracker=self.model_tracker
-                            )
+                            scoring_response.raise_for_status()
+                            scoring_response_json = scoring_response.json()
+                            is_scoring = scoring_response_json.get("status") == "scoring"
+                            score = scoring_response_json["score"]
                         bt.logging.info(f"Score for {model_i_metadata} is {score}, took {time.time() - start_time} seconds")
                     except Exception as e:
                         bt.logging.error(
@@ -1255,15 +1214,11 @@ class Validator:
         MAX_RETRIES = 3
         RETRY_DELAY = 5
         
-        keypair = self.dendrite.keypair
-        hotkey = keypair.ss58_address
-        signature = f"0x{keypair.sign(hotkey).hex()}"
-        
         for attempt in range(MAX_RETRIES):
             try:
                 response = requests.post(
                     self.get_all_model_scores_endpoint,
-                    auth=HTTPBasicAuth(hotkey, signature),
+                    auth=self.get_basic_auth(),
                     timeout=30
                 )
                 response.raise_for_status()
@@ -1305,7 +1260,7 @@ class Validator:
                     # Sleep for 5 minutes before resycing metagraph
                     await asyncio.sleep(60 * 5)
                 else:
-                    await self.try_run_step(ttl=60 * 30) # 30 minute timeout. Same as the timeout for resetting stale models being scored.
+                    await self.try_run_step(ttl=constants.MODEL_EVAL_TIMEOUT)
                 
                 self.global_step += 1
 
