@@ -13,14 +13,9 @@ from transformers import (
     AutoFeatureExtractor
 )
 from evaluation.S2S.rawnet.inference import RawNet3Inference
+import bittensor as bt
 
-import logging
 import os
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 
 class S2SMetrics:
     """Speech-to-Speech evaluation metrics"""
@@ -36,7 +31,7 @@ class S2SMetrics:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
         # Load MIMI model
-        logger.info("Loading MIMI model...")
+        bt.logging.info("Loading MIMI model...")
         self.mimi = MimiModel.from_pretrained(
             "kyutai/mimi",
             cache_dir=self.cache_dir
@@ -47,12 +42,12 @@ class S2SMetrics:
         )
 
         # Load RawNet3 (anti-spoofing)
-        logger.info("Loading RawNet3...")
+        bt.logging.info("Loading RawNet3...")
         self.anti_spoofing_inference = RawNet3Inference(model_name = 'jungjee/RawNet3',repo_dir = self.cache_dir, device=self.device)
         
 
         # Load Whisper
-        logger.info("Loading Whisper...")
+        bt.logging.info("Loading Whisper...")
         self.processor = WhisperProcessor.from_pretrained(
             "openai/whisper-large-v2", 
             cache_dir=self.cache_dir
@@ -80,7 +75,7 @@ class S2SMetrics:
                 audio = audio.mean(axis=0, keepdims=True)
             return audio
         except Exception as e:
-            logger.error(f"Audio conversion error: {e}")
+            bt.logging.error(f"Audio conversion error: {e}")
             return None
 
     def mimi_scoring(self, 
@@ -150,7 +145,7 @@ class S2SMetrics:
                 return float(sum(scores) / len(scores))
 
         except Exception as e:
-            logger.error(f"MIMI scoring error: {e}")
+            bt.logging.error(f"MIMI scoring error: {e}")
             return 0.0
 
     def transcribe_audio(self, 
@@ -185,7 +180,7 @@ class S2SMetrics:
             )[0]
             
         except Exception as e:
-            logger.error(f"Transcription error: {e}")
+            bt.logging.error(f"Transcription error: {e}")
             return None
 
     def compute_wer(self,
@@ -200,7 +195,7 @@ class S2SMetrics:
                 gt_transcript, generated_transcript = generated_transcript, gt_transcript
             return 1 - wer(gt_transcript, generated_transcript)
         except Exception as e:
-            logger.error(f"WER computation error: {e}")
+            bt.logging.error(f"WER computation error: {e}")
             return 0.0
 
     def calculate_pesq(self,
@@ -215,7 +210,7 @@ class S2SMetrics:
                 np.isnan(generated_audio_arr).any() or
                 np.all(generated_audio_arr == 0) or
                 np.all(gt_audio_arr == 0)):
-                logger.warning("Invalid audio data detected (NaN or all zeros)")
+                bt.logging.warning("Invalid audio data detected (NaN or all zeros)")
                 return 0.0
 
             # Convert both to 16kHz mono
@@ -236,7 +231,7 @@ class S2SMetrics:
 
             # Ensure minimum length for PESQ (at least 32ms at 16kHz = 512 samples)
             if min_length < 512:
-                logger.warning("Audio too short for PESQ calculation")
+                bt.logging.warning("Audio too short for PESQ calculation")
                 return 0.0
 
             # Convert to tensors
@@ -251,7 +246,7 @@ class S2SMetrics:
             return (0.3 * nb_score + 0.7 * wb_score).detach().cpu().item()
             
         except Exception as e:
-            logger.error(f"PESQ calculation error: {e}")
+            bt.logging.error(f"PESQ calculation error: {e}")
             return 0.0
 
     def calculate_anti_spoofing_score(self, generated_audio_arr, gt_audio_arr, gt_sample_rate, generated_sample_rate):
@@ -260,7 +255,7 @@ class S2SMetrics:
             gt_embedding = self.anti_spoofing_inference.extract_speaker_embd(gt_audio_arr, gt_sample_rate, 48000, 10)
             return 1/(1+((generated_embedding - gt_embedding) ** 2).mean()).detach().cpu().item()
         except Exception as e:
-            logger.info(f"An error occurred while calculating anti-spoofing score: {e}")
+            bt.logging.info(f"An error occurred while calculating anti-spoofing score: {e}")
             return 0
         
     def compute_distance(self, 
@@ -278,7 +273,7 @@ class S2SMetrics:
             for (gt_arr, gt_rate), (gen_arr, gen_rate) in zip(
                 gt_audio_arrs, generated_audio_arrs
             ):
-                logger.info(f"Calculating metrics for {gt_arr} and {gen_arr}")  
+                bt.logging.info(f"Calculating metrics for {gt_arr} and {gen_arr}")  
                 # MIMI score
                 mimi_scores.append(
                     self.mimi_scoring(gt_arr, gen_arr, gt_rate, gen_rate)
@@ -287,23 +282,23 @@ class S2SMetrics:
                 # Transcription & WER
                 gt_transcript = self.transcribe_audio(gt_arr, gt_rate)
                 gen_transcript = self.transcribe_audio(gen_arr, gen_rate)
-                logger.info(f"Transcription: {gt_transcript} and {gen_transcript}")
+                bt.logging.info(f"Transcription: {gt_transcript} and {gen_transcript}")
                 wer_scores.append(
                     self.compute_wer(gt_transcript, gen_transcript)
                 )
-                logger.info(f"WER: {wer_scores}")   
+                bt.logging.info(f"WER: {wer_scores}")   
                 # PESQ
                 pesq_scores.append(
                     self.calculate_pesq(gt_arr, gen_arr, gt_rate, gen_rate)
                 )
-                logger.info(f"PESQ: {pesq_scores}")
+                bt.logging.info(f"PESQ: {pesq_scores}")
                 # Anti-spoofing
                 anti_spoofing_scores.append(
                     self.calculate_anti_spoofing_score(
                         gen_arr, gt_arr, gen_rate, gt_rate
                     )
                 )
-                logger.info(f"Anti-spoofing: {anti_spoofing_scores}")
+                bt.logging.info(f"Anti-spoofing: {anti_spoofing_scores}")
             
             # Calculate combined scores
             length_penalty = [1.0] * len(mimi_scores)  # Simplified
@@ -323,7 +318,7 @@ class S2SMetrics:
                     combined = (geometric_mean * 0.6 + arithmetic_mean * 0.4) * l
                     combined_scores.append(combined)
                 except Exception as e:
-                    logger.error(f"Combined score calculation error: {e}")
+                    bt.logging.error(f"Combined score calculation error: {e}")
                     combined_scores.append(0.0)
             
             # Get compute efficiency score
@@ -339,7 +334,7 @@ class S2SMetrics:
             }
             
         except Exception as e:
-            logger.error(f"Overall metric computation error: {e}")
+            bt.logging.error(f"Overall metric computation error: {e}")
             return {
                 'mimi_score': [0.0],
                 'wer_score': [0.0],
@@ -355,5 +350,5 @@ class S2SMetrics:
             rawnet = RawNet3Inference(model_path, device)
             return rawnet
         except Exception as e:
-            logger.error(f"Error loading RawNet3: {str(e)}")
+            bt.logging.error(f"Error loading RawNet3: {str(e)}")
             raise

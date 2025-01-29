@@ -20,6 +20,8 @@ import os
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 
+from utilities.logging_setup import warmup_logging; warmup_logging()
+
 from collections import defaultdict
 import datetime as dt
 import math
@@ -420,7 +422,8 @@ class Validator:
     def __del__(self):
         if hasattr(self, "stop_event"):
             self.stop_event.set()
-            self.update_thread.join()
+            if self.update_thread is not None:
+                self.update_thread.join()
             self.clean_thread.join()
             if not self.config.dont_set_weights and not self.config.offline:
                 self.weight_thread.join()
@@ -757,6 +760,10 @@ class Validator:
 
                 except asyncio.TimeoutError:
                     bt.logging.error(f"Failed to set weights after {ttl} seconds")
+
+                except Exception as e:
+                    bt.logging.error(f"Failed to set weights: {e}\n{traceback.format_exc()}")
+
             else:
                 bt.logging.debug(f"Skipping setting weights. Only set weights at 20-minute marks.")
 
@@ -845,7 +852,7 @@ class Validator:
         for uid in uids:
             hotkey = self.metagraph.hotkeys[uid]
             try:
-                asyncio.run(self.model_updater.sync_model(hotkey))
+                await self.model_updater.sync_model(hotkey)
                 if (
                     self.model_tracker.get_model_metadata_for_miner_hotkey(
                         hotkey
