@@ -170,3 +170,6 @@ Thumbs.db
 logs/
 
 scores*.json
+*.env
+wandb/
+

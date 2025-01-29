@@ -1,3 +1,4 @@
+from utilities.logging_setup import warmup_logging; warmup_logging()
 from contextlib import asynccontextmanager
 from typing import Annotated, Optional
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
