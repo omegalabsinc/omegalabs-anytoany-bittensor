@@ -64,6 +64,7 @@ async def main():
                 "message": f"Model {current_task.inputs.hf_repo_id} is already being scored"
             }
 
+        bt.logging.info(f"Starting scoring for {request}")
         background_tasks.add_task(scoring_manager.start_scoring, request)
 
         return {
@@ -75,7 +76,9 @@ async def main():
     async def check_scoring_status(
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
     ) -> Optional[ModelScoreTaskData]:
-        return scoring_manager.get_current_task()
+        current_task = scoring_manager.get_current_task()
+        bt.logging.debug(f"Current task: {current_task}")
+        return current_task
 
     async def check_for_updates(server):
         if config.auto_update:
