@@ -176,7 +176,7 @@ class ModelScoreResponse(BaseModel):
     miner_hotkey: str
     miner_uid: int
     model_metadata: dict
-    model_hash: str
+    model_hash: Optional[str] = None
     model_score: float
 
 
