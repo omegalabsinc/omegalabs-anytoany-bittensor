@@ -71,7 +71,7 @@ def verify_hotkey(hf_repo_id: str, local_dir: str, hotkey: str) -> bool:
             bt.logging.warning("Hotkey mismatch. Returning score of 0.")
             return False
         return True
-    except huggingface_hub.utils._errors.EntryNotFoundError:
+    except huggingface_hub.utils.EntryNotFoundError:
         bt.logging.info("No hotkey file found in repository")
         return True
     except Exception as e:

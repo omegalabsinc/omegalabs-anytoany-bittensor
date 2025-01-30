@@ -160,6 +160,8 @@ class ScoringManager:
             model_tracker=self.model_tracker,
             local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
         )
+        if score is not None:
+            score = float(score)
         bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
         return score
 

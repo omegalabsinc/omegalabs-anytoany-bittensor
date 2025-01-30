@@ -96,7 +96,7 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
                 if hotkey_contents != hotkey:
                     bt.logging.warning("Hotkey mismatch. Returning score of 0.")
                     return 0
-            except huggingface_hub.utils._errors.EntryNotFoundError:
+            except huggingface_hub.utils.EntryNotFoundError:
                 bt.logging.info("No hotkey file found in repository")
             except Exception as e:
                 bt.logging.error(f"Error reading hotkey file: {str(e)}")

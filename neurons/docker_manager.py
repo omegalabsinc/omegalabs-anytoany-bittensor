@@ -146,25 +146,11 @@ class DockerManager:
                 ports={'8000/tcp': ('0.0.0.0', 8000)},
                 environment={
                     'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
-                    'MODEL_PATH': '/app/cache',
-                    'HF_HOME': '/app/cache',
                     'PYTHONUNBUFFERED': '1',
                     'MODEL_ID': repo_id,
                     'REPO_ID': repo_id,
                     'NVIDIA_VISIBLE_DEVICES': 'all',
                     'NVIDIA_DRIVER_CAPABILITIES': 'compute,utility,graphics'
-                },
-                volumes={
-                    str(miner_dir): {
-                        'bind': '/app/src',
-                        'mode': 'ro',
-                        'propagation': 'private'
-                    },
-                    str(self.base_cache_dir): {
-                        'bind': '/app/cache',
-                        'mode': 'rw',
-                        'propagation': 'private'
-                    }
                 },
                 runtime='nvidia',
                 device_requests=[
