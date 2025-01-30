@@ -85,20 +85,20 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
             
             # Get the model_hash of the most recent score
             latest_model_hash = scores[0]['model_hash']
-            if not latest_model_hash:
-                logging.warning(f"No model hash for latest score of model {scores[0]['hotkey']} (UID {uid})")
-                continue
+            # if not latest_model_hash:
+            #     logging.warning(f"No model hash for latest score of model {scores[0]['hotkey']} (UID {uid})")
+            #     continue
 
             # Process scores only for the latest model version
             processed_scores = []
             for score in scores[:max_scores]:  # Still limit to max_scores
-                if score['model_hash'] != latest_model_hash:
-                    # Skip scores from different model versions
-                    logging.debug(
-                        f"Skipping score with different model hash for {scores[0]['hotkey']} "
-                        f"(Latest: {latest_model_hash}, Found: {score['model_hash']})"
-                    )
-                    continue
+                # if score['model_hash'] != latest_model_hash:
+                #     # Skip scores from different model versions
+                #     logging.debug(
+                #         f"Skipping score with different model hash for {scores[0]['hotkey']} "
+                #         f"(Latest: {latest_model_hash}, Found: {score['model_hash']})"
+                #     )
+                #     continue
                     
                 try:
                     scorer_hotkey = score['scorer_hotkey']
