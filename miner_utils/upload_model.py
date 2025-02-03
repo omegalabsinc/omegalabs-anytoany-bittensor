@@ -19,7 +19,7 @@ import bittensor as bt
 from utilities import utils
 from model.data import Model, ModelId
 from model.storage.chain.chain_model_metadata_store import ChainModelMetadataStore
-from huggingface_hub import update_repo_visibility
+from huggingface_hub import update_repo_settings
 import time
 import hashlib
 
@@ -47,6 +47,7 @@ def get_config():
     parser.add_argument(
         "--epoch",
         type=str,
+        default=0,
         help="The epoch number to load e.g. if you want to upload meta_model_0.pt, epoch should be 0",
     )
 
@@ -66,6 +67,12 @@ def get_config():
 
     parser.add_argument(
         "--list_competitions", action="store_true", help="Print out all competitions"
+    )
+    parser.add_argument(
+        "--subtensor.network",
+        type=str,
+        default="finney",
+        help="The subtensor network flag. The likely choices are: finney (main network) test (testnet)",
     )
 
     # Include wallet and logging arguments from bittensor
@@ -126,7 +133,6 @@ async def main(config: bt.config):
     model = Model(id=model_id, local_repo_dir=config.model_dir)
    
 
-    validate_repo(config.model_dir, config.epoch, config.competition_id.split("_")[-1])
     bt.logging.info(f"Validated repo for {config.model_dir}")
 
     remote_model_store = HuggingFaceModelStore()
@@ -139,11 +145,12 @@ async def main(config: bt.config):
         hotkey=wallet.hotkey.ss58_address
     )
 
+    model_hash = regenerate_hash(repo_namespace, repo_name, config.epoch, config.competition_id)
     model_id_with_hash = ModelId(
         namespace=repo_namespace,
         name=repo_name,
-        epoch=config.epoch, 
-        hash=regenerate_hash(repo_namespace, repo_name, config.epoch, config.competition_id),
+        epoch=config.epoch,
+        hash=str(model_hash),
         commit=model_id_with_commit.commit,
         competition_id=config.competition_id,
     )
@@ -162,7 +169,7 @@ async def main(config: bt.config):
             await model_metadata_store.store_model_metadata(
                 wallet.hotkey.ss58_address, model_id_with_hash
             )
-            update_repo_visibility(
+            update_repo_settings(
                 model_id.namespace + "/" + model_id.name,
                 private=False,
                 token=os.getenv("HF_ACCESS_TOKEN"),
