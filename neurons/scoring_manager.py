@@ -42,6 +42,7 @@ class ModelScoreTaskData(BaseModel):
     score: Optional[float] = None
     status: ModelScoreStatus = ModelScoreStatus.SCORING
     started_at: datetime = Field(default_factory=datetime.now)
+    error: Optional[str] = None
 
     @computed_field
     @property
@@ -168,11 +169,16 @@ class ScoringManager:
     def _score_model_wrapped(self, inputs: ScoreModelInputs, result_queue: multiprocessing.Queue):
         """ Wraps the scoring process in a queue to get the result """
         try:
+            bt.logging.info(f"Starting scoring for model: {inputs.hf_repo_id}")
             score = self._score_model(inputs)
+            bt.logging.info(f"Completed scoring for model: {inputs.hf_repo_id}")
             result_queue.put(('success', score))
         except Exception as e:
-            bt.logging.error(f"Failed to score model {inputs.hf_repo_id}: {str(e)}\n{traceback.format_exc()}")
-            result_queue.put(('error', str(e)))
+            error_msg = f"{str(e)}\n{traceback.format_exc()}"
+            bt.logging.error(f"Failed to score model {inputs.hf_repo_id}: {error_msg}")
+            result_queue.put(('error', error_msg))
+        finally:
+            bt.logging.info(f"Scoring process completed for model: {inputs.hf_repo_id}")
 
     def start_scoring(self, inputs: ScoreModelInputs):
         """ Starts the scoring process """
@@ -211,6 +217,7 @@ class ScoringManager:
             if status == 'error':
                 self.current_task.status = ModelScoreStatus.FAILED
                 self.current_task.score = None
+                self.current_task.error = result
                 return
 
             self.current_task.status = ModelScoreStatus.COMPLETED if result is not None else ModelScoreStatus.FAILED
