@@ -93,16 +93,15 @@ class HuggingFaceModelStore(RemoteModelStore):
         api = HfApi(token=token)
         export_readme(model.local_repo_dir)
         export_hotkey(model.local_repo_dir, hotkey)
-        files_to_upload = get_required_files(model.id.epoch, model.id.competition_id) + [README_FILE] + [HOTKEY_FILE]
         hf_repo_id = model.id.namespace + "/" + model.id.name
         api.create_repo(
             repo_id=hf_repo_id,
             exist_ok=True,
             private=True,
         )
-        for filename in files_to_upload:
-            commit_info = api.upload_file(repo_id=hf_repo_id, path_in_repo=filename, path_or_fileobj=os.path.join(model.local_repo_dir, filename))
-        print(f"Successfully uploaded checkpoint '{model.local_repo_dir}' @ epoch={model.id.epoch} to {hf_repo_id}")
+        commit_info = api.upload_folder(repo_id=hf_repo_id, folder_path=model.local_repo_dir, use_auth_token=True)
+        
+        print(f"Successfully uploaded model repository '{model.local_repo_dir}' to {hf_repo_id}")
         
         model_id_with_commit = ModelId(
             namespace=model.id.namespace,
