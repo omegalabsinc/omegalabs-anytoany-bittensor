@@ -12,7 +12,6 @@ from fastapi.security import HTTPBasicCredentials, HTTPBasic
 from starlette import status
 from substrateinterface import Keypair
 from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.eval_leaderboard import init_database as init_eval_database, EvalLeaderboardManager
@@ -184,33 +183,6 @@ class ModelScoreResponse(BaseModel):
 
 async def main():
     app = FastAPI()
-
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "https://sn21.ai",
-            "https://omega-v2v-git-eval-dashboard-omegalabs.vercel.app"
-        ],
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
-        allow_headers=[
-            "Access-Control-Allow-Headers",
-            "Access-Control-Allow-Origin",
-            "Authorization",
-            "Content-Type",
-            "X-Requested-With",
-            "Accept",
-            "Origin",
-            "Access-Control-Request-Method",
-            "Access-Control-Request-Headers"
-        ],
-        expose_headers=[
-            "Access-Control-Allow-Origin",
-            "Access-Control-Allow-Credentials"
-        ],
-        max_age=3600
-    )
 
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
@@ -413,7 +385,7 @@ async def main():
                     else:
                         all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
-                            'competition_id': data['competition_id'],
+                            'competition_id': None,
                             'score': None,
                             'scored_at': None,
                             'block': None,
