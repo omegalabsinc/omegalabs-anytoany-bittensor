@@ -61,6 +61,7 @@ class EvaluationResult(Base):
     result_name = Column(String(255))
     result = Column(Float)
     competition_id = Column(String(10))
+    deleted_at = Column(DateTime)
 
     evaluation = relationship("EvaluationModel", back_populates="results")
 
@@ -101,52 +102,74 @@ class EvalLeaderboardManager:
                 bt.logging.error(f"Error executing operation: {str(e)}")
                 raise
 
-
+    
     def get_metrics_timeseries(self) -> Dict[str, List[Dict]]:
         """
         Get time series data for all turn metrics.
-        Returns data in format {metric_name: [{date: "", models: {model1: 123, model2: 456}}, ...]}
-        Groups multiple models under the models key for each date.
+        Returns data in format {metric_name: [{date: "", models: [{modelType: "", modelName: "", score: 123}, ...]}, ...]}
+        Groups models by model_type and includes model names in the data.
         """
         def _get_timeseries():
             with self.session_scope() as session:
                 evals = session.query(EvaluationModel).order_by(EvaluationModel.eval_date).all()
-                
+            
                 metrics = set()
+                # Get all non-deleted results that aren't the excluded metric
                 sample_results = session.query(EvaluationResult).filter(
-                    EvaluationResult.task == 'turn_metrics'
+                    EvaluationResult.result_name != "exact_match_stderr,flexible-extract",
+                    EvaluationResult.deleted_at.is_(None)  # SQLAlchemy's proper way to check for NULL
                 ).all()
                 for result in sample_results:
-                    if result.result_name.startswith('mean_') and result.result_name.endswith('_duration'):
-                        metric_name = result.result_name[5:-9]  # Remove 'mean_' and '_duration'
-                        metrics.add(metric_name)
-                
+                    metric_name = result.result_name
+                    metrics.add(metric_name)
                 timeseries_data = {metric: {} for metric in metrics}
+            
+                for eval_ in evals:
+                    date_str = eval_.eval_date.strftime('%Y-%m-%d')
+                    model_type = eval_.model_type
+                    model_name = eval_.model_name
+                    competition_id = eval_.competition_id
                 
-                for eval in evals:
-                    date_str = eval.eval_date.strftime('%Y-%m-%d')
-                    model_name = eval.model_name
-                    
-                    turn_results = [r for r in eval.results if r.task == 'turn_metrics']
-                    for result in turn_results:
-                        if result.result_name.startswith('mean_') and result.result_name.endswith('_duration'):
-                            metric_name = result.result_name[5:-9]
-                            if metric_name in metrics:
-                                if date_str not in timeseries_data[metric_name]:
-                                    timeseries_data[metric_name][date_str] = {
-                                        'date': date_str,
-                                        'models': {}
-                                    }
-                                timeseries_data[metric_name][date_str]['models'][model_name] = round(result.result, 2)
-                
+                    # Only process non-deleted results
+                    for result in [r for r in eval_.results if r.deleted_at is None]:
+                        metric_name = result.result_name
+                        if metric_name in metrics:
+                            if date_str not in timeseries_data[metric_name]:
+                                timeseries_data[metric_name][date_str] = {
+                                    'date': date_str,
+                                    'models': []
+                                }
+                            
+                            # Check if we already have an entry for this model_type
+                            existing_model = next(
+                                (m for m in timeseries_data[metric_name][date_str]['models'] 
+                                 if m['modelType'] == model_type),
+                                None
+                            )
+                            
+                            if existing_model:
+                                # Update existing entry
+                                existing_model['score'] = result.result
+                                if model_name not in existing_model['modelName']:
+                                    existing_model['modelName'] = model_name
+                            else:
+                                # Add new entry
+                                timeseries_data[metric_name][date_str]['models'].append({
+                                    'modelType': model_type,
+                                    'modelName': model_name,
+                                    'score': result.result,
+                                    'competition_id': competition_id,
+                                    'task': result.task
+                                })
+            
                 return {
                     metric: [
                         data_point for data_point in sorted(data.values(), key=lambda x: x['date'])
-                        if data_point['models']  # Filter out entries with empty models dict
+                        if data_point['models']  # Filter out entries with empty models list
                     ]
                     for metric, data in timeseries_data.items()
                 }
-
+        
         try:
             return self.execute_with_retry(_get_timeseries)
         except Exception as e:
