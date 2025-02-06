@@ -6,6 +6,7 @@ from enum import Enum
 import traceback
 import multiprocessing
 import time
+import docker
 
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
@@ -165,10 +166,33 @@ class ScoringManager:
             score = float(score)
         bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
         return score
+    
+    def kill_docker_images(self):
+        """
+        Kill and clean up docker images that have 'none' as image name or 'miner_' in the name
+        """
+        try:
+            client = docker.from_env()
+            images = client.images.list()
+            
+            for image in images:
+                # Check for None/<none> tags or miner_ prefix
+                if not image.tags or '<none>' in str(image.tags).lower() or any('miner_' in tag.lower() for tag in image.tags):
+                    bt.logging.info(f"Removing docker image: {image.id}")
+                    try:
+                        client.images.remove(image.id, force=True)
+                    except Exception as e:
+                        bt.logging.warning(f"Failed to remove image {image.id}: {str(e)}")
+                        
+        except Exception as e:
+            bt.logging.error(f"Failed to kill docker images: {str(e)}")
+            raise
+
 
     def _score_model_wrapped(self, inputs: ScoreModelInputs, result_queue: multiprocessing.Queue):
         """ Wraps the scoring process in a queue to get the result """
         try:
+            self.kill_docker_images()
             bt.logging.info(f"Starting scoring for model: {inputs.hf_repo_id}")
             score = self._score_model(inputs)
             bt.logging.info(f"Completed scoring for model: {inputs.hf_repo_id}")
