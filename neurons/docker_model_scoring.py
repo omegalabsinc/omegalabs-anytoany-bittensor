@@ -14,6 +14,7 @@ from evaluation.VideoCapt.ib_wrapper import ImageBind
 from neurons.docker_manager import DockerManager
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
 from constants import MAX_DS_FILES, MIN_AGE
+from tempfile import TemporaryDirectory
 
 # Constants
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -36,6 +37,7 @@ def get_timestamp_from_filename(filename: str):
 def pull_latest_dataset() -> Optional[Dataset]:
     """Pull latest dataset from HuggingFace."""
     try:
+        os.system("rm -rf ./data_cache/*")
         omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
         recent_files = [
             f.rfilename
@@ -48,14 +50,16 @@ def pull_latest_dataset() -> Optional[Dataset]:
             return None
 
         download_config = DownloadConfig(download_desc="Downloading Omega Multimodal Dataset")
-        temp_dir = './data_cache'
-        os.makedirs(temp_dir, exist_ok=True)
-        omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
-        omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+
+        with TemporaryDirectory(dir='./data_cache') as temp_dir:
+            print("temp_dir", temp_dir)
+            omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
+            omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+            return omega_dataset
+        
     except Exception as e:
         bt.logging.error(f"Error pulling dataset: {str(e)}")
         return None
-    return omega_dataset
 
 def verify_hotkey(hf_repo_id: str, local_dir: str, hotkey: str) -> bool:
     """Verify hotkey matches the one in the repository."""
