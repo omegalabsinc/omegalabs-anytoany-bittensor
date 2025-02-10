@@ -115,6 +115,8 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
             'total_samples': 0
         }
 
+        s2s_metrics = S2SMetrics(cache_dir=".checkpoints")
+
         # Process each sample in mini batch
         for i in range(len(mini_batch['youtube_id'])):
             youtube_id = mini_batch['youtube_id'][i]
@@ -161,7 +163,7 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
 
                 
                 # Compute metrics using S2SMetrics
-                s2s_metrics = S2SMetrics(cache_dir="./model_cache")
+                
                 metrics_dict = s2s_metrics.compute_distance(
                     gt_audio_arrs=[[diar_gt, sample_rate]], 
                     generated_audio_arrs=[[pred_audio, sample_rate]]
@@ -216,7 +218,7 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
 
 if __name__ == "__main__":
     for epoch in range(2):
-        for hf_repo_id in ["tezuesh/moshi_general", "tezuesh/moshi_general"]:
+        for hf_repo_id in ["shinthet/v1_model", "tezuesh/moshi_general"]:
             vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
             print(vals)
             exit(0)
