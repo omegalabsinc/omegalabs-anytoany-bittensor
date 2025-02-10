@@ -20,7 +20,7 @@ import os
 class S2SMetrics:
     """Speech-to-Speech evaluation metrics"""
     
-    def __init__(self, cache_dir: str = ".score_cache/"):
+    def __init__(self, cache_dir: str = ".checkpoints/"):
         """Initialize metrics with configuration"""
         # Setup cache directories
         self.cache_dir = cache_dir
