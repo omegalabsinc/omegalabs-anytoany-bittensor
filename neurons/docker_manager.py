@@ -284,7 +284,7 @@ class DockerManager:
             raise
     
 
-    def inference_ibllama(self, url: str, video_embed: List[float], timeout: int = 30) -> Dict[str, Any]:
+    def inference_ibllama(self, url: str, video_embed: List[float], timeout: int = 60) -> Dict[str, Any]:
         """
         Send inference request to container for IBLlama model.
         
