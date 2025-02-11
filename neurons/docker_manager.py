@@ -235,7 +235,7 @@ class DockerManager:
             bt.logging.error(f"inside docker_manager: Failed to cleanup Docker resources: {str(e)}")
             raise
 
-    def inference_v2v(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 30) -> Dict[str, Any]:
+    def inference_v2v(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 60) -> Dict[str, Any]:
         """
         Send inference request to container.
         
