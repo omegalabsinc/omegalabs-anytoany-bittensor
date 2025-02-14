@@ -57,10 +57,11 @@ class ChainModelMetadataStore(ModelMetadataStore):
         if not metadata:
             return None
 
-        commitment = metadata["info"]["fields"][0]
-        hex_data = commitment[list(commitment.keys())[0]][2:]
+        commitment = metadata["info"]["fields"][0][0]
 
-        chain_str = bytes.fromhex(hex_data).decode()
+        hex_data_tuple = commitment[list(commitment.keys())[0]][0]
+
+        chain_str = ''.join(chr(num) for num in hex_data_tuple)
 
         model_id = None
 
