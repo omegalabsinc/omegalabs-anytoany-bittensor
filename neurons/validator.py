@@ -777,25 +777,8 @@ class Validator:
         return HTTPBasicAuth(hotkey, signature)
 
     async def try_sync_metagraph(self, ttl: int):
-        def sync_metagraph(endpoint):
-            # Update self.metagraph
-            self.metagraph = bt.subtensor(endpoint).metagraph(self.config.netuid)
-            self.metagraph.save()
-            bt.logging.info(f"Metagraph synced and saved")
-
-        process = multiprocessing.Process(
-            target=sync_metagraph, args=(self.subtensor.chain_endpoint,)
-        )
-        process.start()
-        process.join(timeout=ttl)
-        if process.is_alive():
-            process.terminate()
-            process.join()
-            bt.logging.error(f"Failed to sync metagraph after {ttl} seconds")
-            return
-
+        self.metagraph = bt.subtensor(self.subtensor.chain_endpoint).metagraph(self.config.netuid)
         bt.logging.info("Synced metagraph")
-        self.metagraph.load()
         self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
 
     async def try_run_step(self, ttl: int):
