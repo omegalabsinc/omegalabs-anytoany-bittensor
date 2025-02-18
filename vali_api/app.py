@@ -58,16 +58,10 @@ def authenticate_with_bittensor(hotkey, metagraph):
 
 def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=10):
     """
-    Calculate stake-weighted average scores for each model using up to max_scores most recent scores.
-    Only includes scores for the most recent model version (identified by model_hash).
-    
-    Args:
-        recent_model_scores (dict): Dictionary of recent scores from get_recent_model_scores
-        metagraph: Metagraph object containing validator stakes
-        max_scores (int): Maximum number of recent scores to include
-        
-    Returns:
-        dict: Dictionary of weighted scores by UID
+    Calculate stake-weighted scores handling zero scores:
+    1. If all scores are 0 - keep them (model is likely broken)
+    2. If latest scores are 0 - keep them (model likely recently broke)
+    3. Otherwise - remove zeros from calculation
     """
     weighted_scores = {}
     
@@ -125,21 +119,36 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
                     'score_details': []
                 }
                 continue
+
+            # Analyze the zero score pattern
+            total_scores = len(processed_scores)
             
-            # Calculate weighted average using all processed scores
-            total_stake = sum(score['stake'] for score in processed_scores)
-            weighted_sum = sum(
-                score['score'] * score['stake'] 
-                for score in processed_scores
-            )
+            # Case 1: All scores are zero
+            if all(s['score'] == 0 for s in processed_scores):
+                logging.warning(f"All scores are zero for model {scores[0]['hotkey']}. Model may be non-functional.")
+                final_scores = processed_scores
+                
+            # Case 2: Latest scores (last 3) are all zero
+            elif len(processed_scores) >= 3 and all(s['score'] == 0 for s in processed_scores[:3]):
+                logging.warning(f"Latest 3 scores are zero for model {scores[0]['hotkey']}. Recent model issue likely.")
+                final_scores = processed_scores
+                
+            # Case 3: Remove zeros from calculation
+            else:
+                final_scores = [s for s in processed_scores if s['score'] > 0]
+                if len(final_scores) == 0:
+                    final_scores = processed_scores  # Fallback if all scores would be removed
+            
+            # Calculate weighted average
+            total_stake = sum(score['stake'] for score in final_scores)
+            weighted_sum = sum(score['score'] * score['stake'] for score in final_scores)
             
             if total_stake > 0:
                 avg_score = weighted_sum / total_stake
             else:
                 avg_score = None
                 
-            # Count unique validators for information
-            unique_validators = len(set(score['scorer_hotkey'] for score in processed_scores))
+            unique_validators = len(set(score['scorer_hotkey'] for score in final_scores))
 
             weighted_scores[uid][model_key] = {
                 'score': avg_score,
@@ -147,9 +156,15 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
                 'hotkey': scores[0]['hotkey'],
                 'competition_id': scores[0]['competition_id'],
                 'block': scores[0]['block'],
-                'model_hash': latest_model_hash,  # Include the model hash in output
-                'num_scores': len(processed_scores),
+                'model_hash': latest_model_hash,
+                'num_scores': len(final_scores),
                 'unique_validators': unique_validators,
+                'score_pattern': {
+                    'total_scores': total_scores,
+                    'zero_scores': len([s for s in processed_scores if s['score'] == 0]),
+                    'non_zero_scores': len([s for s in processed_scores if s['score'] > 0]),
+                    'latest_three_zeros': all(s['score'] == 0 for s in processed_scores[:3]) if len(processed_scores) >= 3 else False
+                },
                 'score_details': [{
                     'hotkey': score['scorer_hotkey'],
                     'stake': score['stake'],
@@ -157,19 +172,8 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
                     'timestamp': score['timestamp'],
                     'weight': score['stake'] / total_stake if total_stake > 0 else 0,
                     'model_hash': score['model_hash']
-                } for score in processed_scores]
+                } for score in final_scores]
             }
-            
-            """
-            logging.debug(
-                f"Model {scores[0]['hotkey']} (UID {uid}) - "
-                f"Model Hash: {latest_model_hash} - "
-                f"Weighted avg: {avg_score}, "
-                f"Total scores: {len(processed_scores)}, "
-                f"Unique validators: {unique_validators}, "
-                f"Total stake: {total_stake}"
-            )
-            """
     
     return weighted_scores
 
