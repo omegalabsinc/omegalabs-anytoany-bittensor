@@ -92,14 +92,13 @@ async def main():
 
     async def restart_wandb_session(server):
         if not config.wandb.off:
-            time_since_update = datetime.now()
             while True:
                 if server.should_exit:
                     bt.logging.info(f'Terminating restart_wandb_session thread')
                     break
 
-                if time_since_update + timedelta(seconds=scoring_manager.update_check_interval) > datetime.now():
-                    scoring_manager.check_wandb_run()
+                # Check if we need to restart wandb session
+                scoring_manager.check_wandb_run()
 
                 # only sleep for 10 seconds, in order to respect the server shutdown
                 await asyncio.sleep(10)
