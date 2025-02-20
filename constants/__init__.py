@@ -3,14 +3,20 @@ from dataclasses import dataclass
 from typing import Type, Optional, Any, List, Tuple
 import math
 
+# ---------------------------------
+# Competition Parameters
+# ---------------------------------
 
 @dataclass
 class CompetitionParameters:
-    """Class defining model parameters"""
-
-    # Reward percentage
+    """
+    Class defining competition model parameters.
+    
+    Attributes:
+        reward_percentage (float): Percentage of total rewards allocated to this competition (0-1)
+        competition_id (str): Unique identifier for the competition
+    """
     reward_percentage: float
-    # Competition id
     competition_id: str
 
 
@@ -28,6 +34,7 @@ ROOT_DIR = Path(__file__).parent.parent
 MAX_HUGGING_FACE_BYTES: int = 18 * 1024 * 1024 * 1024
 O1_MODEL_ID = "o1"
 V1_MODEL_ID = "v1"
+
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
@@ -53,8 +60,9 @@ weights_version_key = 1
 
 # validator weight moving average term
 alpha = 0.9
-# validator scoring exponential temperature
-temperature = 0.08
+# Validator scoring exponential temperature
+# Extremely low to create strong winner-takes-all effect
+temperature = 0.0001
 # validator score boosting for earlier models.
 timestamp_epsilon = 0.01
 
