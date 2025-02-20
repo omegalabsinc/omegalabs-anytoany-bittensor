@@ -83,15 +83,15 @@ def should_exclude(path: str) -> bool:
 
 def get_model_content_hash(model_path: str) -> str:
     """
-    Generate a deterministic hash based on directory structure and file sizes.
-    Excludes certain directories/files and ensures consistent behavior across machines.
+    Generate a hash based on file sizes for files larger than 250MB.
     """
     # Set deterministic mode for all operations
     set_deterministic_mode()
     
+    SIZE_THRESHOLD = 250 * 1024 * 1024  # 250MB in bytes
     combined_hash = hashlib.sha256()
     
-    # Store directory structure and file information
+    # Store large file information
     structure_info = []
     
     for root, dirs, files in os.walk(model_path):
@@ -104,13 +104,14 @@ def get_model_content_hash(model_path: str) -> str:
             if should_exclude(file_path):
                 continue
             
+            file_size = os.path.getsize(file_path)
+            if file_size < SIZE_THRESHOLD:
+                continue
+                
             # Get path relative to model_path
             rel_path = os.path.relpath(file_path, model_path)
             # Normalize to forward slashes
             normalized_path = rel_path.replace('\\', '/').strip('/')
-            
-            # Get file size
-            file_size = os.path.getsize(file_path)
             
             structure_info.append({
                 'path': normalized_path,
@@ -164,12 +165,12 @@ def get_combined_model_hash(model_path: str, metadata: Dict[str, Any]) -> str:
 
 def get_tree_hash(model_path: str) -> str:
     """
-    Generate a hash based only on the directory structure and file names,
-    ignoring file contents and sizes.
+    Generate a hash based on directory structure and file names for files smaller than 250MB.
     """
     # Set deterministic mode for all operations
     set_deterministic_mode()
     
+    SIZE_THRESHOLD = 250 * 1024 * 1024  # 250MB in bytes
     tree_hash = hashlib.sha256()
     
     # Store directory structure information
@@ -180,12 +181,16 @@ def get_tree_hash(model_path: str) -> str:
         dirs[:] = [d for d in dirs if not should_exclude(os.path.join(root, d))]
         dirs.sort()  # Ensure consistent directory traversal order
         
-        # Add file paths only (skip directory entries)
+        # Add file paths only if they're smaller than threshold
         for file in sorted(files):
             file_path = os.path.join(root, file)
             if should_exclude(file_path):
                 continue
             
+            file_size = os.path.getsize(file_path)
+            if file_size >= SIZE_THRESHOLD:
+                continue
+                
             # Get path relative to model_path
             rel_path = os.path.relpath(file_path, model_path)
             # Normalize to forward slashes
