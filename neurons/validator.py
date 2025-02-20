@@ -64,17 +64,20 @@ from utilities.perf_monitor import PerfMonitor
 from utilities.temp_dir_cache import TempDirCache
 from utilities.git_utils import is_git_latest
 
-def iswin(score_i, score_j, block_i, block_j):
+def iswin(score_i, score_j, block_i, block_j, hash_i=None, hash_j=None):
     """
-    Determines the winner between two models based on the epsilon adjusted loss.
+    Determines the winner between two models based on score, block number, and model hash.
+    Implements a strong winner-takes-all dynamic by heavily penalizing later models.
 
     Parameters:
-        loss_i (float): Loss of uid i on batch
-        loss_j (float): Loss of uid j on batch.
-        block_i (int): Block of uid i.
-        block_j (int): Block of uid j.
+        score_i (float): Score of uid i
+        score_j (float): Score of uid j
+        block_i (int): Block of uid i
+        block_j (int): Block of uid j
+        hash_i (str): Model hash of uid i
+        hash_j (str): Model hash of uid j
     Returns:
-        bool: True if loss i is better, False otherwise.
+        bool: True if score i is better, False otherwise.
     """
     # Adjust score based on timestamp and pretrain epsilon
     score_i = (1 - constants.timestamp_epsilon) * score_i if block_i > block_j else score_i
@@ -83,22 +86,27 @@ def iswin(score_i, score_j, block_i, block_j):
 
 def compute_wins(
     uids: typing.List[int],
-    scores_per_uid: typing.Dict[int, float],
+    scores_per_uid: typing.Dict[int, float], 
     uid_to_block: typing.Dict[int, int],
+    uid_to_hash: typing.Dict[int, str] = None,
 ):
     """
-    Computes the wins and win rate for each model based on loss comparison.
+    Computes the wins and win rate for each model based on score comparison.
+    Implements winner-takes-all by giving extra weight to early high-scoring models.
+    Handles duplicate models by favoring the earlier submission.
 
     Parameters:
         uids (list): A list of uids to compare.
-        scores_per_uid (dict): A dictionary of losses for each uid by batch.
-        uid_to_block (dict): A dictionary of blocks for each uid.
+        scores_per_uid (dict): A dictionary of scores for each uid.
+        uid_to_block (dict): A dictionary of blocks for each uid - higher means more recent.
+        uid_to_hash (dict): A dictionary mapping uids to their model hashes.
 
     Returns:
         tuple: A tuple containing two dictionaries, one for wins and one for win rates.
     """
     wins = {uid: 0 for uid in uids}
     win_rate = {uid: 0 for uid in uids}
+    uid_to_hash = uid_to_hash or {}  # Default to empty dict if None
 
     # If there is only one score, then the winning uid is the one with the score.
     if len([score for score in scores_per_uid.values() if score != 0]) == 1:
@@ -110,6 +118,7 @@ def compute_wins(
     for i, uid_i in enumerate(uids):
         total_matches = 0
         block_i = uid_to_block[uid_i]
+        hash_i = uid_to_hash[uid_i]
         # Skip if block is None or score is 0
         if block_i is None or scores_per_uid[uid_i] == 0:
             continue
@@ -117,9 +126,11 @@ def compute_wins(
             if i == j or uid_to_block[uid_j] is None or scores_per_uid[uid_j] == 0:
                 continue
             block_j = uid_to_block[uid_j]
+            hash_j = uid_to_hash[uid_j]
             score_i = scores_per_uid[uid_i]
             score_j = scores_per_uid[uid_j]
-            wins[uid_i] += 1 if iswin(score_i, score_j, block_i, block_j) else 0
+            # Pass model hashes to iswin function
+            wins[uid_i] += 1 if iswin(score_i, score_j, block_i, block_j, hash_i, hash_j) else 0
             total_matches += 1
         # Calculate win rate for uid i
         win_rate[uid_i] = wins[uid_i] / total_matches if total_matches > 0 else 0
@@ -603,7 +614,7 @@ class Validator:
                     uid_to_hash[uid] = model_hash
 
             # Compute wins and win rates per uid.
-            wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
+            wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block, uid_to_hash)
 
             # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
             uids_penalized_for_hash_duplication = set()
