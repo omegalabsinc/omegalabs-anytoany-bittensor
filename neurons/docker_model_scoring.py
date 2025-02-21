@@ -155,20 +155,26 @@ def compute_model_score(
                 
                 if not generated_caption:
                     continue
+                
+                if len(generated_caption) != len(actual_caption):
+                    similarities.extend([0.0] * len(actual_caption))
+                    continue
 
                 # Get text embeddings for similarity computation
-                text_embeddings = embed_model.embed_text(
-                    text=generated_caption + actual_caption
+                generated_embeddings = embed_model.embed_text(
+                    text=generated_caption
                 )
-                print("text embedding", text_embeddings.shape)
+                actual_embeddings = embed_model.embed_text(
+                    text=actual_caption
+                )
                 
-                if text_embeddings is None:
+                if generated_embeddings is None or actual_embeddings is None:
                     continue
 
                 # Compute similarity between generated and actual captions
                 text_similarity = torch.nn.functional.cosine_similarity(
-                    text_embeddings[0:1],  # First embedding (generated)
-                    text_embeddings[1:],   # Second embedding (actual)
+                    generated_embeddings,  # First embedding (generated)
+                    actual_embeddings,   # Second embedding (actual)
                     dim=-1
                 )
                 # print("text_similarity", text_similarity)
@@ -219,4 +225,5 @@ def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str,
     return score
 if __name__ == "__main__":
     # Example usage
-    run_o1_scoring(hf_repo_id="tezuesh/IBLlama_v1", hotkey=None, block=1, model_tracker=None, local_dir="./model_cache")
+    score = run_o1_scoring(hf_repo_id="kiwikiw/o1_2", hotkey=None, block=1, model_tracker=None, local_dir="./model_cache")
+    print("score", score)
