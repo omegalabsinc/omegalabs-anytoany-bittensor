@@ -54,15 +54,16 @@ weights_version_key = 1
 # validator weight moving average term
 alpha = 0.9
 # validator scoring exponential temperature
-temperature = 0.0001
+temperature = 0.005
 # validator score boosting for earlier models.
 timestamp_epsilon = 0.01
-
+penalty_score = 0.001
 # ---------------------------------
 # Model scoring parameters.
 # ---------------------------------
 
 MIN_AGE = 4 * 60 * 60  # 4 hours
 MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
+MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8

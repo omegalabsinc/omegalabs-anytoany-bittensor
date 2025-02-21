@@ -377,6 +377,7 @@ async def main():
                         print(f"Most Recent Score: {data['score_details'][0]['score']:.4f}")
                         print(f"Total Scores Used: {data['num_scores']}")
                         print(f"Unique Validators: {data['unique_validators']}")
+                        print(f"Score Pattern: {data['score_pattern']}")
                     
                         all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
@@ -385,6 +386,7 @@ async def main():
                             'scored_at': data['scored_at'],
                             'block': data['block'],
                             'model_hash': data['model_hash'],
+                            'score_details': data['score_details']
                         }]
                     else:
                         all_model_scores[uid] = [{
@@ -394,6 +396,7 @@ async def main():
                             'scored_at': None,
                             'block': None,
                             'model_hash': None,
+                            'score_details': None
                         }]
                     
                     # Print details of each score used in the average

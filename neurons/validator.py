@@ -572,6 +572,7 @@ class Validator:
             uid_to_block = {uid: None for uid in uids}
             uid_to_hash = {uid: None for uid in uids}
             sample_per_uid = {muid: None for muid in uids}
+            uid_to_non_zero_scores = {uid: 0 for uid in uids}  # Track non-zero scores per UID
 
             # Iterate through each UID and its associated models
             curr_model_scores = {
@@ -592,11 +593,21 @@ class Validator:
                 score = model_data.get('score', 0)
                 block = model_data.get('block', 0)
                 model_hash = model_data.get('model_hash', None)
+                score_details = model_data.get('score_details', [])
+
+                # Count non-zero scores from score_details
+                if score_details:
+                    non_zero_scores = sum(1 for detail in score_details if detail.get('score', 0) > 0)
+                    uid_to_non_zero_scores[uid] = non_zero_scores
+                
                 if model_hash == "":
                     model_hash = None
                 
                 if score is not None:
-                    scores_per_uid[uid] = score
+                    # Only assign score if minimum non-zero scores requirement is met
+                    if uid_to_non_zero_scores[uid] >= constants.MIN_NON_ZERO_SCORES:
+                        scores_per_uid[uid] = score
+                    
                 if block is not None:
                     uid_to_block[uid] = block
                 if model_hash is not None:

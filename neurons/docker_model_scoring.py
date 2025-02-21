@@ -15,6 +15,7 @@ from neurons.docker_manager import DockerManager
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
 from constants import MAX_DS_FILES, MIN_AGE
 from tempfile import TemporaryDirectory
+import constants
 
 # Constants
 HF_DATASET = "omegalabsinc/omega-multimodal"
@@ -157,7 +158,7 @@ def compute_model_score(
                     continue
                 
                 if len(generated_caption) != len(actual_caption):
-                    similarities.extend([0.0] * len(actual_caption))
+                    similarities.extend([constants.penalty_score] * len(actual_caption))
                     continue
 
                 # Get text embeddings for similarity computation
