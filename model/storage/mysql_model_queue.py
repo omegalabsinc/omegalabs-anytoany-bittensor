@@ -430,7 +430,7 @@ class ModelQueueManager:
             bt.logging.error(f"Failed to reset stale tasks after {self.max_retries} attempts: {str(e)}")
             return 0
     
-    def get_recent_model_scores(self, scores_per_model=10):
+    def get_recent_model_scores(self, scores_per_model):
         """
         Get recent scores for all models.
         
@@ -453,6 +453,7 @@ class ModelQueueManager:
                             ).label('score_rank')
                         )
                         .filter(ScoreHistory.is_archived == False)
+                        .filter(ScoreHistory.score != 0)
                         .subquery()
                     )
 
@@ -478,7 +479,6 @@ class ModelQueueManager:
                         and_(
                             ModelQueue.hotkey == recent_scores.c.hotkey,
                             ModelQueue.uid == recent_scores.c.uid,
-                            recent_scores.c.score != 0
                         )
                     ).order_by(
                         ModelQueue.uid,
