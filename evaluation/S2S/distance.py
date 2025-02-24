@@ -14,7 +14,7 @@ from transformers import (
 )
 from evaluation.S2S.rawnet.inference import RawNet3Inference
 import bittensor as bt
-
+import constants
 import os
 
 class S2SMetrics:
@@ -336,13 +336,13 @@ class S2SMetrics:
         except Exception as e:
             bt.logging.error(f"Overall metric computation error: {e}")
             return {
-                'mimi_score': [0.0],
-                'wer_score': [0.0],
-                'length_penalty': [0.0],
-                'pesq_score': [0.0],
-                'anti_spoofing_score': [0.0],
-                'combined_score': [0.0],
-                'compute_score': [0.0]
+                'mimi_score': [constants.penalty_score],
+                'wer_score': [constants.penalty_score],
+                'length_penalty': [constants.penalty_score],
+                'pesq_score': [constants.penalty_score],
+                'anti_spoofing_score': [constants.penalty_score],
+                'combined_score': [constants.penalty_score],
+                'compute_score': [constants.penalty_score]
             }
 
     def load_rawnet3(self, model_path: str, device: str = "cuda") -> RawNet3Inference:

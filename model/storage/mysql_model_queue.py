@@ -430,7 +430,7 @@ class ModelQueueManager:
             bt.logging.error(f"Failed to reset stale tasks after {self.max_retries} attempts: {str(e)}")
             return 0
     
-    def get_recent_model_scores(self, scores_per_model=10):
+    def get_recent_model_scores(self, scores_per_model):
         """
         Get recent scores for all models.
         
@@ -453,6 +453,7 @@ class ModelQueueManager:
                             ).label('score_rank')
                         )
                         .filter(ScoreHistory.is_archived == False)
+                        .filter(ScoreHistory.score != 0)
                         .subquery()
                     )
 
@@ -466,6 +467,7 @@ class ModelQueueManager:
                         ModelQueue.uid,
                         ModelQueue.hotkey,
                         ModelQueue.competition_id,
+                        ModelQueue.model_metadata,
                         recent_scores.c.score,
                         recent_scores.c.scored_at,
                         recent_scores.c.block,
@@ -476,7 +478,7 @@ class ModelQueueManager:
                         recent_scores,
                         and_(
                             ModelQueue.hotkey == recent_scores.c.hotkey,
-                            ModelQueue.uid == recent_scores.c.uid
+                            ModelQueue.uid == recent_scores.c.uid,
                         )
                     ).order_by(
                         ModelQueue.uid,
@@ -494,6 +496,7 @@ class ModelQueueManager:
                             scores_by_uid[result.uid][model_key].append({
                                 'hotkey': result.hotkey,
                                 'competition_id': result.competition_id,
+                                'model_metadata': result.model_metadata,
                                 'score': result.score,
                                 'scored_at': result.scored_at.isoformat() if result.scored_at else None,
                                 'block': result.block,
@@ -508,6 +511,7 @@ class ModelQueueManager:
                                 scores_by_uid[result.uid][model_key].append({
                                     'hotkey': result.hotkey,
                                     'competition_id': None,
+                                    'model_metadata': result.model_metadata,
                                     'score': None,
                                     'scored_at': None,
                                     'block': None,

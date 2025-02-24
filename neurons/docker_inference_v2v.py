@@ -13,7 +13,7 @@ from pathlib import Path
 from neurons.docker_manager import DockerManager
 from evaluation.S2S.distance import S2SMetrics
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
-from constants import MAX_DS_FILES, MIN_AGE
+from constants import MAX_DS_FILES, MIN_AGE, penalty_score
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
@@ -95,7 +95,7 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
                     hotkey_contents = file.read()
                 if hotkey_contents != hotkey:
                     bt.logging.warning("Hotkey mismatch. Returning score of 0.")
-                    return 0
+                    return penalty_score
             except huggingface_hub.utils.EntryNotFoundError:
                 bt.logging.info("No hotkey file found in repository")
             except Exception as e:
