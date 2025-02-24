@@ -125,7 +125,7 @@ def compute_model_score(
 
         # Verify hotkey if provided
         if hotkey and not verify_hotkey(hf_repo_id, local_dir, hotkey):
-            return 0
+            return constants.penalty_score
 
         log_gpu_memory('after container start')
 
