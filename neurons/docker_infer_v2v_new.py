@@ -10,6 +10,7 @@ import numpy as np
 import random
 import bittensor as bt
 from pathlib import Path
+import soundfile as sf  # Add soundfile for saving audio
 from neurons.docker_manager import DockerManager
 from evaluation.S2S.distance_new import S2SMetrics
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
@@ -17,17 +18,77 @@ from constants import MAX_DS_FILES, MIN_AGE, penalty_score
 
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
+AUDIO_TEST_DIR = "AUDIO_TEST"  # Define the base directory for saving audio
+
+
 
 def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
 
+# def pull_latest_diarization_dataset() -> Optional[Dataset]:
+#     # Ensure data_cache_temp directory exists
+#     os.makedirs('data_cache_temp/datasets--omegalabsinc--omega-voice/snapshots/6435ce15c491b5f0ebf0d641cc4cf894e79add24/default/train/230', exist_ok=True)
+    
+#     omega_dataset = load_dataset(
+#         "parquet",
+#         data_files="data_cache_temp/datasets--omegalabsinc--omega-voice/snapshots/6435ce15c491b5f0ebf0d641cc4cf894e79add24/default/train/230/01JJSZ4R6DEGJJR5WVVQ5SE0GP.parquet",  # Use the actual downloaded file path
+#     )['train']
+
+#     print(omega_dataset)
+    
+#     # If we couldn't load from local files, fetch from HuggingFace
+#     # if omega_dataset is None:
+#     #     bt.logging.info("Local dataset not found, fetching from HuggingFace")
+#     #     omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
+#     #     recent_files = [
+#     #         f.rfilename
+#     #         for f in omega_ds_files if
+#     #         f.rfilename.startswith(DATA_FILES_PREFIX) and
+#     #         time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
+#     #     ][:MAX_DS_FILES]
+
+#     #     download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")
+
+#     #     if len(recent_files) == 0:
+#     #         return None
+#     #     omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
+
+#     # Process the dataset regardless of how it was loaded
+#     omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
+#     # omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+
+#     overall_dataset = {k: [] for k in omega_dataset.features.keys()}
+
+#     for i in range(len(omega_dataset['audio'])):
+#         audio_array = omega_dataset['audio'][i]
+#         diar_timestamps_start = np.array(omega_dataset['diar_timestamps_start'][i])
+#         diar_speakers = np.array(omega_dataset['diar_speakers'][i])
+
+#         if len(set(diar_speakers)) == 1:
+#             continue
+
+#         for k in omega_dataset.features.keys():
+#             value = audio_array if k == 'audio' else omega_dataset[k][i]
+#             overall_dataset[k].append(value)
+
+#         if len(overall_dataset['audio']) >= 8:
+#             break
+
+#     if len(overall_dataset['audio']) < 1:
+#         return None
+
+#     return Dataset.from_dict(overall_dataset)
+
 def pull_latest_diarization_dataset() -> Optional[Dataset]:
+    # Ensure data_cache directory exists
+    os.makedirs('./data_cache', exist_ok=True)
+    
     omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
     recent_files = [
         f.rfilename
         for f in omega_ds_files if
         f.rfilename.startswith(DATA_FILES_PREFIX) and
-        time.time() - get_timestamp_from_filename(f.rfilename) < 30*60*60
+        time.time() - get_timestamp_from_filename(f.rfilename) < MIN_AGE
     ][:MAX_DS_FILES]
 
     download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")
@@ -62,9 +123,13 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
 
         return Dataset.from_dict(overall_dataset)
 
+
 def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
     cleanup_gpu_memory()
     log_gpu_memory('before container start')
+    
+    # Ensure local directory exists
+    os.makedirs(local_dir, exist_ok=True)
     
     # Initialize Docker manager
     docker_manager = DockerManager(base_cache_dir=local_dir)
@@ -107,15 +172,18 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
         # Initialize metrics
         metrics = {
             'semantic_similarity_score': [],
-            'naturalness_score': [],
-            'pesq_score': [],
-            'anti_spoofing_score': [],
+            'naturalness_score': [], 
             'length_penalty': [],
-            'combined_score': [],
-            'total_samples': 0
+            'combined_score': []
         }
 
         s2s_metrics = S2SMetrics(cache_dir=".checkpoints")
+        
+        # Create directory for saving audio files
+        repo_dir_name = hf_repo_id.replace('/', '_')
+        audio_save_dir = os.path.join(AUDIO_TEST_DIR, repo_dir_name)
+        os.makedirs(audio_save_dir, exist_ok=True)
+        bt.logging.info(f"Created directory for saving audio: {audio_save_dir}")
 
         # Process each sample in mini batch
         for i in range(len(mini_batch['youtube_id'])):
@@ -160,10 +228,25 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
                     continue
 
                 metrics['total_samples'] += 1
-
+                
+                # Save the input, ground truth, and generated audio files
+                timestamp = int(time.time())
+                
+                # Save input audio
+                input_path = os.path.join(audio_save_dir, f"input_{youtube_id}_{i}_{timestamp}.wav")
+                sf.write(input_path, diar_sample.squeeze(), sample_rate)
+                
+                # Save ground truth audio
+                gt_path = os.path.join(audio_save_dir, f"gt_{youtube_id}_{i}_{timestamp}.wav")
+                sf.write(gt_path, diar_gt, sample_rate)
+                
+                # Save generated audio
+                pred_path = os.path.join(audio_save_dir, f"pred_{youtube_id}_{i}_{timestamp}.wav")
+                sf.write(pred_path, pred_audio.squeeze(), sample_rate)
+                
+                bt.logging.info(f"Saved audio files for sample {i} in {audio_save_dir}")
                 
                 # Compute metrics using S2SMetrics
-                
                 metrics_dict = s2s_metrics.compute_distance(
                     gt_audio_arrs=[[diar_gt, sample_rate]], 
                     generated_audio_arrs=[[pred_audio, sample_rate]]
@@ -176,10 +259,13 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
                 bt.logging.error(f"Error during inference: {str(e)}")
                 continue
 
-        mean_score = np.mean(metrics['combined_score'])
+        mean_score = 0
+        if metrics['combined_score']:
+            mean_score = np.mean(metrics['combined_score'])
+        mean_metrics = {k: np.mean(v) for k, v in metrics.items()}
         bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_score:0.5f}")
         
-        return mean_score
+        return mean_score, mean_metrics
         
     except Exception as e:
         bt.logging.error(f"Error in compute_s2s_metrics: {str(e)}")
@@ -199,9 +285,10 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
     diar_time = time.time()
     
     mini_batch = pull_latest_diarization_dataset()
+    print("DATASET LOADED")
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
     
-    vals = compute_s2s_metrics(
+    vals, mean_metrics = compute_s2s_metrics(
         hf_repo_id=hf_repo_id,
         mini_batch=mini_batch,
         local_dir=local_dir,
@@ -213,15 +300,18 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
     end_time = time.time()
     bt.logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
     bt.logging.info(f"Combined score: {vals}")
-    return vals
+    return vals, mean_metrics
 
 
 if __name__ == "__main__":
     import pandas as pd
-    df = pd.DataFrame(columns=["model", "combined_score", "semantic_similarity_score", "naturalness_score", "pesq_score", "anti_spoofing_score", "length_penalty"])
 
-    for hf_repo_id in ["trajan58/Q9sBuA1", "WenFengg/DeepSick_v1k6"]:
-        vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
-        df.loc[len(df)] = [hf_repo_id, vals[0], vals[1]['semantic_similarity_score'], vals[1]['naturalness_score'], vals[1]['pesq_score'], vals[1]['anti_spoofing_score'], vals[1]['length_penalty']]
+    for i in range(5):
+        df = pd.DataFrame(columns=["model", "combined_score", "semantic_similarity_score", "naturalness_score", "length_penalty"])
 
-    df.to_csv("v2v_scores.csv", index=False)
+        for hf_repo_id in ["trajan58/Q9sBuA1", "WenFengg/DeepSick_v1k6"]:
+            vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
+            df.loc[len(df)] = [hf_repo_id, vals[0], vals[1]['semantic_similarity_score'], vals[1]['naturalness_score'], vals[1]['length_penalty']]
+
+        df.to_csv(f"v2v_scores_{i}.csv", index=False)
+        os.system("docker system prune -a -f") 
