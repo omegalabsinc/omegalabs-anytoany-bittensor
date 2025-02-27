@@ -296,6 +296,7 @@ class S2SMetrics:
                 
                 # Calculate combined score
                 content_score = 0.4 * semantic_score + 0.6 * naturalness_score
+                length_penalty = 1.0
                 combined_score = content_score * length_penalty
                 
                 # Store results
@@ -324,7 +325,7 @@ class S2SMetrics:
             'combined_score': [constants.penalty_score]
         }
 
-if __name__ == "__main__":
-    # Enable detailed logging
-    # bt.logging.set_level(bt.logging.INFO)  # or DEBUG for more detail
-    main()
+# if __name__ == "__main__":
+    # # Enable detailed logging
+    # # bt.logging.set_level(bt.logging.INFO)  # or DEBUG for more detail
+    # main()

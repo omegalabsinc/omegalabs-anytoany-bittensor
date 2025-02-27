@@ -103,7 +103,9 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
 
         overall_dataset = {k: [] for k in omega_dataset.keys()}
 
+
         for i in range(len(omega_dataset['audio'])):
+            # print("total score", omega_dataset['total_score'][i])
             audio_array = omega_dataset['audio'][i]
             diar_timestamps_start = np.array(omega_dataset['diar_timestamps_start'][i])
             diar_speakers = np.array(omega_dataset['diar_speakers'][i])
@@ -117,6 +119,7 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
 
             if len(overall_dataset['audio']) >= 8:
                 break
+            
 
         if len(overall_dataset['audio']) < 1:
             return None
@@ -174,7 +177,8 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
             'semantic_similarity_score': [],
             'naturalness_score': [], 
             'length_penalty': [],
-            'combined_score': []
+            'combined_score': [],
+            'total_samples': 0
         }
 
         s2s_metrics = S2SMetrics(cache_dir=".checkpoints")
@@ -313,5 +317,5 @@ if __name__ == "__main__":
             vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
             df.loc[len(df)] = [hf_repo_id, vals[0], vals[1]['semantic_similarity_score'], vals[1]['naturalness_score'], vals[1]['length_penalty']]
 
-        df.to_csv(f"v2v_scores_{i}.csv", index=False)
+        df.to_csv(f"v2v_scores_old_{i}.csv", index=False)
         os.system("docker system prune -a -f") 
