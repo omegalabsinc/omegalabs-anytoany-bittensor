@@ -1,12 +1,14 @@
 import copy
 import datetime
 import threading
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import pickle
 import bittensor as bt
 import hashlib
 
+
 from model.data import ModelMetadata
+from utilities.model_hash import get_final_hash
 
 
 class NoopLock:
@@ -31,16 +33,17 @@ class ModelTracker:
         self.miner_hotkey_to_model_metadata_dict: dict[str, ModelMetadata] = dict()
         # Create a dict from miner hotkey to last time it was evaluated/loaded/updated
         self.miner_hotkey_to_last_touched_dict: dict[str, datetime.datetime] = dict()
-        # Create a dict from miner hotkey to model hash.
-        self.miner_hotkey_to_model_hash_dict: dict[str, str] = dict()
+        # Create a dict from miner hotkey to model hash
+        self.miner_hotkey_to_hash_dict: dict[str, str] = dict()
+        # Track submission blocks for each model
+        self.miner_hotkey_to_block_dict: dict[str, int] = dict()
 
-        # List of overwritten models that may be safe to delete if not curently in use.
+        # List of overwritten models that may be safe to delete if not currently in use
         self.old_model_metadata: list[tuple[str, ModelMetadata]] = []
-        # List of model metadata that are currently in use.
+        # List of model metadata that are currently in use
         self.model_metadata_in_use: set[tuple[str, str]] = set()
 
-        # Make this class thread safe because it will be accessed by multiple threads.
-        # One for the downloading new models loop and one for the validating models loop.
+        # Make this class thread safe because it will be accessed by multiple threads
         self.lock = threading.RLock() if thread_safe else NoopLock()
 
     def save_state(self, filepath):
@@ -174,51 +177,62 @@ class ModelTracker:
 
             bt.logging.trace(f"Touched All Miners. datetime={now}.")
 
-    def update_model_hash(self, hotkey: str, new_model_hash: str) -> bool:
+    def update_model_hash(self, hotkey: str, new_model_hash: str, block: int) -> bool:
         """
-        Update the model_hash for a given hotkey.
+        Update the model_hash and block number for a given hotkey.
         
         Args:
         hotkey (str): The miner's hotkey.
         new_model_hash (str): The new model hash to be set.
+        block (int): The block number for this model.
         
         Returns:
         bool: True if the update was successful, False if the hotkey was not found.
         """
         with self.lock:
-            self.miner_hotkey_to_model_hash_dict[hotkey] = new_model_hash
+            self.miner_hotkey_to_hash_dict[hotkey] = new_model_hash
+            self.miner_hotkey_to_block_dict[hotkey] = block
             return True
 
-    def calculate_file_hash(self, file_path: str) -> str:
+    def calculate_file_hash(self, folder_path: str) -> str:
         """Calculate SHA1 hash of a file."""
-        sha1 = hashlib.sha1()
-        with open(file_path, 'rb') as f:
-            while True:
-                data = f.read(65536)  # Read in 64kb chunks
-                if not data:
-                    break
-                sha1.update(data)
-        return sha1.hexdigest()
+        return get_final_hash(folder_path)
 
-    def is_model_unique(self, hotkey_to_check: str, block_to_check: int, model_checkpoint_path: str) -> bool:
-        """Check if a model with a given model_hash is already in use."""
-        # generate hash from model_checkpoint_path
-        hash_to_check = self.calculate_file_hash(model_checkpoint_path)
-
+    def is_model_unique(self, hotkey_to_check: str, block_to_check: int, model_path: str) -> Tuple[bool, str]:
+        """
+        Check if a model is unique or a duplicate of an existing model.
+        Returns:
+        - bool: True if model is unique, False if duplicate
+        - str: Final hash of the model
+        """
         with self.lock:
+            # Generate final hash that combines both tree structure and content
+            model_hash = get_final_hash(model_path)
+            
             for hotkey, metadata in self.miner_hotkey_to_model_metadata_dict.items():
-                if hotkey == hotkey_to_check or hotkey not in self.miner_hotkey_to_model_hash_dict:
+                if hotkey == hotkey_to_check or hotkey not in self.miner_hotkey_to_hash_dict:
                     continue
                 
-                if self.miner_hotkey_to_model_hash_dict[hotkey] == hash_to_check and metadata.block < block_to_check:
-                    bt.logging.warning(
-                        f"*** Model with hash {hash_to_check} on block {block_to_check} is not unique. Already in use by {hotkey} on block {metadata.block} for model {metadata.id.namespace}/{metadata.id.name}. ***"
-                    )
-                    # Update the model hash for the hotkey
-                    self.update_model_hash(hotkey_to_check, hash_to_check)
-                    return False, hash_to_check
+                if metadata is None:
+                    continue
+
+                # Get existing hash and block
+                existing_hash = self.miner_hotkey_to_hash_dict.get(hotkey)
+                existing_block = self.miner_hotkey_to_block_dict.get(hotkey)
                 
-            # Update the model hash for the hotkey
-            self.update_model_hash(hotkey_to_check, hash_to_check)
-            return True, hash_to_check
-        
+                if existing_block is None or existing_hash is None:
+                    continue
+
+                # Check for duplicates
+                if model_hash == existing_hash and existing_block < block_to_check:
+                    bt.logging.warning(
+                        f"Model at block {block_to_check} is duplicate of model from {hotkey} "
+                        f"at block {existing_block}."
+                    )
+                    # Store hash for the duplicate model
+                    self.update_model_hash(hotkey_to_check, model_hash, block_to_check)
+                    return False, model_hash
+
+            # No duplicates found, store hash for new model
+            self.update_model_hash(hotkey_to_check, model_hash, block_to_check)
+            return True, model_hash
