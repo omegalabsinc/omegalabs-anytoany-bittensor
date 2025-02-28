@@ -311,11 +311,18 @@ class S2SMetrics:
                 pesq_scores,
                 anti_spoofing_scores
             ):
+                PESQ_COEFFICIENT = 0.2
+                ANTI_SPOOFING_COEFFICIENT = 0.45
+                MIMI_COEFFICIENT = 0.17
+                WER_COEFFICIENT = 0.18
                 try:
                     m, w, l, p, a = scores
-                    geometric_mean = (p * a) ** 0.5
-                    arithmetic_mean = (m + w) / 2
-                    combined = (geometric_mean * 0.6 + arithmetic_mean * 0.4) * l
+                    combined = (
+                        p * PESQ_COEFFICIENT +
+                        a * ANTI_SPOOFING_COEFFICIENT +
+                        m * MIMI_COEFFICIENT +
+                        w * WER_COEFFICIENT
+                    ) * l
                     combined_scores.append(combined)
                 except Exception as e:
                     bt.logging.error(f"Combined score calculation error: {e}")
