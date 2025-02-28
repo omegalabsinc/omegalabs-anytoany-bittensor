@@ -19,3 +19,6 @@ pesq==0.0.4
 librosa==0.10.2.post1
 wandb==0.19.1
 python-dotenv==1.0.1
+torchmetrics==1.6.1
+onnxruntime-gpu 
+requests
