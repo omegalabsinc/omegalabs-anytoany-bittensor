@@ -31,11 +31,11 @@ V1_MODEL_ID = "v1"
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
-        reward_percentage=0.5,
+        reward_percentage=0.25,
         competition_id=O1_MODEL_ID,
     ),
     CompetitionParameters(
-        reward_percentage=0.5,
+        reward_percentage=0.75,
         competition_id=V1_MODEL_ID,
     ),
 ]
@@ -56,7 +56,7 @@ alpha = 0.9
 # validator scoring exponential temperature
 temperature = 0.01
 # validator score boosting for earlier models.
-timestamp_epsilon = 0.05
+timestamp_epsilon = 0.01
 penalty_score = 0.001
 # ---------------------------------
 # Model scoring parameters.
