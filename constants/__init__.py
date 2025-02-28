@@ -54,9 +54,9 @@ weights_version_key = 1
 # validator weight moving average term
 alpha = 0.9
 # validator scoring exponential temperature
-temperature = 0.08
+temperature = 0.01
 # validator score boosting for earlier models.
-timestamp_epsilon = 0.01
+timestamp_epsilon = 0.1
 penalty_score = 0.001
 # ---------------------------------
 # Model scoring parameters.
