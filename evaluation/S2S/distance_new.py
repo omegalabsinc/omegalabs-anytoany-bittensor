@@ -3,16 +3,14 @@ import numpy as np
 import librosa
 import bittensor as bt
 import pandas as pd
-import time
 import torch
-import torchaudio.functional as F
 from torchmetrics.audio.dnsmos import DeepNoiseSuppressionMeanOpinionScore
 from transformers import (
     WhisperForConditionalGeneration, 
     WhisperProcessor,
-    HubertModel,
-    Wav2Vec2FeatureExtractor
 )
+from sentence_transformers import SentenceTransformer
+import jiwer
 from typing import Dict, Optional, List, Any, Tuple
 from sklearn.metrics.pairwise import cosine_similarity
 import constants
@@ -21,62 +19,119 @@ import constants
 if not hasattr(constants, 'penalty_score'):
     constants.penalty_score = 0.0
 
-class HuBertEmbedder:
-    def __init__(self, cache_dir=".checkpoints/"):
-        # HuBERT uses the Wav2Vec2FeatureExtractor in newer transformers versions
-        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/hubert-base-ls960", cache_dir=cache_dir)
-        self.model = HubertModel.from_pretrained("facebook/hubert-base-ls960", cache_dir=cache_dir)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device)
-
-    def get_embedding(self, audio_arr, sample_rate):
-        # Check if audio array is valid
-        if audio_arr is None or len(audio_arr) == 0:
-            bt.logging.warning("Empty audio array provided to HuBertEmbedder")
-            return None
-            
-        # Convert to float32 and make sure it's the right shape
-        if isinstance(audio_arr, np.ndarray):
-            if len(audio_arr.shape) > 1 and audio_arr.shape[0] > 1:
-                # Convert stereo to mono by averaging channels
-                audio_arr = np.mean(audio_arr, axis=0)
-            
-            # Ensure it's a 1D array
-            audio_arr = audio_arr.squeeze()
+class WhisperTranscriber:
+    """Class for transcribing audio using Whisper and calculating text similarity."""
+    
+    def __init__(self, cache_dir=".checkpoints/", model_size="large-v2"):
+        """
+        Initialize WhisperTranscriber with specified model size.
         
-        # Check if audio is too short
-        if len(audio_arr) < 1000:  # Arbitrary minimum length
-            bt.logging.warning("Audio too short for HuBert embedding")
-            return None
+        Args:
+            cache_dir: Directory for caching model files
+            model_size: Whisper model size ('tiny', 'base', 'small', 'medium', 'large-v2')
+        """
+        self.cache_dir = cache_dir
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        # Load Whisper for transcription
+        bt.logging.info(f"Loading Whisper {model_size} for transcription...")
+        self.processor = WhisperProcessor.from_pretrained(f"openai/whisper-{model_size}", cache_dir=cache_dir)
+        self.model = WhisperForConditionalGeneration.from_pretrained(f"openai/whisper-{model_size}", cache_dir=cache_dir)
+        self.model.to(self.device)
+        self.model.eval()
+        
+        # Load SentenceTransformer for text similarity
+        bt.logging.info("Loading SentenceBERT for text similarity...")
+        self.sentence_transformer = SentenceTransformer('all-MiniLM-L6-v2', cache_folder=cache_dir)
+        self.sentence_transformer.to(self.device)
+    
+    def transcribe(self, audio, sample_rate):
+        """
+        Transcribe audio using Whisper.
+        
+        Args:
+            audio: Audio array
+            sample_rate: Sample rate of the audio
             
+        Returns:
+            Transcription text
+        """
         try:
-            inputs = self.feature_extractor(
-                audio_arr, 
-                sampling_rate=sample_rate, 
-                return_tensors="pt",
-                padding=True
-            )
+            # Ensure audio is at 16kHz for Whisper
+            if sample_rate != 16000:
+                audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
             
-            # Move to device
-            inputs = {key: val.to(self.device) for key, val in inputs.items()}
+            # Normalize audio
+            audio = audio / (np.max(np.abs(audio)) + 1e-8)
             
+            # Process with Whisper
             with torch.no_grad():
-                outputs = self.model(**inputs)
-                embeddings = outputs.last_hidden_state
+                input_features = self.processor(
+                    audio, 
+                    sampling_rate=16000, 
+                    return_tensors="pt"
+                ).input_features
+                input_features = input_features.to(self.device)
                 
-                # Check if embeddings are valid
-                if embeddings is None or embeddings.numel() == 0:
-                    bt.logging.warning("Empty embeddings from HuBert model")
-                    return None
-                    
-                # Average over time dimension
-                mean_embedding = torch.mean(embeddings, dim=1)
+                # Generate transcription
+                generated_ids = self.model.generate(input_features)
+                transcription = self.processor.batch_decode(
+                    generated_ids, 
+                    skip_special_tokens=True
+                )[0]
                 
-                # Move back to CPU for numpy conversion
-                return mean_embedding.cpu().numpy().squeeze()
+            return transcription
         except Exception as e:
-            bt.logging.error(f"Error in HuBert embedding: {e}")
-            return None
+            bt.logging.error(f"Transcription error: {e}")
+            return ""
+    
+    def calculate_text_similarity(self, text1, text2):
+        """
+        Calculate semantic similarity between two texts using SentenceBERT.
+        
+        Args:
+            text1: First text
+            text2: Second text
+            
+        Returns:
+            Similarity score between 0 and 1
+        """
+        try:
+            if not text1 or not text2:
+                return 0.0
+                
+            # Get embeddings
+            embedding1 = self.sentence_transformer.encode([text1])[0]
+            embedding2 = self.sentence_transformer.encode([text2])[0]
+            
+            # Calculate cosine similarity
+            similarity = cosine_similarity([embedding1], [embedding2])[0][0]
+            
+            return float(similarity)
+        except Exception as e:
+            bt.logging.error(f"Text similarity calculation error: {e}")
+            return 0.0
+    
+    def calculate_wer(self, reference, hypothesis):
+        """
+        Calculate Word Error Rate between reference and hypothesis.
+        
+        Args:
+            reference: Reference text
+            hypothesis: Hypothesis text
+            
+        Returns:
+            WER score (lower is better)
+        """
+        try:
+            if not reference:
+                return 1.0
+                
+            wer = jiwer.wer(reference, hypothesis)
+            return min(wer, 1.0)  # Cap at 1.0
+        except Exception as e:
+            bt.logging.error(f"WER calculation error: {e}")
+            return 1.0
 
 class S2SMetrics:
     def __init__(self, cache_dir: str = ".checkpoints/"):
@@ -88,14 +143,9 @@ class S2SMetrics:
         # Set device
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        # Load Whisper
-        bt.logging.info("Loading Whisper...")
-        self.processor = WhisperProcessor.from_pretrained("openai/whisper-large-v2", cache_dir=cache_dir)
-        self.model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-large-v2", cache_dir=cache_dir).to(self.device).eval()
-        
-        # Initialize HuBert for semantic similarity
-        bt.logging.info("Loading HuBert...")
-        self.hubert = HuBertEmbedder(cache_dir=cache_dir)
+        # Initialize Whisper transcriber for semantic similarity
+        bt.logging.info("Loading WhisperTranscriber...")
+        self.transcriber = WhisperTranscriber(cache_dir=cache_dir, model_size="large-v2")
         
         # Initialize DNSMOS for naturalness
         bt.logging.info("Loading DNSMOS...")
@@ -149,61 +199,48 @@ class S2SMetrics:
             return None
 
     def calculate_semantic_similarity(self, gt_audio_arr, generated_audio_arr, gt_sample_rate, generated_sample_rate) -> float:
-        """Calculate HuBert-based semantic similarity score between ground truth and generated audio"""
+        """Calculate semantic similarity based on Whisper transcription and text comparison"""
         try:
-            # Resample to HuBert's required sample rate (16000 Hz)
+            # Check for valid audio
+            if gt_audio_arr is None or generated_audio_arr is None:
+                bt.logging.warning("Invalid audio arrays provided for semantic similarity")
+                return constants.penalty_score
+                
+            # Ensure audio is not too short
+            min_length = 8000  # At least 0.5 second at 16kHz
+            if len(gt_audio_arr) / gt_sample_rate < 0.5 or len(generated_audio_arr) / generated_sample_rate < 0.5:
+                bt.logging.warning("Audio too short for reliable transcription")
+                return constants.penalty_score
+            
+            # Convert audio for processing
             gt_audio = self.convert_audio(gt_audio_arr, gt_sample_rate, 16000, 1)
-            generated_audio = self.convert_audio(generated_audio_arr, generated_sample_rate, 16000, 1)
+            gen_audio = self.convert_audio(generated_audio_arr, generated_sample_rate, 16000, 1)
             
-            if gt_audio is None or generated_audio is None:
-                bt.logging.warning("Failed to convert audio for semantic similarity calculation")
+            if gt_audio is None or gen_audio is None:
+                bt.logging.warning("Audio conversion failed for semantic similarity")
                 return constants.penalty_score
             
-            # Check if audio arrays are empty or too short
-            if len(gt_audio) < 1000 or len(generated_audio) < 1000:
-                bt.logging.warning("Audio too short for semantic similarity calculation")
-                return constants.penalty_score
+            # Transcribe both audios
+            bt.logging.info("Transcribing ground truth audio...")
+            gt_transcription = self.transcriber.transcribe(gt_audio, 16000)
             
-            # Get embeddings
-            gt_embedding = self.hubert.get_embedding(gt_audio, 16000)
-            gen_embedding = self.hubert.get_embedding(generated_audio, 16000)
+            bt.logging.info("Transcribing generated audio...")
+            gen_transcription = self.transcriber.transcribe(gen_audio, 16000)
             
-            # Check if embeddings are valid
-            if gt_embedding is None or gen_embedding is None or len(gt_embedding) == 0 or len(gen_embedding) == 0:
-                bt.logging.warning("Invalid embeddings for semantic similarity calculation")
-                return constants.penalty_score
+            # Log transcriptions
+            bt.logging.info(f"Ground truth transcription: '{gt_transcription}'")
+            bt.logging.info(f"Generated transcription: '{gen_transcription}'")
             
-            # Compute cosine similarity
-            similarity = cosine_similarity([gt_embedding], [gen_embedding])
+            # Calculate text similarity
+            text_similarity = self.transcriber.calculate_text_similarity(gt_transcription, gen_transcription)
+            bt.logging.info(f"Text semantic similarity: {text_similarity:.4f}")
             
-            # Convert to float and ensure it's in [0,1]
-            score = float(similarity[0][0])
-            return max(0.0, min(1.0, score))
+            combined_score = text_similarity
+            bt.logging.info(f"Combined semantic similarity score: {combined_score:.4f}")
+            
+            return combined_score
         except Exception as e:
             bt.logging.error(f"Semantic similarity calculation error: {e}")
-            return constants.penalty_score
-
-    def calculate_length_penalty(self, gt_length, gt_sample_rate, gen_length, gen_sample_rate):
-        """Calculate length penalty using exp(-|log(L_gen / L_gt)|)"""
-        try:
-            gt_duration = gt_length / gt_sample_rate
-            gen_duration = gen_length / gen_sample_rate
-            
-            print("gt_duration", gt_duration, "gen_duration", gen_duration)
-            if gt_duration < 0.1 or gen_duration < 0.1:
-                bt.logging.warning("Audio duration too short for reliable length penalty calculation")
-                return constants.penalty_score
-                
-            ratio = gen_duration / gt_duration
-            if ratio < 0.1 or ratio > 10:
-                bt.logging.warning(f"Extreme length ratio: {ratio:.2f}")
-                return 0.1
-                
-            # Soften penalty: 0.5 base + 0.5 scaled penalty
-            penalty = 0.5 + 0.5 * np.exp(-np.abs(np.log(ratio)))
-            return max(0.0, min(1.0, penalty))
-        except Exception as e:
-            bt.logging.error(f"Length penalty calculation error: {e}")
             return constants.penalty_score
 
     def calculate_naturalness(self, generated_audio_arr, generated_sample_rate):
@@ -242,18 +279,17 @@ class S2SMetrics:
             weighted_mos = 0.4 * p808_mos + 0.4 * ovr_mos + 0.2 * sig_mos
             
             # Detailed logging
-            print("p808_mos", p808_mos)
-            print(f"DNSMOS raw scores: p808={p808_mos:.4f}, sig={sig_mos:.4f}, bak={bak_mos:.4f}, ovr={ovr_mos:.4f}")
-            print(f"Weighted MOS before penalty: {weighted_mos:.4f}")
+            bt.logging.info(f"DNSMOS raw scores: p808={p808_mos:.4f}, sig={sig_mos:.4f}, bak={bak_mos:.4f}, ovr={ovr_mos:.4f}")
+            bt.logging.info(f"Weighted MOS before penalty: {weighted_mos:.4f}")
             
             # Apply noise penalty if detected
             if zcr > self.zcr_threshold and flatness > self.flatness_threshold:
                 weighted_mos *= 0.2
-                print("noise detected")
+                bt.logging.info("Excessive noise detected, applying penalty")
                 
             # Normalize to [0,1] based on DNSMOS 1-5 scale
-            base_score = (0.5*p808_mos + 0.5*ovr_mos - 1.0) / 4.0
-            print(f"Base score (normalized): {base_score:.4f}")
+            base_score = (weighted_mos - 1.0) / 4.0
+            bt.logging.info(f"Naturalness score (normalized): {base_score:.4f}")
             
             # Ensure the result is in [0,1]
             return max(0.0, min(1.0, base_score))
@@ -273,7 +309,6 @@ class S2SMetrics:
             results = {
                 'semantic_similarity_score': [],
                 'naturalness_score': [],
-                'length_penalty': [],
                 'combined_score': []
             }
             
@@ -283,32 +318,20 @@ class S2SMetrics:
                 # Skip empty arrays
                 if gt_arr is None or gen_arr is None or len(gt_arr) == 0 or len(gen_arr) == 0:
                     bt.logging.warning(f"Skipping empty audio array in pair {idx+1}")
-                    results['semantic_similarity_score'].append(constants.penalty_score)
-                    results['naturalness_score'].append(constants.penalty_score)
-                    results['length_penalty'].append(constants.penalty_score)
-                    results['combined_score'].append(constants.penalty_score)
+                    for key in results:
+                        results[key].append(constants.penalty_score)
                     continue
                 
                 # Calculate individual metrics
                 semantic_score = self.calculate_semantic_similarity(gt_arr, gen_arr, gt_rate, gen_rate)
                 naturalness_score = self.calculate_naturalness(gen_arr, gen_rate)
-                length_penalty = self.calculate_length_penalty(len(gt_arr), gt_rate, len(gen_arr), gen_rate)
+                combined_score = semantic_score*0.2 + naturalness_score*0.8
                 
-                # Calculate combined score
-                content_score = 0.4 * semantic_score + 0.6 * naturalness_score
-                length_penalty = 1.0
-                combined_score = content_score * length_penalty
-                
-                # Store results
+                # Store individual metrics
                 results['semantic_similarity_score'].append(semantic_score)
                 results['naturalness_score'].append(naturalness_score)
-                results['length_penalty'].append(length_penalty)
                 results['combined_score'].append(combined_score)
-                
-                bt.logging.info(f"Scores for pair {idx+1}: semantic={semantic_score:.4f}, "
-                              f"naturalness={naturalness_score:.4f}, length={length_penalty:.4f}, "
-                              f"combined={combined_score:.4f}")
-            
+               
             # Ensure all scores are scalar values
             return {k: [float(v) if isinstance(v, (int, float)) else constants.penalty_score for v in val] 
                     for k, val in results.items()}
@@ -318,14 +341,34 @@ class S2SMetrics:
 
     def _default_metrics(self) -> Dict[str, List[float]]:
         """Return default metrics when computation fails"""
-        return {
+        default_metrics = {
             'semantic_similarity_score': [constants.penalty_score],
             'naturalness_score': [constants.penalty_score],
-            'length_penalty': [constants.penalty_score],
             'combined_score': [constants.penalty_score]
         }
-
-# if __name__ == "__main__":
-    # # Enable detailed logging
-    # # bt.logging.set_level(bt.logging.INFO)  # or DEBUG for more detail
-    # main()
+            
+        return default_metrics
+        
+    def evaluate_and_display(self, gt_audio_arrs, generated_audio_arrs, model_name="Model"):
+        """Evaluate and display metrics in a formatted table"""
+        metrics = self.compute_distance(gt_audio_arrs, generated_audio_arrs)
+        
+        # Create a DataFrame for nicer display
+        df = pd.DataFrame({
+            'semantic_score': metrics['semantic_similarity_score'],
+            'natural_score': metrics['naturalness_score'],
+            'combined_score': metrics['combined_score']
+        })
+        
+        # Print header
+        print(f"Scores for model: {model_name}")
+        print("-" * 80)
+        
+        # Print DataFrame
+        print(df.round(4))
+        
+        # Print footer and summary
+        print("=" * 80)
+        
+        # Return metrics for further analysis
+        return metrics, df
