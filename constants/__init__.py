@@ -58,6 +58,7 @@ temperature = 0.01
 # validator score boosting for earlier models.
 timestamp_epsilon = 0.01
 penalty_score = 0.001
+deviation_percent = 0.1
 # ---------------------------------
 # Model scoring parameters.
 # ---------------------------------
