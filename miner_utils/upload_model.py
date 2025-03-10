@@ -22,7 +22,7 @@ from model.storage.chain.chain_model_metadata_store import ChainModelMetadataSto
 from huggingface_hub import update_repo_settings
 import time
 import hashlib
-
+from utilities.generate_hash import compute_combined_hash, get_model_hashes
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -85,10 +85,13 @@ def get_config():
     return config
 
 
-def regenerate_hash(namespace, name, epoch, competition_id):
-    s = " ".join([namespace, name, epoch, competition_id])
-    hash_output = hashlib.sha256(s.encode('utf-8')).hexdigest()
-    return int(hash_output[:16], 16)  # Returns a 64-bit integer from the first 16 hexadecimal characters
+def regenerate_hash(model_dir):
+    """Generate a hash based on folder structure and model files."""
+    
+    # Get all model file hashes using the existing function
+    folder_hash = get_model_hashes(model_dir)
+    
+    return int(folder_hash[:16], 16)
 
 
 def validate_repo(ckpt_dir, epoch, model_type):
