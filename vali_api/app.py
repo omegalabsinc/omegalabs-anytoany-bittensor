@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.eval_leaderboard import init_database as init_eval_database, EvalLeaderboardManager
 from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
-from constants import MODEL_EVAL_TIMEOUT, MIN_NON_ZERO_SCORES
+from constants import MODEL_EVAL_TIMEOUT, MIN_NON_ZERO_SCORES, penalty_score, deviation_percent
 
 import sentry_sdk
 print("SENTRY_DSN:", SENTRY_DSN)
@@ -55,6 +55,50 @@ def authenticate_with_bittensor(hotkey, metagraph):
         return False
 
     return True
+
+
+def filter_scores(scores, deviation_percent=deviation_percent):
+    """
+    Filter scores using median-based approach:
+    Calculate the median score
+    Define acceptable range as median ± (deviation_percent * median)
+    Only keep scores within that range and any penalty scores (0)
+    If too few scores remain, return original list
+    """
+    if len(scores) < 3:
+        return scores # Not enough scores to filter
+    
+
+    
+    # Separate penalty scores (0) from regular scores
+    penalty_scores = [s for s in scores if s['score'] == penalty_score]
+    regular_scores = [s for s in scores if s['score'] > penalty_score]
+    
+    
+    if len(regular_scores) < 3:
+        return scores # Not enough non-penalty scores to filter
+    
+    # Calculate median score from non-penalty scores
+    score_values = [s['score'] for s in regular_scores]
+    median_score = sorted(score_values)[len(score_values) // 2]
+    
+    # Define acceptable range around median
+    acceptable_deviation = deviation_percent * median_score
+    lower_bound = median_score - acceptable_deviation
+    upper_bound = median_score + acceptable_deviation
+    
+    # Filter regular scores
+    filtered_scores = [s for s in regular_scores if lower_bound <= s['score'] <= upper_bound]
+    
+    # If we filtered too much, fall back to original scores
+    if len(filtered_scores) < 2:
+        return scores
+    
+    # Create a new list with filtered regular scores and original penalty scores
+    result = filtered_scores.copy()
+    result.extend(penalty_scores)
+    return result
+
 
 def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=10):
     """
@@ -139,6 +183,8 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
                 if len(final_scores) == 0:
                     final_scores = processed_scores  # Fallback if all scores would be removed
             
+            final_scores = filter_scores(final_scores)
+
             # Calculate weighted average
             total_stake = sum(score['stake'] for score in final_scores)
             weighted_sum = sum(score['score'] * score['stake'] for score in final_scores)
