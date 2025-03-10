@@ -148,7 +148,7 @@ async def main(config: bt.config):
         hotkey=wallet.hotkey.ss58_address
     )
 
-    model_hash = regenerate_hash(repo_namespace, repo_name, config.epoch, config.competition_id)
+    model_hash = regenerate_hash(config.model_dir)
     model_id_with_hash = ModelId(
         namespace=repo_namespace,
         name=repo_name,
