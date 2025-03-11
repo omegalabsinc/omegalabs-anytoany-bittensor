@@ -62,9 +62,10 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
 
         return Dataset.from_dict(overall_dataset)
 
-def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
+def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, hash: str, block, model_tracker, device: str='cuda'):
     cleanup_gpu_memory()
     log_gpu_memory('before container start')
+
     
     # Initialize Docker manager
     docker_manager = DockerManager(base_cache_dir=local_dir)
@@ -79,8 +80,12 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
         container_url = docker_manager.start_container(
             uid=container_uid,
             repo_id=hf_repo_id,
-            gpu_id=0 if device == 'cuda' else None
+            gpu_id=0 if device == 'cuda' else None,
+            hash=hash
         )
+        if container_url is None:
+            bt.logging.warning(f"Hash mismatch. Penalise model.")
+            return penalty_score
 
         bt.logging.info(f"i am here inside compute_s2s_metrics {container_uid}, hotkey: {hotkey}")
         # Check hotkey if provided
@@ -194,12 +199,13 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
         cleanup_gpu_memory()
         log_gpu_memory('after cleanup')
 
-def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str, local_dir: str):
+def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, hash: str, model_tracker: str, local_dir: str):
     start_time = time.time()
     diar_time = time.time()
     
     mini_batch = pull_latest_diarization_dataset()
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
+
     
     vals = compute_s2s_metrics(
         hf_repo_id=hf_repo_id,
@@ -207,7 +213,8 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
         local_dir=local_dir,
         hotkey=hotkey,
         block=block,
-        model_tracker=model_tracker
+        model_tracker=model_tracker,
+        hash=hash
     )
     
     end_time = time.time()
@@ -218,7 +225,7 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
 
 if __name__ == "__main__":
     for epoch in range(2):
-        for hf_repo_id in ["shinthet/v1_model", "tezuesh/moshi_general"]:
-            vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
+        for hf_repo_id in ["unrented5443/sn21-v1-5", "tezuesh/moshi_general"]:
+            vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, hash="4574747472644815957", local_dir="./model_cache")
             print(vals)
             exit(0)

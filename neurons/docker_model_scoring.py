@@ -89,6 +89,7 @@ def compute_model_score(
     mini_batch: Dataset,
     hotkey: Optional[str] = None,
     block: Optional[int] = None,
+    hash: Optional[str] = None,
     model_tracker: Any = None,
     device: str = 'cuda'
 ) -> float:
@@ -122,6 +123,9 @@ def compute_model_score(
             repo_id=hf_repo_id,
             gpu_id=0 if device == 'cuda' else None
         )
+        if container_url is None:
+            bt.logging.warning(f"Hash mismatch. Penalise model.")
+            return constants.penalty_score
 
         # Verify hotkey if provided
         if hotkey and not verify_hotkey(hf_repo_id, local_dir, hotkey):
@@ -203,7 +207,7 @@ def compute_model_score(
         cleanup_gpu_memory()
         log_gpu_memory('after cleanup')
 
-def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str, local_dir: str):
+def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, hash: str, model_tracker: str, local_dir: str):
     mini_batch = pull_latest_dataset()
 
     if mini_batch is None:
@@ -217,7 +221,8 @@ def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str,
         local_dir=local_dir,
         hotkey=hotkey,
         block=block,
-        model_tracker=model_tracker
+        model_tracker=model_tracker,
+        hash=hash
     )
     
     end_time = time.time()
@@ -226,5 +231,6 @@ def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str,
     return score
 if __name__ == "__main__":
     # Example usage
-    score = run_o1_scoring(hf_repo_id="kiwikiw/o1_2", hotkey=None, block=1, model_tracker=None, local_dir="./model_cache")
+
+    score = run_o1_scoring(hf_repo_id="wotihe/omega_acptHKa", hotkey=None, block=1, hash="asdbasdasd", model_tracker=None, local_dir="./model_cache")
     print("score", score)

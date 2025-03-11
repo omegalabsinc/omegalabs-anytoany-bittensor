@@ -37,6 +37,7 @@ class ScoreModelInputs(BaseModel):
     competition_id: str
     hotkey: str
     block: int
+    hash: str
 
 class ModelScoreTaskData(BaseModel):
     inputs: ScoreModelInputs
@@ -159,6 +160,7 @@ class ScoringManager:
             hf_repo_id=inputs.hf_repo_id,
             hotkey=inputs.hotkey,
             block=inputs.block,
+            hash=inputs.hash,
             model_tracker=self.model_tracker,
             local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
         )
