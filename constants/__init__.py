@@ -59,6 +59,7 @@ temperature = 0.01
 timestamp_epsilon = 0.01
 penalty_score = 0.001
 deviation_percent = 0.1
+decay_factor = 5.0e-5
 # ---------------------------------
 # Model scoring parameters.
 # ---------------------------------

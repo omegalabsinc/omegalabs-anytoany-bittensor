@@ -3,14 +3,14 @@
 # Copyright © 2023 const
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# documentation files (the "Software"), to deal in the Software without restriction, including without limitation
 # the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
 # and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
 
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
 # THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
@@ -66,20 +66,35 @@ from utilities.git_utils import is_git_latest
 
 def iswin(score_i, score_j, block_i, block_j):
     """
-    Determines the winner between two models based on the epsilon adjusted loss.
-
+    Determines the winner between two models based on score comparison with a time penalty adjustment.
+    
+    This function applies a block difference-based penalty that scales exponentially based on
+    the absolute difference between blocks. Models with more recent blocks (higher block numbers)
+    receive a penalty to their score to favor older, proven models.
+    
     Parameters:
-        loss_i (float): Loss of uid i on batch
-        loss_j (float): Loss of uid j on batch.
-        block_i (int): Block of uid i.
-        block_j (int): Block of uid j.
+        score_i (float): Score of the first model
+        score_j (float): Score of the second model
+        block_i (int): Block number of the first model
+        block_j (int): Block number of the second model
+        
     Returns:
-        bool: True if loss i is better, False otherwise.
+        bool: True if the first model wins (adjusted score_i > adjusted score_j), False otherwise
+    
+    Note:
+        - Uses constants.timestamp_epsilon as the penalty scaling factor
+        - Uses constants.decay_factor to control the exponential decay rate of the time penalty
     """
-    # Adjust score based on timestamp and pretrain epsilon
-    score_i = (1 - constants.timestamp_epsilon) * score_i if block_i > block_j else score_i
-    score_j = (1 - constants.timestamp_epsilon) * score_j if block_j > block_i else score_j
+   
+    decay_factor = constants.decay_factor
+    penalty = constants.timestamp_epsilon * (1.0 - math.exp(-decay_factor * abs(block_i - block_j)))
+
+    score_i = (1 - penalty) * score_i if block_i > block_j else score_i
+    score_j = (1 - penalty) * score_j if block_j > block_i else score_j
+    
     return score_i > score_j
+
+
 
 def compute_wins(
     uids: typing.List[int],
