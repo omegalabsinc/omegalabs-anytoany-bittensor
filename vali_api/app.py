@@ -183,6 +183,8 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
                 if len(final_scores) == 0:
                     final_scores = processed_scores  # Fallback if all scores would be removed
             
+            num_scores = len(final_scores)
+            
             final_scores = filter_scores(final_scores)
 
             # Calculate weighted average
@@ -204,7 +206,7 @@ def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=1
                 'block': scores[0]['block'],
                 'model_metadata': scores[0]['model_metadata'],
                 'model_hash': latest_model_hash,
-                'num_scores': len(final_scores),
+                'num_scores': num_scores,
                 'unique_validators': unique_validators,
                 'score_pattern': {
                     'total_scores': total_scores,
