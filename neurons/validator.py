@@ -937,7 +937,8 @@ class Validator:
                             hf_repo_id=hf_repo_id,
                             competition_id=competition_parameters.competition_id,
                             hotkey=hotkey,
-                            block=model_i_metadata.block
+                            block=model_i_metadata.block,
+                            hash=model_i_metadata.id.hash
                         )
                         start_response = requests.post(
                             self.start_model_scoring_endpoint,

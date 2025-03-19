@@ -13,6 +13,7 @@ import shutil
 from typing import Optional, Dict, Any, List
 from docker.models.containers import Container
 import bittensor as bt
+from utilities.generate_hash import get_model_hashes
 
 # Enable HF transfer for faster downloads
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
@@ -29,12 +30,15 @@ class DockerManager:
             base_cache_dir: Base directory for caching models and docker files
             cleanup_on_init: Whether to cleanup Docker resources on initialization
         """
+        print("Initializing DockerManager with cache directory:", base_cache_dir)
         self.client = docker.from_env()
+        print("Docker client initialized")
         self.base_cache_dir = Path(os.path.abspath(base_cache_dir))
         self.base_cache_dir.mkdir(parents=True, exist_ok=True)
         self.active_containers: Dict[str, Container] = {}
         
         bt.logging.info(f"Initializing DockerManager with cache directory: {self.base_cache_dir}")
+        print("Initializing DockerManager with cache directory:", self.base_cache_dir)
         
         if cleanup_on_init:
             self.cleanup_docker_resources()
@@ -89,7 +93,7 @@ class DockerManager:
             shutil.rmtree(str(self.base_cache_dir))
             self.base_cache_dir.mkdir(parents=True, exist_ok=True)
   
-    def start_container(self, uid: str, repo_id: str, gpu_id: Optional[int] = None) -> str:
+    def start_container(self, uid: str, repo_id: str, hash: str, gpu_id: Optional[int] = None) -> str:
         """Start a container with proper GPU configuration."""
         container_name = f"miner_{uid}"
         
@@ -112,6 +116,11 @@ class DockerManager:
 
             # Download miner files
             miner_dir = self._download_miner_files(repo_id, uid)
+            bt.logging.info(f"Miner directory: {miner_dir}")
+            regen_hash = int(get_model_hashes(miner_dir)[:16], 16)
+            
+            if regen_hash != int(hash):
+                return None
             
             # Create isolated network if it doesn't exist
             try:
