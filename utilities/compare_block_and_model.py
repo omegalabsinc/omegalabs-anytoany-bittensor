@@ -2,6 +2,10 @@
 
 import datetime
 from huggingface_hub import HfApi
+import bittensor as bt
+
+# Bittensor constants
+BLOCK_DURATION = 12  # seconds
 
 def get_model_info(repo_id):
     """
@@ -27,15 +31,6 @@ def get_model_info(repo_id):
     except Exception as e:
         bt.logging.error(f"Error getting model info for {repo_id}: {e}")
         return None, None
-    
-
-
-import datetime
-import bittensor as bt
-
-
-# Bittensor constants
-BLOCK_DURATION = 12  # seconds
 
 def block_to_time(block):
     """
@@ -56,9 +51,6 @@ def block_to_time(block):
     # Calculate the datetime for the requested block
     block_time = current_time - datetime.timedelta(seconds=seconds_diff)
     return block_time
-    
-
-
 
 def compare_block_and_model(block_number, repo_id):
     """
@@ -69,11 +61,7 @@ def compare_block_and_model(block_number, repo_id):
         repo_id (str): Hugging Face repository ID in format "username/model_name"
         
     Returns:
-        dict: A dictionary containing:
-            - block_time: datetime of the block
-            - model_creation_time: datetime of the model creation
-            - time_difference: timedelta between the two times
-            - block_is_earlier: boolean, True if block time is earlier than model creation
+        bool: True if block time is later than model creation time, False otherwise
     """
     # Get block time
     block_time = block_to_time(block_number)
@@ -83,11 +71,6 @@ def compare_block_and_model(block_number, repo_id):
     if model_creation_time is None:
         return False
     
-    
-    
-    # Calculate time difference
+    # Calculate time difference and return whether block is later than model creation
     time_difference = block_time - model_creation_time if isinstance(model_creation_time, datetime.datetime) else None
     return time_difference.total_seconds() > 0
-    
-
-    
