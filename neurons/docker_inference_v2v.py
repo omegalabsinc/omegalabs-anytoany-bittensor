@@ -15,6 +15,8 @@ from evaluation.S2S.distance import S2SMetrics
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
 from constants import MAX_DS_FILES, MIN_AGE, penalty_score
 
+from utilities.compare_block_and_model import compare_block_and_model
+
 HF_DATASET = "omegalabsinc/omega-voice"
 DATA_FILES_PREFIX = "default/train/"
 
@@ -195,6 +197,10 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
         log_gpu_memory('after cleanup')
 
 def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str, local_dir: str):
+    if not compare_block_and_model(block, hf_repo_id):
+        bt.logging.info(f"Block {block} is older than model {hf_repo_id}. Penalizing model.")
+        return penalty_score
+    
     start_time = time.time()
     diar_time = time.time()
     

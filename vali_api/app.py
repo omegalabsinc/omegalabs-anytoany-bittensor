@@ -17,6 +17,7 @@ from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.eval_leaderboard import init_database as init_eval_database, EvalLeaderboardManager
 from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
 from constants import MODEL_EVAL_TIMEOUT, MIN_NON_ZERO_SCORES, penalty_score, deviation_percent
+from utilities.compare_block_and_model import compare_block_and_model
 
 import sentry_sdk
 print("SENTRY_DSN:", SENTRY_DSN)
@@ -413,8 +414,9 @@ async def main():
             recent_model_scores = queue_manager.get_recent_model_scores(scores_per_model=MIN_NON_ZERO_SCORES)
             
             # Calculate stake-weighted averages for each model
+            
             weighted_scores = calculate_stake_weighted_scores(recent_model_scores, metagraph)
-
+   
             # Example of accessing results
             for uid, models in weighted_scores.items():
                 for model_key, data in models.items():
@@ -427,11 +429,15 @@ async def main():
                         print(f"Score Pattern: {data['score_pattern']}")
                     
                         model_metadata = json.loads(data['model_metadata'])["id"]
+                        model_name = f"{model_metadata['namespace']}/{model_metadata['name']}"
+                        block_is_earlier = compare_block_and_model(data['block'], model_name)
+
+                        
                         all_model_scores[uid] = [{
                             'hotkey': data['hotkey'],
                             'competition_id': data['competition_id'],
                             'model_name': f"{model_metadata['namespace']}/{model_metadata['name']}",
-                            'score': data['score'],
+                            'score': data['score'] if block_is_earlier else penalty_score,
                             'scored_at': data['scored_at'],
                             'block': data['block'],
                             'model_hash': data['model_hash'],

@@ -1220,7 +1220,7 @@ class Validator:
                 response = requests.post(
                     self.get_all_model_scores_endpoint,
                     auth=self.get_basic_auth(),
-                    timeout=30
+                    timeout=120
                 )
                 response.raise_for_status()
                 response_json = response.json()
