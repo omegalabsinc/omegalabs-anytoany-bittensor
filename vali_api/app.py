@@ -432,7 +432,7 @@ async def main():
                     
                         model_metadata = json.loads(data['model_metadata'])["id"]
                         model_name = f"{model_metadata['namespace']}/{model_metadata['name']}"
-                        block_is_earlier = compare_block_and_model(data['block'], model_name)
+                        block_is_earlier = cached_compare_block_and_model(data['block'], model_name)
 
                         
                         all_model_scores[uid] = [{
@@ -487,7 +487,7 @@ async def main():
     async def clear_block_model_cache():
         while True:
             global _block_model_cache
-            await asyncio.sleep(3600)  # Clear cache every 12 hours
+            await asyncio.sleep(3600)  # Clear cache every hour
             print("Clearing block-model comparison cache")
             _block_model_cache = {}
 
