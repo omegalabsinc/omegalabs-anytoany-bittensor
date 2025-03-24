@@ -73,4 +73,4 @@ def compare_block_and_model(block_number, repo_id):
     
     # Calculate time difference and return whether block is later than model creation
     time_difference = block_time - model_creation_time if isinstance(model_creation_time, datetime.datetime) else None
-    return time_difference.total_seconds() > 0
+    return time_difference.total_seconds() > BLOCK_DURATION

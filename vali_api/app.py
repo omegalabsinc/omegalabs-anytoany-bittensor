@@ -414,12 +414,9 @@ async def main():
             recent_model_scores = queue_manager.get_recent_model_scores(scores_per_model=MIN_NON_ZERO_SCORES)
             
             # Calculate stake-weighted averages for each model
-            import time
-            start_time = time.time()
+            
             weighted_scores = calculate_stake_weighted_scores(recent_model_scores, metagraph)
-            end_time = time.time()
-            print(f"Time taken to calculate stake-weighted scores: {end_time - start_time:.2f} seconds")
-
+   
             # Example of accessing results
             for uid, models in weighted_scores.items():
                 for model_key, data in models.items():
