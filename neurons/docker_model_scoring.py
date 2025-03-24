@@ -65,6 +65,33 @@ def pull_latest_dataset() -> Optional[Dataset]:
         bt.logging.error(f"Error pulling dataset: {str(e)}")
         return None
 
+
+def pull_latest_dataset_fallback() -> Optional[Dataset]:
+    """Pull latest dataset from HuggingFace."""
+    try:
+        os.system("rm -rf ./data_cache/*")
+        omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
+        recent_files = [
+            f.rfilename
+            for f in omega_ds_files if
+            f.rfilename.startswith(DATA_FILES_PREFIX) 
+        ][:MAX_DS_FILES]
+
+        if len(recent_files) == 0:
+            return None
+
+        download_config = DownloadConfig(download_desc="Downloading Omega Multimodal Dataset")
+
+        with TemporaryDirectory(dir='./data_cache') as temp_dir:
+            print("temp_dir", temp_dir)
+            omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
+            omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+            return omega_dataset
+        
+    except Exception as e:
+        bt.logging.error(f"Error pulling dataset: {str(e)}")
+        return None
+
 def verify_hotkey(hf_repo_id: str, local_dir: str, hotkey: str) -> bool:
     """Verify hotkey matches the one in the repository."""
     try:
@@ -209,8 +236,8 @@ def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str,
     mini_batch = pull_latest_dataset()
 
     if mini_batch is None:
-        bt.logging.error("Failed to pull dataset")
-        return
+        bt.logging.error("Failed to pull latest dataset, trying fallback")
+        mini_batch = pull_latest_dataset_fallback()
 
     start_time = time.time()
     score = compute_model_score(
@@ -227,6 +254,7 @@ def run_o1_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str,
     bt.logging.info(f"Score: {score}")
     return score
 if __name__ == "__main__":
+
     # Example usage
-    score = run_o1_scoring(hf_repo_id="kiwikiw/o1_2", hotkey=None, block=1, model_tracker=None, local_dir="./model_cache")
+    score = run_o1_scoring(hf_repo_id="TFOCUS/mfm_8", hotkey=None, block=1, model_tracker=None, local_dir="./model_cache")
     print("score", score)
