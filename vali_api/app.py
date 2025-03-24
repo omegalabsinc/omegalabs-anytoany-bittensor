@@ -29,6 +29,8 @@ sentry_sdk.init(
 
 security = HTTPBasic()
 
+# Cache for block and model comparisons
+_block_model_cache = {}
 
 def get_hotkey(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> str:
     keypair = Keypair(ss58_address=credentials.username)
@@ -481,6 +483,14 @@ async def main():
             raise HTTPException(status_code=500, detail="Internal server error.")
     
 
+    # Clear cache periodically to prevent memory growth
+    async def clear_block_model_cache():
+        while True:
+            global _block_model_cache
+            await asyncio.sleep(3600*12)  # Clear cache every 12 hours
+            print("Clearing block-model comparison cache")
+            _block_model_cache = {}
+
     await asyncio.gather(
         resync_metagraph(),
         asyncio.to_thread(
@@ -490,7 +500,21 @@ async def main():
             port=port
         ),
         check_stale_scoring_tasks(),
+        clear_block_model_cache(),
     )
+
+
+def cached_compare_block_and_model(block: int, model_name: str) -> bool:
+    """
+    Dictionary-cached version of compare_block_and_model function.
+    Returns True if block is earlier than model's creation date.
+    """
+    cache_key = f"{block}:{model_name}"
+    if cache_key not in _block_model_cache:
+        _block_model_cache[cache_key] = compare_block_and_model(block, model_name)
+    else:
+        print(f"Cache hit for {cache_key}")
+    return _block_model_cache[cache_key]
 
 
 if __name__ == "__main__":
