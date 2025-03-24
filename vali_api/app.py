@@ -487,7 +487,7 @@ async def main():
     async def clear_block_model_cache():
         while True:
             global _block_model_cache
-            await asyncio.sleep(3600*12)  # Clear cache every 12 hours
+            await asyncio.sleep(3600)  # Clear cache every 12 hours
             print("Clearing block-model comparison cache")
             _block_model_cache = {}
 
