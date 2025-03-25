@@ -182,11 +182,7 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
         bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_score:0.5f}")
         
         return mean_score
-        
-    except Exception as e:
-        bt.logging.error(f"Error in compute_s2s_metrics: {str(e)}")
-        return 0
-        
+
     finally:
         # Cleanup
         try:

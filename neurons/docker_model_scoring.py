@@ -190,10 +190,6 @@ def compute_model_score(
 
         return mean_similarity
 
-    except Exception as e:
-        bt.logging.error(f"Error in compute_model_score: {str(e)}")
-        return 0
-
     finally:
         # Cleanup
         try:
