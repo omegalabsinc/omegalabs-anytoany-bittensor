@@ -1,6 +1,9 @@
 from typing import Annotated, List, Optional
 from traceback import print_exception
 from datetime import datetime
+import threading
+import time
+from collections import OrderedDict
 
 import bittensor
 import uvicorn
@@ -29,8 +32,11 @@ sentry_sdk.init(
 
 security = HTTPBasic()
 
-# Cache for block and model comparisons
-_block_model_cache = {}
+# Cache for block and model comparisons with size limit
+MAX_CACHE_SIZE = 1000  # Limit the number of cached entries
+_block_model_cache = OrderedDict()  # OrderedDict maintains insertion order for simple LRU
+_cache_lock = threading.Lock()
+_cache_stats = {"hits": 0, "misses": 0, "total_requests": 0}
 
 def get_hotkey(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> str:
     keypair = Keypair(ss58_address=credentials.username)
@@ -486,10 +492,10 @@ async def main():
     # Clear cache periodically to prevent memory growth
     async def clear_block_model_cache():
         while True:
-            global _block_model_cache
             await asyncio.sleep(3600)  # Clear cache every hour
-            print("Clearing block-model comparison cache")
-            _block_model_cache = {}
+            with _cache_lock:
+                print(f"Clearing block-model comparison cache. Stats before clear: {_cache_stats}")
+                _block_model_cache.clear()
 
     await asyncio.gather(
         resync_metagraph(),
@@ -506,15 +512,50 @@ async def main():
 
 def cached_compare_block_and_model(block: int, model_name: str) -> bool:
     """
-    Dictionary-cached version of compare_block_and_model function.
+    Thread-safe dictionary-cached version of compare_block_and_model function.
     Returns True if block is earlier than model's creation date.
+    Uses LRU caching with size limit to prevent memory issues.
     """
+    global _cache_stats
     cache_key = f"{block}:{model_name}"
-    if cache_key not in _block_model_cache:
-        _block_model_cache[cache_key] = compare_block_and_model(block, model_name)
-    else:
-        print(f"Cache hit for {cache_key}")
-    return _block_model_cache[cache_key]
+    
+    # Update total requests counter
+    with _cache_lock:
+        _cache_stats["total_requests"] += 1
+    
+    # First check if key exists in cache without acquiring lock
+    if cache_key in _block_model_cache:
+        # Move to end (most recently used)
+        with _cache_lock:
+            value = _block_model_cache.pop(cache_key)
+            _block_model_cache[cache_key] = value
+            _cache_stats["hits"] += 1
+            
+            # Log cache stats occasionally
+            if _cache_stats["total_requests"] % 100 == 0:
+                hit_rate = (_cache_stats["hits"] / _cache_stats["total_requests"]) * 100
+                print(f"Cache stats: {_cache_stats}, Hit rate: {hit_rate:.2f}%, Size: {len(_block_model_cache)}")
+        return value
+    
+    # If not in cache, acquire lock and check again (double-checked locking pattern)
+    with _cache_lock:
+        if cache_key in _block_model_cache:
+            # Another thread might have added it while we were waiting for the lock
+            value = _block_model_cache.pop(cache_key)
+            _block_model_cache[cache_key] = value
+            _cache_stats["hits"] += 1
+            return value
+            
+        # Expensive operation done under lock
+        _cache_stats["misses"] += 1
+        result = compare_block_and_model(block, model_name)
+        
+        # If cache is full, remove oldest item (first in OrderedDict)
+        if len(_block_model_cache) >= MAX_CACHE_SIZE:
+            _block_model_cache.popitem(last=False)
+            
+        _block_model_cache[cache_key] = result
+        return result
 
 
 if __name__ == "__main__":
