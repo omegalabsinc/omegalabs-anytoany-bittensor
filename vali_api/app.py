@@ -60,7 +60,7 @@ def authenticate_with_bittensor(hotkey, metagraph):
         return False
 
     if metagraph.S[uid] < 20000 and NETWORK != "test":
-        print("Bittensor validator requires 20,000+ staked TAO")
+        print(f"Bittensor validator requires 20,000+ staked TAO, but validator={hotkey} only has {metagraph.S[uid]} staked")
         return False
 
     return True
