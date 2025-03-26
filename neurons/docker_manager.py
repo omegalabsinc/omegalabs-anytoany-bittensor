@@ -10,7 +10,8 @@ from pathlib import Path
 import huggingface_hub
 import psutil
 import shutil
-from typing import Optional, Dict, Any, List
+import socket
+from typing import Optional, Dict, Any, List, Tuple
 from docker.models.containers import Container
 import bittensor as bt
 
@@ -89,6 +90,26 @@ class DockerManager:
             shutil.rmtree(str(self.base_cache_dir))
             self.base_cache_dir.mkdir(parents=True, exist_ok=True)
   
+    def _find_available_port(self, start_port: int = 8000, max_port: int = 9000) -> int:
+        """
+        Find an available port in the given range.
+        
+        Args:
+            start_port: Starting port number to check
+            max_port: Maximum port number to check
+            
+        Returns:
+            Available port number
+        """
+        for port in range(start_port, max_port + 1):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.bind(('0.0.0.0', port))
+                    return port
+            except OSError:
+                continue
+        raise RuntimeError(f"No available ports found between {start_port} and {max_port}")
+
     def start_container(self, uid: str, repo_id: str, gpu_id: Optional[int] = None) -> str:
         """Start a container with proper GPU configuration."""
         container_name = f"miner_{uid}"
@@ -132,6 +153,11 @@ class DockerManager:
             )
             bt.logging.info(f"Finished building image for {container_name} in {time.time() - start} seconds")
             
+            # Find an available port
+            host_port = self._find_available_port()
+            print(f"Using available port: {host_port}")
+            bt.logging.info(f"Using available port: {host_port}")
+            
             bt.logging.info(f"Starting container: {container_name}")
             container = self.client.containers.run(
                 image.id,
@@ -143,7 +169,7 @@ class DockerManager:
                 ],
                 cap_drop=['ALL'],
                 mem_limit=self.get_memory_limit(),
-                ports={'8000/tcp': ('0.0.0.0', 8000)},
+                ports={'8000/tcp': ('0.0.0.0', host_port)},
                 environment={
                     'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
                     'PYTHONUNBUFFERED': '1',
@@ -167,7 +193,7 @@ class DockerManager:
             # Store container reference
             self.active_containers[uid] = container
             
-            return "http://localhost:8000"
+            return f"http://localhost:{host_port}"
 
         except Exception as e:
             bt.logging.error(f"Failed to start container: {str(e)}")
@@ -335,7 +361,17 @@ class DockerManager:
             RuntimeError: If container health check fails
         """
         start_time = time.time()
-        health_check_url = "http://localhost:8000/api/v1/health"
+        
+        # Get the actual port mapping from container
+        container.reload()
+        ports = container.attrs['NetworkSettings']['Ports']
+        if not ports or '8000/tcp' not in ports:
+            raise RuntimeError("Container port mapping not found")
+            
+        host_port = ports['8000/tcp'][0]['HostPort']
+        health_check_url = f"http://localhost:{host_port}/api/v1/health"
+        
+        bt.logging.info(f"Checking container health at {health_check_url}")
         
         while time.time() - start_time < timeout:
             try:
@@ -353,17 +389,17 @@ class DockerManager:
                 if response.status_code == 200:
                     health_data = response.json()
                     if health_data.get("status") == "healthy":
-                        logging.info("Container is healthy and ready")
+                        bt.logging.info("Container is healthy and ready")
                         return
                     elif "initialization_status" in health_data:
                         init_status = health_data["initialization_status"]
                         if init_status.get("error"):
-                            logging.warning(f"Initialization error: {init_status['error']}")
+                            bt.logging.warning(f"Initialization error: {init_status['error']}")
                 
             except requests.exceptions.RequestException as e:
-                logging.debug(f"Health check not ready: {str(e)}")
+                bt.logging.debug(f"Health check not ready: {str(e)}")
             except Exception as e:
-                logging.warning(f"Health check error: {str(e)}")
+                bt.logging.warning(f"Health check error: {str(e)}")
             
             time.sleep(2)
             
