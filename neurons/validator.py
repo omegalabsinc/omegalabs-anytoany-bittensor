@@ -3,14 +3,14 @@
 # Copyright © 2023 const
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# documentation files (the "Software"), to deal in the Software without restriction, including without limitation
 # the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
 # and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
 
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
 # THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
@@ -939,17 +939,28 @@ class Validator:
                             hotkey=hotkey,
                             block=model_i_metadata.block
                         )
-                        start_response = requests.post(
-                            self.start_model_scoring_endpoint,
-                            auth=self.get_basic_auth(),
-                            json=json.loads(scoring_inputs.model_dump_json()),
-                            timeout=30,
-                        )
-                        start_response.raise_for_status()
+                        try:
+                            start_response = requests.post(
+                                self.start_model_scoring_endpoint,
+                                auth=self.get_basic_auth(),
+                                json=json.loads(scoring_inputs.model_dump_json()),
+                                timeout=30,
+                            )
+                            start_response.raise_for_status()
+                        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                            bt.logging.error(
+                                f"Scoring API is unreachable for uid: {uid_i}. Skipping scoring for this round. Error: {e}"
+                            )
+                            # Skip this iteration but don't set score to 0
+                            continue
+                        except Exception as e:
+                            bt.logging.error(f"Unexpected error starting scoring: {e}")
+                            continue
+
                         start_response_json = start_response.json()
                         if not start_response_json.get("success", False):
                             bt.logging.error(f"Failed to start scoring for {model_i_metadata}: {start_response_json.get('message', 'Unknown error')}")
-                            return
+                            continue
                         is_scoring = True
                         while is_scoring:
                             time.sleep(15)
@@ -975,12 +986,14 @@ class Validator:
                         f"Skipping {uid_i}, submission is for a different competition ({model_i_metadata.id.competition_id}). Setting loss to 0."
                     )
             else:
-                bt.logging.debug(
-                    f"Unable to load the model for {uid_i} (perhaps a duplicate?). Setting loss to 0."
-                )
-            if score is None:
-                bt.logging.error(f"Failed to get score for uid: {uid_i}: {model_i_metadata}")
-                score = 0
+                # Check if we have a previous score for this UID
+                previous_score = scores_per_uid.get(uid_i)
+                if previous_score is not None:
+                    bt.logging.info(f"Using previous score {previous_score} for uid: {uid_i} due to scoring API issues")
+                    score = previous_score
+                else:
+                    bt.logging.error(f"No previous score available for uid: {uid_i}, using default score")
+                    score = 0.1  # Using 0.1 as a conservative default score instead of 0
 
             scores_per_uid[uid_i] = score
 
