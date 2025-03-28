@@ -492,7 +492,7 @@ async def main():
     # Clear cache periodically to prevent memory growth
     async def clear_block_model_cache():
         while True:
-            await asyncio.sleep(3600)  # Clear cache every hour
+            await asyncio.sleep(3600*12)  # Clear cache every 12 hours
             with _cache_lock:
                 print(f"Clearing block-model comparison cache. Stats before clear: {_cache_stats}")
                 _block_model_cache.clear()
