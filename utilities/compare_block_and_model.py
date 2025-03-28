@@ -3,7 +3,7 @@
 import datetime
 from huggingface_hub import HfApi
 import bittensor as bt
-
+import time
 # Bittensor constants
 BLOCK_DURATION = 12  # seconds
 
@@ -68,6 +68,7 @@ def compare_block_and_model(block_number, repo_id):
     
     # Get model creation time
     _, model_creation_time = get_model_info(repo_id)
+    time.sleep(1)
     if model_creation_time is None:
         return False
     
