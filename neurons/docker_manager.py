@@ -80,16 +80,57 @@ class DockerManager:
         memory_limit = int(total_memory * 0.9)
         return memory_limit
 
-    def _check_disk_space(self, required_gb: int = 10) -> None:
+    def _check_disk_space(self, required_gb: int = 20) -> None:
         """Check available disk space and clean if necessary."""
         total, used, free = shutil.disk_usage(str(self.base_cache_dir))
         free_gb = free / (1024 * 1024 * 1024)
         
+        bt.logging.info(f"Available disk space: {free_gb:.2f}GB")
+        
         if free_gb < required_gb:
             bt.logging.warning(f"Low disk space ({free_gb:.2f}GB free), cleaning cache directory")
-            shutil.rmtree(str(self.base_cache_dir))
+            # Clean Docker resources first
+            self.cleanup_docker_resources(aggressive=True)
+            
+            # Clear HuggingFace cache if exists
+            hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
+            if os.path.exists(hf_cache):
+                bt.logging.info(f"Cleaning HuggingFace cache: {hf_cache}")
+                try:
+                    shutil.rmtree(hf_cache)
+                except Exception as e:
+                    bt.logging.error(f"Failed to clean HuggingFace cache: {str(e)}")
+            
+            # Clear our cache directory
+            for item in os.listdir(str(self.base_cache_dir)):
+                item_path = os.path.join(str(self.base_cache_dir), item)
+                if os.path.isdir(item_path):
+                    try:
+                        shutil.rmtree(item_path)
+                        bt.logging.info(f"Removed directory: {item_path}")
+                    except Exception as e:
+                        bt.logging.error(f"Failed to remove directory {item_path}: {str(e)}")
+                else:
+                    try:
+                        os.remove(item_path)
+                        bt.logging.info(f"Removed file: {item_path}")
+                    except Exception as e:
+                        bt.logging.error(f"Failed to remove file {item_path}: {str(e)}")
+            
+            # Recreate necessary directories
             self.base_cache_dir.mkdir(parents=True, exist_ok=True)
-  
+            for dir_name in ['models', 'hub', 'downloads']:
+                (self.base_cache_dir / dir_name).mkdir(parents=True, exist_ok=True)
+            
+            # Check if we have enough space now
+            _, _, free = shutil.disk_usage(str(self.base_cache_dir))
+            free_gb = free / (1024 * 1024 * 1024)
+            bt.logging.info(f"Available disk space after cleanup: {free_gb:.2f}GB")
+            
+            if free_gb < required_gb:
+                bt.logging.error(f"Still insufficient disk space ({free_gb:.2f}GB) after cleanup")
+                raise RuntimeError(f"Insufficient disk space: {free_gb:.2f}GB available, {required_gb}GB required")
+
     def _find_available_port(self, start_port: int = 8000, max_port: int = 9000) -> int:
         """
         Find an available port in the given range.
@@ -115,13 +156,16 @@ class DockerManager:
         container_name = f"miner_{uid}"
         
         try:
-            # Check disk space
-            self._check_disk_space()
+            # Check disk space with higher requirement (40GB)
+            self._check_disk_space(required_gb=40)
             
             # Create necessary cache subdirectories
             cache_dirs = ['models', 'hub', 'downloads']
             for dir_name in cache_dirs:
                 (self.base_cache_dir / dir_name).mkdir(parents=True, exist_ok=True)
+            
+            # Force pruning before building
+            self.cleanup_docker_resources(aggressive=True)
             
             # Remove existing container if any
             try:
@@ -145,11 +189,19 @@ class DockerManager:
             start = time.time()
             dockerfile_path = str(miner_dir / "Dockerfile")
             self._validate_dockerfile(dockerfile_path)
+            
+            # Check available disk space before building
+            total, used, free = shutil.disk_usage(str(self.base_cache_dir))
+            free_gb = free / (1024 * 1024 * 1024)
+            bt.logging.info(f"Available disk space before build: {free_gb:.2f}GB")
+            
             image, build_logs = self.client.images.build(
                 path=str(miner_dir),
                 dockerfile=dockerfile_path,
                 tag=f"{container_name}:latest",
-                rm=True
+                rm=True,
+                nocache=True,  # Force no cache to avoid using corrupt layers
+                forcerm=True   # Force remove intermediate containers
             )
             bt.logging.info(f"Finished building image for {container_name} in {time.time() - start} seconds")
             
@@ -225,7 +277,7 @@ class DockerManager:
             bt.logging.error(f"inside docker_manager: Failed to stop container: {str(e)}")
             raise
 
-    def cleanup_docker_resources(self) -> None:
+    def cleanup_docker_resources(self, aggressive: bool = False) -> None:
         """Clean up all Docker resources."""
         try:
             images_to_clean = []
@@ -251,9 +303,29 @@ class DockerManager:
                     bt.logging.warning(f"inside docker_manager: Failed to remove image {image_id}: {str(e)}")
 
             # Prune resources
-            self.client.images.prune()
+            self.client.images.prune(filters={'dangling': True})
             self.client.containers.prune()
             self.client.volumes.prune()
+            
+            # If aggressive is set, remove all unused images as well
+            if aggressive:
+                bt.logging.info("Performing aggressive Docker cleanup")
+                try:
+                    unused_images = self.client.images.list()
+                    for image in unused_images:
+                        if not image.tags:  # Remove untagged images
+                            try:
+                                self.client.images.remove(image.id, force=True)
+                                bt.logging.debug(f"Removed untagged image {image.id}")
+                            except Exception as e:
+                                bt.logging.warning(f"Failed to remove image {image.id}: {str(e)}")
+                    
+                    # Force system prune to clean everything
+                    import subprocess
+                    subprocess.run(["docker", "system", "prune", "-af", "--volumes"], check=False)
+                    bt.logging.info("Performed docker system prune")
+                except Exception as e:
+                    bt.logging.warning(f"Error during aggressive cleanup: {str(e)}")
 
             bt.logging.info("inside docker_manager: Docker resources cleaned up successfully")
 
