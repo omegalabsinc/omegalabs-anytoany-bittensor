@@ -17,6 +17,9 @@ from constants import MAX_DS_FILES, MIN_AGE
 from tempfile import TemporaryDirectory
 import constants
 
+from utilities.compare_block_and_model import compare_block_and_model
+
+
 # Constants
 HF_DATASET = "omegalabsinc/omega-multimodal"
 DATA_FILES_PREFIX = "default/train/"
@@ -109,6 +112,9 @@ def compute_model_score(
     """
     cleanup_gpu_memory()
     log_gpu_memory('before container start')
+    if not compare_block_and_model(block, hf_repo_id):
+        bt.logging.info(f"Block {block} is older than model {hf_repo_id}. Penalizing model.")
+        return constants.penalty_score
 
     embed_model = IBModel()
 
