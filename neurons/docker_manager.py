@@ -5,6 +5,9 @@ import numpy as np
 import base64
 import io
 import os
+# Disable HF transfer for better error handling
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+
 import logging
 from pathlib import Path
 import huggingface_hub
@@ -15,8 +18,6 @@ from typing import Optional, Dict, Any, List, Tuple
 from docker.models.containers import Container
 import bittensor as bt
 
-# Enable HF transfer for faster downloads
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 
 class DockerManager:
@@ -35,10 +36,12 @@ class DockerManager:
         self.base_cache_dir.mkdir(parents=True, exist_ok=True)
         self.active_containers: Dict[str, Container] = {}
         
+        
         bt.logging.info(f"Initializing DockerManager with cache directory: {self.base_cache_dir}")
         
         if cleanup_on_init:
-            self.cleanup_docker_resources()
+            print("Cleaning up Docker resources on initialization")
+            self._check_disk_space(required_gb=40)
     
     def _download_miner_files(self, repo_id: str, uid: str) -> Path:
         """
@@ -52,6 +55,8 @@ class DockerManager:
             Path to downloaded files
         """
         try:
+
+            
             repo_name = repo_id.replace("/", "_")
             miner_dir = self.base_cache_dir / repo_name
             miner_dir.mkdir(parents=True, exist_ok=True)
@@ -82,6 +87,10 @@ class DockerManager:
 
     def _check_disk_space(self, required_gb: int = 20) -> None:
         """Check available disk space and clean if necessary."""
+        self.cleanup_docker_resources()
+        self._clean_old_repos()
+
+
         total, used, free = shutil.disk_usage(str(self.base_cache_dir))
         free_gb = free / (1024 * 1024 * 1024)
         
@@ -89,8 +98,14 @@ class DockerManager:
         
         if free_gb < required_gb:
             bt.logging.warning(f"Low disk space ({free_gb:.2f}GB free), cleaning cache directory")
+            
             # Clean Docker resources first
             self.cleanup_docker_resources(aggressive=True)
+            
+            # Clean Hugging Face cache specifically
+            self._clean_huggingface_cache()
+            
+
             
             # Clear HuggingFace cache if exists
             hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
@@ -131,6 +146,46 @@ class DockerManager:
                 bt.logging.error(f"Still insufficient disk space ({free_gb:.2f}GB) after cleanup")
                 raise RuntimeError(f"Insufficient disk space: {free_gb:.2f}GB available, {required_gb}GB required")
 
+    def _clean_huggingface_cache(self):
+        """Clean Hugging Face cache specifically."""
+        hf_cache_paths = [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+        ]
+        
+        for cache_path in hf_cache_paths:
+            if os.path.exists(cache_path):
+                bt.logging.info(f"Cleaning HuggingFace cache: {cache_path}")
+                try:
+                    shutil.rmtree(cache_path)
+                except Exception as e:
+                    bt.logging.error(f"Failed to clean HuggingFace cache: {str(e)}")
+
+    def _clean_old_repos(self, keep_latest: int = 3):
+        """Clean old repository directories, keeping only the most recent ones."""
+        try:
+            # Get all subdirectories in base cache dir
+            subdirs = [d for d in os.listdir(str(self.base_cache_dir)) 
+                      if os.path.isdir(os.path.join(str(self.base_cache_dir), d))]
+            
+            if len(subdirs) <= keep_latest:
+                return
+            
+            # Sort by modification time (oldest first)
+            subdirs.sort(key=lambda d: os.path.getmtime(os.path.join(str(self.base_cache_dir), d)))
+            
+            # Remove oldest directories
+            for old_dir in subdirs[:-keep_latest]:
+                old_path = os.path.join(str(self.base_cache_dir), old_dir)
+                bt.logging.info(f"Removing old repository: {old_path}")
+                try:
+                    shutil.rmtree(old_path)
+                except Exception as e:
+                    bt.logging.error(f"Failed to remove directory {old_path}: {str(e)}")
+        except Exception as e:
+            bt.logging.error(f"Error cleaning old repos: {str(e)}")
+
+
+
     def _find_available_port(self, start_port: int = 8000, max_port: int = 9000) -> int:
         """
         Find an available port in the given range.
@@ -156,6 +211,7 @@ class DockerManager:
         container_name = f"miner_{uid}"
         
         try:
+            
             # Check disk space with higher requirement (40GB)
             self._check_disk_space(required_gb=40)
             
@@ -164,8 +220,6 @@ class DockerManager:
             for dir_name in cache_dirs:
                 (self.base_cache_dir / dir_name).mkdir(parents=True, exist_ok=True)
             
-            # Force pruning before building
-            self.cleanup_docker_resources(aggressive=True)
             
             # Remove existing container if any
             try:
