@@ -64,6 +64,55 @@ def pull_latest_diarization_dataset() -> Optional[Dataset]:
 
         return Dataset.from_dict(overall_dataset)
 
+
+def pull_latest_diarization_dataset_fallback() -> Optional[Dataset]:
+    """Pull latest dataset from HuggingFace."""
+    try:
+        os.system("rm -rf ./data_cache/*")
+        omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
+        recent_files = [
+            f.rfilename
+            for f in omega_ds_files if
+            f.rfilename.startswith(DATA_FILES_PREFIX) 
+        ][:MAX_DS_FILES]
+
+        if len(recent_files) == 0:
+            return None
+
+        download_config = DownloadConfig(download_desc="Downloading Omega Voice Dataset")
+
+        with TemporaryDirectory(dir='./data_cache') as temp_dir:
+
+            omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
+            omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
+            omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
+
+            overall_dataset = {k: [] for k in omega_dataset.keys()}
+
+            for i in range(len(omega_dataset['audio'])):
+                audio_array = omega_dataset['audio'][i]
+                diar_timestamps_start = np.array(omega_dataset['diar_timestamps_start'][i])
+                diar_speakers = np.array(omega_dataset['diar_speakers'][i])
+
+                if len(set(diar_speakers)) == 1:
+                    continue
+
+                for k in omega_dataset.keys():
+                    value = audio_array if k == 'audio' else omega_dataset[k][i]
+                    overall_dataset[k].append(value)
+
+                if len(overall_dataset['audio']) >= 8:
+                    break
+
+            if len(overall_dataset['audio']) < 1:
+                return None
+
+            return Dataset.from_dict(overall_dataset)
+        
+    except Exception as e:
+        bt.logging.error(f"Error pulling dataset: {str(e)}")
+        return None
+    
 def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
     cleanup_gpu_memory()
     log_gpu_memory('before container start')
@@ -201,6 +250,12 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
     diar_time = time.time()
     
     mini_batch = pull_latest_diarization_dataset()
+    if mini_batch is None:
+        mini_batch = pull_latest_diarization_dataset_fallback()
+        if mini_batch is None:
+            bt.logging.error(f"No diarization dataset found for {hf_repo_id}")
+            return 0
+            
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
     
     vals = compute_s2s_metrics(
