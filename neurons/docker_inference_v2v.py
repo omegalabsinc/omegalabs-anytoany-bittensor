@@ -85,6 +85,7 @@ def pull_latest_diarization_dataset_fallback() -> Optional[Dataset]:
 
             omega_dataset = load_dataset(HF_DATASET, data_files=recent_files, cache_dir=temp_dir, download_config=download_config)["train"]
             omega_dataset.cast_column("audio", Audio(sampling_rate=16000))
+            
             omega_dataset = next(omega_dataset.shuffle().iter(batch_size=64))
 
             overall_dataset = {k: [] for k in omega_dataset.keys()}
@@ -251,9 +252,10 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
     
     mini_batch = pull_latest_diarization_dataset()
     if mini_batch is None:
+        bt.logging.info(f"Pulling fallback dataset.")
         mini_batch = pull_latest_diarization_dataset_fallback()
         if mini_batch is None:
-            bt.logging.error(f"No diarization dataset found for {hf_repo_id}")
+            bt.logging.error(f"No diarization dataset found")
             return 0
             
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
@@ -275,7 +277,7 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
 
 if __name__ == "__main__":
     for epoch in range(2):
-        for hf_repo_id in ["shinthet/v1_model", "tezuesh/moshi_general"]:
-            vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=0, model_tracker=None, local_dir="./model_cache")
+        for hf_repo_id in ["eggmoo/omega_gQdQiVq", "tezuesh/moshi_general"]:
+            vals = run_v2v_scoring(hf_repo_id, hotkey=None, block=5268488, model_tracker=None, local_dir="./model_cache")
             print(vals)
             exit(0)
