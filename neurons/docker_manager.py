@@ -5,8 +5,6 @@ import numpy as np
 import base64
 import io
 import os
-# Disable HF transfer for better error handling
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
 
 import logging
 from pathlib import Path
@@ -44,37 +42,40 @@ class DockerManager:
             self._check_disk_space(required_gb=40)
     
     def _download_miner_files(self, repo_id: str, uid: str) -> Path:
-        """
-        Downloads required files from HuggingFace.
-        
-        Args:
-            repo_id: HuggingFace repository ID
-            uid: Unique identifier for the download
-            
-        Returns:
-            Path to downloaded files
-        """
+        """Downloads required files from HuggingFace."""
         try:
-
+            # Check disk space with higher requirement for model download
+            self._check_disk_space(required_gb=40)
             
             repo_name = repo_id.replace("/", "_")
             miner_dir = self.base_cache_dir / repo_name
+            
+            # Clean up any existing directory
+            if miner_dir.exists():
+                bt.logging.info(f"Cleaning up existing directory: {miner_dir}")
+                shutil.rmtree(miner_dir)
+            
             miner_dir.mkdir(parents=True, exist_ok=True)
             
             bt.logging.info(f"Downloading files from {repo_id} to {miner_dir}")
             
             try:
+                # Configure HuggingFace download
                 downloaded_path = huggingface_hub.snapshot_download(
                     repo_id=repo_id,
                     local_dir=miner_dir,
-                    local_dir_use_symlinks=False
+                    local_dir_use_symlinks=False,
                 )
-                bt.logging.info(f"Downloaded files to {downloaded_path}")
+                
+                bt.logging.info(f"Successfully downloaded files to {downloaded_path}")
+                return miner_dir
+                
             except Exception as e:
                 bt.logging.error(f"Failed to download repo: {str(e)}")
+                # Clean up partial download
+                if miner_dir.exists():
+                    shutil.rmtree(miner_dir)
                 raise
-                
-            return miner_dir
                 
         except Exception as e:
             bt.logging.error(f"Failed to download miner files: {str(e)}")
@@ -87,64 +88,52 @@ class DockerManager:
 
     def _check_disk_space(self, required_gb: int = 20) -> None:
         """Check available disk space and clean if necessary."""
-        self.cleanup_docker_resources()
-        self._clean_old_repos()
-
-
-        total, used, free = shutil.disk_usage(str(self.base_cache_dir))
-        free_gb = free / (1024 * 1024 * 1024)
-        
-        bt.logging.info(f"Available disk space: {free_gb:.2f}GB")
-        
-        if free_gb < required_gb:
-            bt.logging.warning(f"Low disk space ({free_gb:.2f}GB free), cleaning cache directory")
-            
-            # Clean Docker resources first
+        try:
+            # First clean up Docker resources
             self.cleanup_docker_resources(aggressive=True)
             
-            # Clean Hugging Face cache specifically
-            self._clean_huggingface_cache()
+            # Then clean old repos
+            self._clean_old_repos(keep_latest=1)  # Keep only the latest repo
             
-
-            
-            # Clear HuggingFace cache if exists
-            hf_cache = os.path.expanduser("~/.cache/huggingface/hub")
-            if os.path.exists(hf_cache):
-                bt.logging.info(f"Cleaning HuggingFace cache: {hf_cache}")
-                try:
-                    shutil.rmtree(hf_cache)
-                except Exception as e:
-                    bt.logging.error(f"Failed to clean HuggingFace cache: {str(e)}")
-            
-            # Clear our cache directory
-            for item in os.listdir(str(self.base_cache_dir)):
-                item_path = os.path.join(str(self.base_cache_dir), item)
-                if os.path.isdir(item_path):
-                    try:
-                        shutil.rmtree(item_path)
-                        bt.logging.info(f"Removed directory: {item_path}")
-                    except Exception as e:
-                        bt.logging.error(f"Failed to remove directory {item_path}: {str(e)}")
-                else:
-                    try:
-                        os.remove(item_path)
-                        bt.logging.info(f"Removed file: {item_path}")
-                    except Exception as e:
-                        bt.logging.error(f"Failed to remove file {item_path}: {str(e)}")
-            
-            # Recreate necessary directories
-            self.base_cache_dir.mkdir(parents=True, exist_ok=True)
-            for dir_name in ['models', 'hub', 'downloads']:
-                (self.base_cache_dir / dir_name).mkdir(parents=True, exist_ok=True)
-            
-            # Check if we have enough space now
-            _, _, free = shutil.disk_usage(str(self.base_cache_dir))
+            # Check disk space
+            total, used, free = shutil.disk_usage(str(self.base_cache_dir))
             free_gb = free / (1024 * 1024 * 1024)
-            bt.logging.info(f"Available disk space after cleanup: {free_gb:.2f}GB")
+            
+            bt.logging.info(f"Available disk space: {free_gb:.2f}GB")
             
             if free_gb < required_gb:
-                bt.logging.error(f"Still insufficient disk space ({free_gb:.2f}GB) after cleanup")
-                raise RuntimeError(f"Insufficient disk space: {free_gb:.2f}GB available, {required_gb}GB required")
+                bt.logging.warning(f"Low disk space ({free_gb:.2f}GB free), performing aggressive cleanup")
+                
+                # Clean HuggingFace cache
+                self._clean_huggingface_cache()
+                
+                # Clear our cache directory
+                for item in os.listdir(str(self.base_cache_dir)):
+                    item_path = os.path.join(str(self.base_cache_dir), item)
+                    try:
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                        else:
+                            os.remove(item_path)
+                        bt.logging.info(f"Removed: {item_path}")
+                    except Exception as e:
+                        bt.logging.error(f"Failed to remove {item_path}: {str(e)}")
+                
+                # Recreate necessary directories
+                self.base_cache_dir.mkdir(parents=True, exist_ok=True)
+                for dir_name in ['models', 'hub', 'downloads']:
+                    (self.base_cache_dir / dir_name).mkdir(parents=True, exist_ok=True)
+                
+                # Check space again
+                _, _, free = shutil.disk_usage(str(self.base_cache_dir))
+                free_gb = free / (1024 * 1024 * 1024)
+                
+                if free_gb < required_gb:
+                    raise RuntimeError(f"Insufficient disk space: {free_gb:.2f}GB available, {required_gb}GB required")
+                
+        except Exception as e:
+            bt.logging.error(f"Error during disk space check: {str(e)}")
+            raise
 
     def _clean_huggingface_cache(self):
         """Clean Hugging Face cache specifically."""
