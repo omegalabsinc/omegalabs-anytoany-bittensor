@@ -24,6 +24,8 @@ def get_timestamp_from_filename(filename: str):
     return ulid.from_str(os.path.splitext(filename.split("/")[-1])[0]).timestamp().timestamp
 
 def pull_latest_diarization_dataset() -> Optional[Dataset]:
+    os.system("rm -rf ./data_cache/*")
+
     omega_ds_files = huggingface_hub.repo_info(repo_id=HF_DATASET, repo_type="dataset").siblings
     recent_files = [
         f.rfilename

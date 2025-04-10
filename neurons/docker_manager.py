@@ -92,6 +92,7 @@ class DockerManager:
             # First clean up Docker resources
             self.cleanup_docker_resources(aggressive=True)
             
+            self._clean_huggingface_cache()
             # Then clean old repos
             self._clean_old_repos(keep_latest=1)  # Keep only the latest repo
             
@@ -105,7 +106,6 @@ class DockerManager:
                 bt.logging.warning(f"Low disk space ({free_gb:.2f}GB free), performing aggressive cleanup")
                 
                 # Clean HuggingFace cache
-                self._clean_huggingface_cache()
                 
                 # Clear our cache directory
                 for item in os.listdir(str(self.base_cache_dir)):
