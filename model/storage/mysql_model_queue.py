@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, JSON, func, desc, exists, ForeignKey, or_, and_
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, JSON, func, desc, exists, ForeignKey, or_, and_, case
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker, aliased, relationship
@@ -254,7 +254,8 @@ class ModelQueueManager:
                         func.max(ScoreHistory.scored_at).label('last_scored_at')
                     ).filter(
                         ScoreHistory.is_archived == False,
-                        ScoreHistory.competition_id == competition_id
+                        ScoreHistory.competition_id == competition_id,
+                        ScoreHistory.score > 0  # Only consider non-zero scores
                     ).group_by(
                         ScoreHistory.hotkey, 
                         ScoreHistory.uid
@@ -272,7 +273,10 @@ class ModelQueueManager:
                     ).order_by(
                         desc(ModelQueue.is_new),
                         (subquery.c.score_count == None).desc(),
-                        subquery.c.score_count.asc(),
+                        case(
+                            (subquery.c.score_count < 5, 0),  # Prioritize models with < 5 non-zero scores
+                            else_=1  # All other models are treated equally
+                        ),
                         func.rand()
                     ).with_for_update().first()
 
