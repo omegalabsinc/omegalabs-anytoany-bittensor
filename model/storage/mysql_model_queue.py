@@ -247,11 +247,12 @@ class ModelQueueManager:
             with self.session_scope() as session:
                 try:
                     now = datetime.utcnow()
+                    # Get latest score timestamp and count for each model
                     subquery = session.query(
                         ScoreHistory.hotkey,
                         ScoreHistory.uid,
                         func.count(ScoreHistory.id).label('score_count'),
-                        func.max(ScoreHistory.scored_at).label('last_scored_at')
+                        func.max(ScoreHistory.scored_at).label('latest_scored_at')  # Get the latest score timestamp
                     ).filter(
                         ScoreHistory.is_archived == False,
                         ScoreHistory.competition_id == competition_id,
@@ -261,6 +262,7 @@ class ModelQueueManager:
                         ScoreHistory.uid
                     ).subquery()
 
+                    five_days_ago = now - timedelta(days=5)
                     next_model = session.query(ModelQueue).outerjoin(
                         subquery, 
                         and_(
@@ -272,10 +274,14 @@ class ModelQueueManager:
                         ModelQueue.competition_id == competition_id
                     ).order_by(
                         desc(ModelQueue.is_new),
-                        (subquery.c.score_count == None).desc(),
+                        (subquery.c.score_count == None).desc(),  # Prioritize never scored models
                         case(
-                            (subquery.c.score_count < 5, 0),  # Prioritize models with < 5 non-zero scores
-                            else_=1  # All other models are treated equally
+                            (or_(
+                                subquery.c.latest_scored_at == None,
+                                subquery.c.latest_scored_at <= five_days_ago,
+                                subquery.c.score_count < 5
+                            ), 0),  # Equal priority for models with < 5 scores OR not scored in 5 days
+                            else_=1
                         ),
                         func.rand()
                     ).with_for_update().first()
