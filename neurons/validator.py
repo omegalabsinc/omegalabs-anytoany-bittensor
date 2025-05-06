@@ -629,7 +629,7 @@ class Validator:
                         if uid_to_block[uid] < uid_to_block[uid2]:
                             scores_per_uid[uid2] = 0
                             uids_penalized_for_hash_duplication.add(uid2)
-                            bt.logging.warning(f"Competition {competition_parameters.competition_id}: UID {uid2} (block {uid_to_block[uid2]}) has duplicate model hash of UID {uid} (block {uid_to_block[uid]}). Penalizing UID {uid2} with score 0. Original score: {original_score_uid2}.")
+                            bt.logging.warning(f"Competition {competition_parameters.competition_id}: UID {uid2} (block {uid_to_block[uid2]}) has duplicate model hash of UID {uid} (block {uid_to_block[uid]}). Penalizing UID {uid2} with score 0.")
                         else:
                             original_score_uid = scores_per_uid[uid]
                             scores_per_uid[uid] = 0
