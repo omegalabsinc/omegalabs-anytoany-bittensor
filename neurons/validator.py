@@ -603,6 +603,7 @@ class Validator:
                 if model_hash == "":
                     model_hash = None
                 
+                bt.logging.info(f"Competition {competition_parameters.competition_id}: UID {uid} initial score from API: {score}, non-zero details: {uid_to_non_zero_scores.get(uid, 0)}")
                 if score is not None:
                     # Only assign score if minimum non-zero scores requirement is met
                     if uid_to_non_zero_scores[uid] >= constants.MIN_NON_ZERO_SCORES:
@@ -628,11 +629,12 @@ class Validator:
                         if uid_to_block[uid] < uid_to_block[uid2]:
                             scores_per_uid[uid2] = 0
                             uids_penalized_for_hash_duplication.add(uid2)
-                            bt.logging.warning(f"uid {uid2} at block {uid_to_block[uid2]} has duplicate model hash of uid {uid} at block {uid_to_block[uid]}. Penalizing uid {uid2} with score of 0.")
+                            bt.logging.warning(f"Competition {competition_parameters.competition_id}: UID {uid2} (block {uid_to_block[uid2]}) has duplicate model hash of UID {uid} (block {uid_to_block[uid]}). Penalizing UID {uid2} with score 0. Original score: {original_score_uid2}.")
                         else:
+                            original_score_uid = scores_per_uid[uid]
                             scores_per_uid[uid] = 0
                             uids_penalized_for_hash_duplication.add(uid)
-                            bt.logging.warning(f"uid {uid} at block {uid_to_block[uid]} has duplicate model hash of uid {uid2} at block {uid_to_block[uid2]}. Penalizing uid {uid} with score of 0.")
+                            bt.logging.warning(f"Competition {competition_parameters.competition_id}: UID {uid} (block {uid_to_block[uid]}) has duplicate model hash of UID {uid2} (block {uid_to_block[uid2]}). Penalizing UID {uid} with score 0. Original score: {original_score_uid}.")
 
             # Compute softmaxed weights based on win rate.
             model_weights = torch.tensor(
@@ -965,27 +967,27 @@ class Validator:
                         bt.logging.info(f"Score for {model_i_metadata} is {score}, took {time.time() - start_time} seconds")
                     except Exception as e:
                         bt.logging.error(
-                            f"Error in eval loop: {e}. Setting score for uid: {uid_i} to 0. \n {traceback.format_exc()}"
+                            f"Error in eval loop for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}: {e}. Setting score to 0. \n {traceback.format_exc()}"
                         )
                     finally:
                         # After we are done with the model, release it.
                         self.model_tracker.release_model_metadata_for_miner_hotkey(hotkey, model_i_metadata)
                 else:
-                    bt.logging.debug(
-                        f"Skipping {uid_i}, submission is for a different competition ({model_i_metadata.id.competition_id}). Setting loss to 0."
+                    bt.logging.info(
+                        f"Skipping UID {uid_i} ({hotkey}), submission is for a different competition ({model_i_metadata.id.competition_id} vs {competition_parameters.competition_id}). Setting score to 0."
                     )
             else:
-                bt.logging.debug(
-                    f"Unable to load the model for {uid_i} (perhaps a duplicate?). Setting loss to 0."
+                bt.logging.info(
+                    f"Unable to load model for UID {uid_i} ({hotkey}) (perhaps a duplicate or metadata issue?). Setting score to 0."
                 )
             if score is None:
-                bt.logging.error(f"Failed to get score for uid: {uid_i}: {model_i_metadata}")
+                bt.logging.error(f"Failed to get score for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}. Setting score to 0.")
                 score = 0
 
             scores_per_uid[uid_i] = score
 
-            bt.logging.debug(
-                f"Computed model score for uid: {uid_i}: {score}"
+            bt.logging.info(
+                f"UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'} assigned final score: {score} for competition {competition_parameters.competition_id}"
             )
             bt.logging.debug(f"Computed model losses for uid: {uid_i}: {score}")
 
