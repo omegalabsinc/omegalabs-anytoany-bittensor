@@ -242,17 +242,45 @@ class ModelQueueManager:
             return False
 
     def get_next_model_to_score(self, competition_id: str):
-        """Get next model to score with retry logic."""
+        """
+        Get next model to score with retry logic.
+        
+        The updated prioritization logic ensures:
+        1. New models (highest priority)
+        2. Models never scored with non-zero scores
+        3a. High-scoring models not scored for over a week
+        3b. Models not scored for more than 7 days (safety net for winning models)
+        4. Models eligible by standard criteria (not scored in 5 days or < 5 scores)
+        5. Everything else (lowest priority)
+        
+        Zero-scored models that are frequently scored are downgraded in priority
+        to prevent them from consuming too many resources.
+        """
         def _get_next_model():
             with self.session_scope() as session:
                 try:
                     now = datetime.utcnow()
+
+                    # ---- START: Query to find overall highest score ----
+                    overall_max_score_value = session.query(func.max(ScoreHistory.score)).filter(
+                        ScoreHistory.competition_id == competition_id,
+                        ScoreHistory.is_archived == False,
+                        ScoreHistory.score > 0  # Consider only positive scores as relevant for "highest"
+                    ).scalar()
+
+                    if overall_max_score_value is not None:
+                        bt.logging.info(f"Overall highest positive score in competition '{competition_id}' is: {overall_max_score_value:.4f}")
+                    else:
+                        bt.logging.info(f"No positive scores found for competition '{competition_id}' to determine an overall highest score.")
+                    # ---- END: Query ----
+                    
                     # Get latest score timestamp and count for each model
-                    subquery = session.query(
+                    score_subquery = session.query(
                         ScoreHistory.hotkey,
                         ScoreHistory.uid,
                         func.count(ScoreHistory.id).label('score_count'),
-                        func.max(ScoreHistory.scored_at).label('latest_scored_at')  # Get the latest score timestamp
+                        func.max(ScoreHistory.scored_at).label('latest_scored_at'),  # Get the latest score timestamp
+                        func.max(ScoreHistory.score).label('max_score')  # Get the maximum score
                     ).filter(
                         ScoreHistory.is_archived == False,
                         ScoreHistory.competition_id == competition_id,
@@ -262,28 +290,128 @@ class ModelQueueManager:
                         ScoreHistory.uid
                     ).subquery()
 
+                    # Also track all scores (including zeros) for high-frequency zero score detection
+                    all_scores_subquery = session.query(
+                        ScoreHistory.hotkey,
+                        ScoreHistory.uid,
+                        func.count(ScoreHistory.id).label('all_score_count'),
+                        func.max(ScoreHistory.scored_at).label('latest_all_scored_at'),
+                        func.sum(case((ScoreHistory.score > 0, 1), else_=0)).label('non_zero_count')
+                    ).filter(
+                        ScoreHistory.is_archived == False,
+                        ScoreHistory.competition_id == competition_id
+                    ).group_by(
+                        ScoreHistory.hotkey, 
+                        ScoreHistory.uid
+                    ).subquery()
+
                     five_days_ago = now - timedelta(days=5)
+                    weekly_rescore_threshold_time = now - timedelta(days=7)  # Define a 7-day threshold
+                    
+                    # Check if we have new models before proceeding
+                    have_new_models = session.query(ModelQueue).filter(
+                        ModelQueue.is_being_scored == False,
+                        ModelQueue.competition_id == competition_id,
+                        ModelQueue.is_new == True
+                    ).first() is not None
+                    
+                    # Check if we have never-scored models
+                    never_scored_count = session.query(func.count(ModelQueue.uid)).filter(
+                        ModelQueue.is_being_scored == False,
+                        ModelQueue.competition_id == competition_id,
+                        ~exists().where(
+                            and_(
+                                ScoreHistory.hotkey == ModelQueue.hotkey,
+                                ScoreHistory.uid == ModelQueue.uid,
+                                ScoreHistory.score > 0
+                            )
+                        )
+                    ).scalar()
+                    
+                    # If no new models and no never-scored models, prioritize high scoring models not scored recently
+                    if not have_new_models:
+                        # ---- START: Modified logic for dynamic high-score threshold ----
+                        if overall_max_score_value is not None and overall_max_score_value > 0: # Ensure we have a valid max score
+                            dynamic_high_score_threshold = overall_max_score_value * 0.97
+                            bt.logging.info(f"Using dynamic high-score threshold for competition '{competition_id}': >= {dynamic_high_score_threshold:.4f} (based on overall max of {overall_max_score_value:.4f})")
+
+                            # First try to get a high-scoring model not scored in over a week
+                            top_model = session.query(ModelQueue).join(
+                                score_subquery,
+                                and_(
+                                    ModelQueue.hotkey == score_subquery.c.hotkey,
+                                    ModelQueue.uid == score_subquery.c.uid
+                                )
+                            ).filter(
+                                ModelQueue.is_being_scored == False,
+                                ModelQueue.competition_id == competition_id,
+                                score_subquery.c.latest_scored_at < weekly_rescore_threshold_time,
+                                score_subquery.c.max_score >= dynamic_high_score_threshold  # Use dynamic threshold
+                            ).order_by(
+                                score_subquery.c.max_score.desc()  # Highest score first
+                            ).with_for_update().first()
+                            
+                            if top_model:
+                                # Create a dictionary with the model's attributes
+                                model_data = {
+                                    'hotkey': top_model.hotkey,
+                                    'uid': top_model.uid,
+                                    'block': top_model.block,
+                                    'competition_id': top_model.competition_id,
+                                    'model_metadata': top_model.model_metadata,
+                                    'is_new': top_model.is_new,
+                                    'is_being_scored': top_model.is_being_scored,
+                                    'is_being_scored_by': top_model.is_being_scored_by,
+                                    'scoring_updated_at': top_model.scoring_updated_at,
+                                    'updated_at': top_model.updated_at
+                                }
+                                bt.logging.debug(f"Found high-scoring model (dynamic threshold) to score: hotkey={model_data['hotkey']}, uid={model_data['uid']}")
+                                return model_data
+                        else:
+                            bt.logging.info(f"Skipping dynamic high-score prioritization for competition '{competition_id}' as no overall positive max score is available or it's zero.")
+                        # ---- END: Modified logic ----
+                    
+                    # Otherwise, use the standard prioritization logic with the zero-score detection
                     next_model = session.query(ModelQueue).outerjoin(
-                        subquery, 
+                        score_subquery, 
                         and_(
-                            ModelQueue.hotkey == subquery.c.hotkey, 
-                            ModelQueue.uid == subquery.c.uid
+                            ModelQueue.hotkey == score_subquery.c.hotkey, 
+                            ModelQueue.uid == score_subquery.c.uid
+                        )
+                    ).outerjoin(
+                        all_scores_subquery,
+                        and_(
+                            ModelQueue.hotkey == all_scores_subquery.c.hotkey,
+                            ModelQueue.uid == all_scores_subquery.c.uid
                         )
                     ).filter(
                         ModelQueue.is_being_scored == False,
                         ModelQueue.competition_id == competition_id
                     ).order_by(
-                        desc(ModelQueue.is_new),
-                        (subquery.c.score_count == None).desc(),  # Prioritize never scored models
-                        case(
-                            (or_(
-                                subquery.c.latest_scored_at == None,
-                                subquery.c.latest_scored_at <= five_days_ago,
-                                subquery.c.score_count < 5
-                            ), 0),  # Equal priority for models with < 5 scores OR not scored in 5 days
+                        desc(ModelQueue.is_new),  # 1. Prioritize new models
+                        (score_subquery.c.score_count == None).desc(),  # 2. Prioritize models never scored (non-zero)
+                        case( # 3. Prioritize models not scored for more than 7 days (safety net)
+                            (and_(score_subquery.c.latest_scored_at != None, score_subquery.c.latest_scored_at < weekly_rescore_threshold_time), 0),
                             else_=1
                         ),
-                        func.rand()
+                        # 4. Decrease priority for models with all zero scores and frequent scoring
+                        case(
+                            (and_(
+                                all_scores_subquery.c.all_score_count > 10,  # Has many scores
+                                all_scores_subquery.c.non_zero_count == 0,   # All scores are zero
+                                all_scores_subquery.c.latest_all_scored_at > five_days_ago  # Scored recently
+                            ), 1),
+                            else_=0
+                        ),
+                        case( # 5. Prioritize models eligible by standard criteria
+                            (or_(
+                                score_subquery.c.latest_scored_at == None,
+                                score_subquery.c.latest_scored_at <= five_days_ago,
+                                score_subquery.c.score_count < 5
+                            ), 0),
+                            else_=1
+                        ),
+                        func.rand()  # 6. Random tie-breaker
                     ).with_for_update().first()
 
                     if next_model:
