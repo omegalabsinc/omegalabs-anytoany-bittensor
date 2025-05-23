@@ -65,6 +65,6 @@ deviation_percent = 0.1
 
 MIN_AGE = 4 * 60 * 60  # 4 hours
 MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
-MIN_NON_ZERO_SCORES = 5  # Minimum number of non-zero scores required for weight assignment
+MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8
