@@ -1,6 +1,6 @@
 from typing import Annotated, List, Optional
 from traceback import print_exception
-from datetime import datetime
+from datetime import datetime, timezone
 import threading
 import time
 from collections import OrderedDict
@@ -402,7 +402,203 @@ async def main():
         except Exception as e:
             logging.error(f"Error getting leaderboard data: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
+        
 
+    def filter_scores_by_today(recent_model_scores):
+        """
+        Filter recent_model_scores to only include scores from today.
+        Returns a new dictionary with the same structure but only today's scores.
+        """
+        # Get current date in UTC
+        today = datetime.now(timezone.utc).date()
+        
+        filtered_scores = {}
+        
+        for uid, models in recent_model_scores.items():
+            filtered_models = {}
+            
+            for model_key, scores in models.items():
+                filtered_score_list = []
+                
+                for score in scores:
+                    # Parse the scored_at timestamp
+                    try:
+                        scored_at = score.get('scored_at')
+                        
+                        # Skip if scored_at is None or empty
+                        if not scored_at:
+                            print(f"Skipping score with missing scored_at: {score}")
+                            continue
+                        
+                        # Handle different types of scored_at values
+                        if isinstance(scored_at, str):
+                            # Handle the timestamp format '2025-05-25T15:23:22'
+                            scored_date = datetime.fromisoformat(scored_at).date()
+                        elif isinstance(scored_at, datetime):
+                            # Already a datetime object
+                            scored_date = scored_at.date()
+                        else:
+                            # Try to convert to string first
+                            scored_date = datetime.fromisoformat(str(scored_at)).date()
+                        
+                        # Only include scores from today
+                        if scored_date == today:
+                            filtered_score_list.append(score)
+                            
+                    except (ValueError, TypeError, AttributeError) as e:
+                        print(f"Error parsing scored_at timestamp: {score.get('scored_at', 'N/A')} (type: {type(score.get('scored_at'))}) - {e}")
+                        continue
+                
+                # Only include the model if it has scores from today
+                if filtered_score_list:
+                    filtered_models[model_key] = filtered_score_list
+            
+            # Only include the UID if it has models with today's scores
+            if filtered_models:
+                filtered_scores[uid] = filtered_models
+        
+        return filtered_scores
+
+    def filter_scores_except_today(recent_model_scores):
+        """
+        Filter recent_model_scores to exclude scores from today.
+        Returns a new dictionary with the same structure but without today's scores.
+        """
+        # Get current date in UTC
+        today = datetime.now(timezone.utc).date()
+        
+        filtered_scores = {}
+        
+        for uid, models in recent_model_scores.items():
+            filtered_models = {}
+            
+            for model_key, scores in models.items():
+                filtered_score_list = []
+                
+                for score in scores:
+                    # Parse the scored_at timestamp
+                    try:
+                        scored_at = score.get('scored_at')
+                        
+                        # Skip if scored_at is None or empty
+                        if not scored_at:
+                            print(f"Skipping score with missing scored_at: {score}")
+                            continue
+                        
+                        # Handle different types of scored_at values
+                        if isinstance(scored_at, str):
+                            # Handle the timestamp format '2025-05-25T15:23:22'
+                            scored_date = datetime.fromisoformat(scored_at).date()
+                        elif isinstance(scored_at, datetime):
+                            # Already a datetime object
+                            scored_date = scored_at.date()
+                        else:
+                            # Try to convert to string first
+                            scored_date = datetime.fromisoformat(str(scored_at)).date()
+                        
+                        # Only include scores that are NOT from today (historical scores)
+                        if scored_date != today:
+                            filtered_score_list.append(score)
+                            
+                    except (ValueError, TypeError, AttributeError) as e:
+                        print(f"Error parsing scored_at timestamp: {score.get('scored_at', 'N/A')} (type: {type(score.get('scored_at'))}) - {e}")
+                        continue
+                
+                # Only include the model if it has historical scores
+                if filtered_score_list:
+                    filtered_models[model_key] = filtered_score_list
+            
+            # Only include the UID if it has models with historical scores
+            if filtered_models:
+                filtered_scores[uid] = filtered_models
+        
+        return filtered_scores
+
+    @app.get("/get-top-model")
+    async def get_top_model():
+        # if not authenticate_with_bittensor(hotkey, metagraph):
+        #     print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+        #     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Valid hotkey required.")
+        # # get uid of bittensor validator
+        # uid = metagraph.hotkeys.index(hotkey)
+
+        try:
+            recent_model_scores = queue_manager.get_recent_model_scores(scores_per_model=MIN_NON_ZERO_SCORES)
+            
+            # Filter out today's scores - we want historical data only
+            historical_scores = filter_scores_except_today(recent_model_scores)
+            
+            # Calculate stake-weighted averages for each model using historical scores
+            weighted_scores = calculate_stake_weighted_scores(historical_scores, metagraph)
+            
+            # Group models by competition_id and find top 2 for each
+            competition_top_models = {}
+            
+            # Collect all valid models with scores
+            all_models = []
+            for uid, models in weighted_scores.items():
+                for model_key, data in models.items():
+                    if (data['score'] is not None and 
+                        float(data['score']) > 0 and 
+                        data['num_scores'] >= MIN_NON_ZERO_SCORES and
+                        data.get('competition_id')):
+                        
+                        try:
+                            model_metadata = json.loads(data['model_metadata'])["id"]
+                            model_name = f"{model_metadata['namespace']}/{model_metadata['name']}"
+                            block_is_earlier = cached_compare_block_and_model(data['block'], model_name)
+                            
+                            # Only include if block is earlier (valid model)
+                            if block_is_earlier:
+                                all_models.append({
+                                    'uid': uid,
+                                    'hotkey': data['hotkey'],
+                                    'competition_id': data['competition_id'],
+                                    'model_name': model_name,
+                                    'score': data['score'],
+                                    'scored_at': data['scored_at'],
+                                    'block': data['block'],
+                                    'model_hash': data['model_hash'],
+                                    'num_scores': data['num_scores'],
+                                    'unique_validators': data['unique_validators'],
+                                    'score_pattern': data['score_pattern'],
+                                    'score_details': data['score_details']
+                                })
+                        except (json.JSONDecodeError, KeyError) as e:
+                            print(f"Error parsing model metadata for UID {uid}: {e}")
+                            continue
+            
+            # Group by competition_id and get top 2 for each
+            for model in all_models:
+                comp_id = model['competition_id']
+                if comp_id not in competition_top_models:
+                    competition_top_models[comp_id] = []
+                competition_top_models[comp_id].append(model)
+            
+            # Sort each competition's models by score (descending) and take top 2
+            for comp_id in competition_top_models:
+                competition_top_models[comp_id] = sorted(
+                    competition_top_models[comp_id], 
+                    key=lambda x: x['score'], 
+                    reverse=True
+                )[:1]  # Take top 2
+            
+            print("Top 2 models per competition (excluding today's scores):")
+            trimmed_top_models = { "o1": [], "v1": [] }
+            for comp_id, models in competition_top_models.items():
+                print(f"\nCompetition {comp_id}:")
+                for i, model in enumerate(models, 1):
+                    print(f"  {i}. UID {model['uid']}: {model['model_name']} - Score: {model['score']:.4f}")
+                    trimmed_top_models[comp_id].append({
+                        "uid": model['uid'],
+                        "score": model['score']
+                    })
+            return trimmed_top_models
+            
+        except Exception as e:
+            logging.error(f"Error getting top model: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error.")
+        
     @app.post("/get-all-model-scores")
     async def get_all_model_scores(
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
