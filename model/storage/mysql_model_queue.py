@@ -33,8 +33,23 @@ def init_database():
         return
 
     try:
-        connection_string = f'mysql://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}'
-        _engine = create_engine(connection_string)
+        # Enhanced connection string with additional parameters for better compatibility
+        connection_string = f'mysql+pymysql://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}?charset=utf8mb4'
+        
+        # Create engine with enhanced configuration for macOS compatibility
+        _engine = create_engine(
+            connection_string,
+            pool_pre_ping=True,  # Verify connections before use
+            pool_recycle=3600,   # Recycle connections every hour
+            connect_args={
+                'charset': 'utf8mb4',
+                'auth_plugin_map': {
+                    'mysql_native_password': 'mysql_native_password',
+                    'caching_sha2_password': 'caching_sha2_password'
+                },
+                'autocommit': True
+            }
+        )
         Session = sessionmaker(bind=_engine)
         
         # Create all tables
@@ -43,6 +58,7 @@ def init_database():
         
     except Exception as e:
         bt.logging.error(f"Failed to initialize database: {str(e)}")
+        bt.logging.error("If you're experiencing authentication issues on macOS, ensure you're using PyMySQL instead of mysqlclient")
         raise
 
 def get_session() -> Session:

@@ -19,6 +19,7 @@ from scipy import optimize
 import argparse
 import pandas as pd
 import matplotlib.pyplot as plt
+from substrateinterface import Keypair
 
 
 def iswin(score_i, score_j, block_i, block_j, hash_i=None, hash_j=None):
@@ -624,9 +625,24 @@ class TestWinRate:
 
     def get_basic_auth(self):
         """Get basic auth credentials for API requests"""
-        # Use the hardcoded test credentials that match the API
-        dummy_hotkey = "5G77777777777777777777777777777777777777777777777777777777777777"
-        return requests.auth.HTTPBasicAuth(dummy_hotkey, "signature")
+        # Generate a new keypair for each auth request or reuse one if appropriate for your testing.
+        # For simplicity, generating a new one each time here.
+        # You might want to use a fixed known keypair for consistent testing.
+        keypair = Keypair.create_from_mnemonic(Keypair.generate_mnemonic())
+        
+        # The username is the ss58_address (hotkey)
+        username = keypair.ss58_address
+        
+        # The password is the signature of the username (hotkey string)
+        # The message to sign can be the hotkey itself or any agreed-upon string.
+        # Ensure the API side verifies the signature against the same message.
+        message_to_sign = username 
+        signature = keypair.sign(message_to_sign)
+        
+        # Convert signature to hex string for HTTPBasicAuth password
+        password_hex = '0x' + signature.hex()
+        
+        return requests.auth.HTTPBasicAuth(username, password_hex)
 
     def get_all_model_scores(self) -> Optional[Dict[str, float]]:
         """
@@ -645,7 +661,7 @@ class TestWinRate:
                     self.get_all_model_scores_endpoint,
                     auth=self.get_basic_auth(),
                     headers={"Content-Type": "application/json"},
-                    timeout=30
+                    timeout=120
                 )
                 response.raise_for_status()
                 response_json = response.json()

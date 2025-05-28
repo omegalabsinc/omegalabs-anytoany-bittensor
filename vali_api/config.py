@@ -14,7 +14,7 @@ NETWORK = None
 NETUID = 21
 
 if not IS_PROD:
-    NETWORK = "test"
+    # NETWORK = "test"
     NETUID = 96
 
 DBHOST = os.getenv("DBHOST")
