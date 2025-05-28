@@ -38,6 +38,12 @@ _block_model_cache = OrderedDict()  # OrderedDict maintains insertion order for 
 _cache_lock = threading.Lock()
 _cache_stats = {"hits": 0, "misses": 0, "total_requests": 0}
 
+# Cache for metagraph data to avoid issues with resyncing during API calls
+_metagraph_cache = None
+_metagraph_cache_lock = threading.Lock()
+_metagraph_cache_timestamp = None
+METAGRAPH_CACHE_TTL = 300  # 5 minutes cache TTL
+
 def get_hotkey(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> str:
     keypair = Keypair(ss58_address=credentials.username)
 
@@ -107,6 +113,159 @@ def filter_scores(scores, deviation_percent=deviation_percent):
     result = filtered_scores.copy()
     result.extend(penalty_scores)
     return result
+
+
+def get_cached_metagraph(current_metagraph):
+    """
+    Get cached metagraph data or update cache if expired.
+    Returns a snapshot of metagraph data that won't change during API calls.
+    """
+    global _metagraph_cache, _metagraph_cache_timestamp
+    
+    current_time = time.time()
+    
+    with _metagraph_cache_lock:
+        # Check if cache is valid
+        if (_metagraph_cache is not None and 
+            _metagraph_cache_timestamp is not None and 
+            current_time - _metagraph_cache_timestamp < METAGRAPH_CACHE_TTL):
+            return _metagraph_cache
+        
+        # Cache is expired or doesn't exist, update it
+        try:
+            _metagraph_cache = {
+                'hotkeys': list(current_metagraph.hotkeys),
+                'stakes': {hotkey: float(current_metagraph.S[i].item()) 
+                          for i, hotkey in enumerate(current_metagraph.hotkeys)}
+            }
+            _metagraph_cache_timestamp = current_time
+            print(f"Updated metagraph cache with {len(_metagraph_cache['hotkeys'])} hotkeys")
+            return _metagraph_cache
+        except Exception as e:
+            print(f"Error updating metagraph cache: {e}")
+            # Return current metagraph data as fallback
+            return {
+                'hotkeys': list(current_metagraph.hotkeys),
+                'stakes': {hotkey: float(current_metagraph.S[i].item()) 
+                          for i, hotkey in enumerate(current_metagraph.hotkeys)}
+            }
+
+
+def calculate_stake_weighted_scores_cached(recent_model_scores, cached_metagraph_data, max_scores=10):
+    """
+    Calculate stake-weighted scores using cached metagraph data to avoid issues with resyncing.
+    This is identical to calculate_stake_weighted_scores but uses cached metagraph data.
+    """
+    weighted_scores = {}
+    
+    for uid, models in recent_model_scores.items():
+        weighted_scores[uid] = {}
+        
+        for model_key, scores in models.items():
+            if not scores or scores[0]['score'] is None:
+                weighted_scores[uid][model_key] = {
+                    'score': None,
+                    'hotkey': scores[0]['hotkey'],
+                    'num_scores': 0,
+                    'score_details': []
+                }
+                continue
+            
+            # Get the model_hash of the most recent score
+            latest_model_hash = scores[0]['model_hash']
+
+            # Process scores only for the latest model version
+            processed_scores = []
+            for score in scores[:max_scores]:  # Still limit to max_scores
+                try:
+                    scorer_hotkey = score['scorer_hotkey']
+                    # Use cached metagraph data instead of live metagraph
+                    if scorer_hotkey not in cached_metagraph_data['stakes']:
+                        logging.warning(f"Scorer hotkey {scorer_hotkey} not found in cached metagraph")
+                        continue
+                    
+                    stake = cached_metagraph_data['stakes'][scorer_hotkey]
+                    
+                    processed_scores.append({
+                        'score': score['score'],
+                        'stake': stake,
+                        'timestamp': score['scored_at'],
+                        'scorer_hotkey': scorer_hotkey,
+                        'model_hash': score['model_hash']
+                    })
+                except (KeyError, ValueError) as e:
+                    logging.warning(f"Error processing score for hotkey {scorer_hotkey}: {e}")
+                    continue
+            
+            if not processed_scores:
+                weighted_scores[uid][model_key] = {
+                    'score': None,
+                    'hotkey': scores[0]['hotkey'],
+                    'num_scores': 0,
+                    'score_details': []
+                }
+                continue
+
+            # Analyze the zero score pattern
+            total_scores = len(processed_scores)
+            
+            # Case 1: All scores are zero
+            if all(s['score'] == 0 for s in processed_scores):
+                logging.warning(f"All scores are zero for model {scores[0]['hotkey']}. Model may be non-functional.")
+                final_scores = processed_scores
+                
+            # Case 2: Latest scores (last 3) are all zero
+            elif len(processed_scores) >= 3 and all(s['score'] == 0 for s in processed_scores[:3]):
+                logging.warning(f"Latest 3 scores are zero for model {scores[0]['hotkey']}. Recent model issue likely.")
+                final_scores = processed_scores
+                
+            # Case 3: Remove zeros from calculation
+            else:
+                final_scores = [s for s in processed_scores if s['score'] > 0]
+                if len(final_scores) == 0:
+                    final_scores = processed_scores  # Fallback if all scores would be removed
+            
+            num_scores = len(final_scores)
+            final_scores = filter_scores(final_scores)
+
+            # Calculate weighted average
+            total_stake = sum(score['stake'] for score in final_scores)
+            weighted_sum = sum(score['score'] * score['stake'] for score in final_scores)
+            
+            if total_stake > 0:
+                avg_score = weighted_sum / total_stake
+            else:
+                avg_score = None
+                
+            unique_validators = len(set(score['scorer_hotkey'] for score in final_scores))
+
+            weighted_scores[uid][model_key] = {
+                'score': avg_score,
+                'scored_at': scores[0]['scored_at'],
+                'hotkey': scores[0]['hotkey'],
+                'competition_id': scores[0]['competition_id'],
+                'block': scores[0]['block'],
+                'model_metadata': scores[0]['model_metadata'],
+                'model_hash': latest_model_hash,
+                'num_scores': num_scores,
+                'unique_validators': unique_validators,
+                'score_pattern': {
+                    'total_scores': total_scores,
+                    'zero_scores': len([s for s in processed_scores if s['score'] == 0]),
+                    'non_zero_scores': len([s for s in processed_scores if s['score'] > 0]),
+                    'latest_three_zeros': all(s['score'] == 0 for s in processed_scores[:3]) if len(processed_scores) >= 3 else False
+                },
+                'score_details': [{
+                    'hotkey': score['scorer_hotkey'],
+                    'stake': score['stake'],
+                    'score': score['score'],
+                    'timestamp': score['timestamp'],
+                    'weight': score['stake'] / total_stake if total_stake > 0 else 0,
+                    'model_hash': score['model_hash']
+                } for score in final_scores]
+            }
+    
+    return weighted_scores
 
 
 def calculate_stake_weighted_scores(recent_model_scores, metagraph, max_scores=10):
@@ -529,7 +688,7 @@ async def main():
             historical_scores = filter_scores_except_today(recent_model_scores)
             
             # Calculate stake-weighted averages for each model using historical scores
-            weighted_scores = calculate_stake_weighted_scores(historical_scores, metagraph)
+            weighted_scores = calculate_stake_weighted_scores_cached(historical_scores, get_cached_metagraph(metagraph))
             
             # Group models by competition_id and find top 2 for each
             competition_top_models = {}
