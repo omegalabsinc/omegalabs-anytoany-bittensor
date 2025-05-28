@@ -3,6 +3,7 @@ from traceback import print_exception
 from datetime import datetime, timezone
 import threading
 import time
+import os
 from collections import OrderedDict
 
 import bittensor
@@ -38,11 +39,9 @@ _block_model_cache = OrderedDict()  # OrderedDict maintains insertion order for 
 _cache_lock = threading.Lock()
 _cache_stats = {"hits": 0, "misses": 0, "total_requests": 0}
 
-# Cache for metagraph data to avoid issues with resyncing during API calls
-_metagraph_cache = None
-_metagraph_cache_lock = threading.Lock()
-_metagraph_cache_timestamp = None
-METAGRAPH_CACHE_TTL = 300  # 5 minutes cache TTL
+# File-based cache for metagraph data to avoid issues with resyncing during API calls
+METAGRAPH_CACHE_FILE = "temp/meta.json"
+_metagraph_file_lock = threading.Lock()
 
 def get_hotkey(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> str:
     keypair = Keypair(ss58_address=credentials.username)
@@ -115,40 +114,67 @@ def filter_scores(scores, deviation_percent=deviation_percent):
     return result
 
 
+def get_cached_metagraph_file_only():
+    """
+    Get cached metagraph data from temp/meta.json file ONLY.
+    Does not fall back to live metagraph to avoid network connections.
+    Returns None if file is not available.
+    """
+    
+    with _metagraph_file_lock:
+        try:
+            # Try to read cached data from file
+            if os.path.exists(METAGRAPH_CACHE_FILE):
+                with open(METAGRAPH_CACHE_FILE, 'r') as f:
+                    cached_data = json.load(f)
+                print(f"Loaded metagraph cache from {METAGRAPH_CACHE_FILE} with {len(cached_data.get('hotkeys', []))} hotkeys")
+                return {
+                    'hotkeys': cached_data.get('hotkeys', []),
+                    'stakes': cached_data.get('stakes', {})
+                }
+            else:
+                print(f"Metagraph cache file {METAGRAPH_CACHE_FILE} not found")
+                return None
+        except (json.JSONDecodeError, IOError, KeyError) as e:
+            print(f"Error reading metagraph cache file: {e}")
+            return None
+
+
 def get_cached_metagraph(current_metagraph):
     """
-    Get cached metagraph data or update cache if expired.
-    Returns a snapshot of metagraph data that won't change during API calls.
+    Get cached metagraph data from temp/meta.json file.
+    Returns cached data if file exists, otherwise falls back to current metagraph.
     """
-    global _metagraph_cache, _metagraph_cache_timestamp
     
-    current_time = time.time()
-    
-    with _metagraph_cache_lock:
-        # Check if cache is valid
-        if (_metagraph_cache is not None and 
-            _metagraph_cache_timestamp is not None and 
-            current_time - _metagraph_cache_timestamp < METAGRAPH_CACHE_TTL):
-            return _metagraph_cache
-        
-        # Cache is expired or doesn't exist, update it
+    with _metagraph_file_lock:
         try:
-            _metagraph_cache = {
+            # Try to read cached data from file
+            if os.path.exists(METAGRAPH_CACHE_FILE):
+                with open(METAGRAPH_CACHE_FILE, 'r') as f:
+                    cached_data = json.load(f)
+                print(f"Loaded metagraph cache from {METAGRAPH_CACHE_FILE} with {len(cached_data.get('hotkeys', []))} hotkeys")
+                return {
+                    'hotkeys': cached_data.get('hotkeys', []),
+                    'stakes': cached_data.get('stakes', {})
+                }
+            else:
+                print(f"Metagraph cache file {METAGRAPH_CACHE_FILE} not found, using fallback")
+        except (json.JSONDecodeError, IOError, KeyError) as e:
+            print(f"Error reading metagraph cache file: {e}, using fallback")
+        
+        # Fallback to current metagraph data if file doesn't exist or is corrupted
+        try:
+            fallback_data = {
                 'hotkeys': list(current_metagraph.hotkeys),
                 'stakes': {hotkey: float(current_metagraph.S[i].item()) 
                           for i, hotkey in enumerate(current_metagraph.hotkeys)}
             }
-            _metagraph_cache_timestamp = current_time
-            print(f"Updated metagraph cache with {len(_metagraph_cache['hotkeys'])} hotkeys")
-            return _metagraph_cache
+            print("Using fallback metagraph data (file cache not available)")
+            return fallback_data
         except Exception as e:
-            print(f"Error updating metagraph cache: {e}")
-            # Return current metagraph data as fallback
-            return {
-                'hotkeys': list(current_metagraph.hotkeys),
-                'stakes': {hotkey: float(current_metagraph.S[i].item()) 
-                          for i, hotkey in enumerate(current_metagraph.hotkeys)}
-            }
+            print(f"Error creating fallback metagraph data: {e}")
+            # Return empty data structure as last resort
+            return {'hotkeys': [], 'stakes': {}}
 
 
 def calculate_stake_weighted_scores_cached(recent_model_scores, cached_metagraph_data, max_scores=10):
@@ -156,6 +182,11 @@ def calculate_stake_weighted_scores_cached(recent_model_scores, cached_metagraph
     Calculate stake-weighted scores using cached metagraph data to avoid issues with resyncing.
     This is identical to calculate_stake_weighted_scores but uses cached metagraph data.
     """
+    # If no cached metagraph data available, return empty results
+    if cached_metagraph_data is None:
+        print("No cached metagraph data available, returning empty scores")
+        return {}
+    
     weighted_scores = {}
     
     for uid, models in recent_model_scores.items():
@@ -424,6 +455,23 @@ async def main():
                 # Sync the metagraph.
                 metagraph.sync(subtensor=subtensor)
 
+                # Save metagraph data to file after successful sync
+                metagraph_data = {
+                    'hotkeys': list(metagraph.hotkeys),
+                    'stakes': {hotkey: float(metagraph.S[i].item()) 
+                              for i, hotkey in enumerate(metagraph.hotkeys)},
+                    'timestamp': time.time(),
+                    'last_updated': datetime.utcnow().isoformat()
+                }
+                
+                # Ensure temp directory exists
+                os.makedirs(os.path.dirname(METAGRAPH_CACHE_FILE), exist_ok=True)
+                
+                with _metagraph_file_lock:
+                    with open(METAGRAPH_CACHE_FILE, 'w') as f:
+                        json.dump(metagraph_data, f, indent=2)
+                    print(f"Saved metagraph cache to {METAGRAPH_CACHE_FILE} with {len(metagraph_data['hotkeys'])} hotkeys")
+
                 # Create pairs of (hotkey, uid) from metagraph
                 registered_pairs = [
                     (hotkey, str(metagraph.hotkeys.index(hotkey))) 
@@ -682,13 +730,21 @@ async def main():
         # uid = metagraph.hotkeys.index(hotkey)
 
         try:
+            # Get cached metagraph data (file-only, no network calls)
+            cached_metagraph_data = get_cached_metagraph_file_only()
+            if cached_metagraph_data is None:
+                raise HTTPException(
+                    status_code=503, 
+                    detail="Metagraph cache not available. Please try again in a few moments."
+                )
+            
             recent_model_scores = queue_manager.get_recent_model_scores(scores_per_model=MIN_NON_ZERO_SCORES)
             
             # Filter out today's scores - we want historical data only
             historical_scores = filter_scores_except_today(recent_model_scores)
             
             # Calculate stake-weighted averages for each model using historical scores
-            weighted_scores = calculate_stake_weighted_scores_cached(historical_scores, get_cached_metagraph(metagraph))
+            weighted_scores = calculate_stake_weighted_scores_cached(historical_scores, cached_metagraph_data)
             
             # Group models by competition_id and find top 2 for each
             competition_top_models = {}
@@ -705,7 +761,7 @@ async def main():
                         try:
                             model_metadata = json.loads(data['model_metadata'])["id"]
                             model_name = f"{model_metadata['namespace']}/{model_metadata['name']}"
-                            block_is_earlier = cached_compare_block_and_model(data['block'], model_name)
+                            block_is_earlier = cached_compare_block_and_model_file_only(data['block'], model_name)
                             
                             # Only include if block is earlier (valid model)
                             if block_is_earlier:
@@ -754,6 +810,9 @@ async def main():
                     })
             return trimmed_top_models
             
+        except HTTPException:
+            # Re-raise HTTP exceptions (like 503 for cache not available)
+            raise
         except Exception as e:
             logging.error(f"Error getting top model: {e}")
             raise HTTPException(status_code=500, detail="Internal server error.")
@@ -793,7 +852,7 @@ async def main():
                     
                         model_metadata = json.loads(data['model_metadata'])["id"]
                         model_name = f"{model_metadata['namespace']}/{model_metadata['name']}"
-                        block_is_earlier = cached_compare_block_and_model(data['block'], model_name)
+                        block_is_earlier = cached_compare_block_and_model_file_only(data['block'], model_name)
 
                         
                         all_model_scores[uid] = [{
@@ -863,6 +922,42 @@ async def main():
         check_stale_scoring_tasks(),
         clear_block_model_cache(),
     )
+
+
+def cached_compare_block_and_model_file_only(block: int, model_name: str) -> bool:
+    """
+    File-only cached version of compare_block_and_model function.
+    Returns True if block is earlier than model's creation date.
+    Does NOT make network calls - only uses existing cache.
+    Returns True (allow model) if not in cache to avoid blocking valid models.
+    """
+    global _cache_stats
+    cache_key = f"{block}:{model_name}"
+    
+    # Update total requests counter
+    with _cache_lock:
+        _cache_stats["total_requests"] += 1
+    
+    # Check if key exists in cache
+    if cache_key in _block_model_cache:
+        # Move to end (most recently used)
+        with _cache_lock:
+            value = _block_model_cache.pop(cache_key)
+            _block_model_cache[cache_key] = value
+            _cache_stats["hits"] += 1
+            
+            # Log cache stats occasionally
+            if _cache_stats["total_requests"] % 100 == 0:
+                hit_rate = (_cache_stats["hits"] / _cache_stats["total_requests"]) * 100
+                print(f"Cache stats: {_cache_stats}, Hit rate: {hit_rate:.2f}%, Size: {len(_block_model_cache)}")
+        return value
+    
+    # If not in cache, return True (allow model) to avoid network calls
+    # This prevents blocking valid models when cache doesn't have the data
+    with _cache_lock:
+        _cache_stats["misses"] += 1
+    print(f"Block comparison not in cache for {model_name}, allowing model to avoid network calls")
+    return True
 
 
 def cached_compare_block_and_model(block: int, model_name: str) -> bool:
