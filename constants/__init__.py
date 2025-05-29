@@ -31,11 +31,7 @@ V1_MODEL_ID = "v1"
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
-        reward_percentage=0.25,
-        competition_id=O1_MODEL_ID,
-    ),
-    CompetitionParameters(
-        reward_percentage=0.75,
+        reward_percentage=1.0,
         competition_id=V1_MODEL_ID,
     ),
 ]
@@ -68,3 +64,4 @@ MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
 MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8
+PERCENT_IMPROVEMENT = 20 # Minimum percentage improvement required for a model to be considered better than the previous one

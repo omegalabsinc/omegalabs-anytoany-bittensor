@@ -317,6 +317,7 @@ class Validator:
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
         self.score_model_endpoint = f"{api_root}/score-model"
         self.get_all_model_scores_endpoint = f"{api_root}/get-all-model-scores"
+        self.get_top_model_scores_endpoint = f"{api_root}/get-top-model"
         self.start_model_scoring_endpoint = f"{self.config.scoring_api_url}/api/start_model_scoring"
         self.check_scoring_status_endpoint = f"{self.config.scoring_api_url}/api/check_scoring_status"
 
@@ -559,8 +560,12 @@ class Validator:
         #load_model_perf = PerfMonitor("Eval: Load model")
         #compute_loss_perf = PerfMonitor("Eval: Compute loss")
 
-        new_weights = torch.zeros_like(self.metagraph.S)
+        # If any model has not performed better than the (or previous best model), burn all emissions.
+        top_model_scores = self.get_top_model_scores()
 
+        failed_uids = set(list(range(256)))
+        new_weights = torch.zeros_like(self.metagraph.S)
+        
         for competition_parameters in constants.COMPETITION_SCHEDULE:
             curr_comp_weights = torch.zeros_like(self.metagraph.S)
             uids = self.metagraph.uids.tolist()
@@ -573,6 +578,11 @@ class Validator:
             uid_to_hash = {uid: None for uid in uids}
             sample_per_uid = {muid: None for muid in uids}
             uid_to_non_zero_scores = {uid: 0 for uid in uids}  # Track non-zero scores per UID
+            
+            # Get top scorer
+            this_competition_top_model_data = top_model_scores[competition_parameters.competition_id][0]
+            top_score = this_competition_top_model_data["score"]
+            top_score_uid = this_competition_top_model_data["uid"]
 
             # Iterate through each UID and its associated models
             curr_model_scores = {
@@ -583,12 +593,18 @@ class Validator:
             for uid, models_data in curr_model_scores.items():
                 if not models_data:  # Skip if no models for this UID
                     continue
-            
-                # Convert UID to int
-                uid = int(uid)
                 # Take the first model's data (assuming one model per UID)
                 model_data = models_data[0]
-                
+                # Convert UID to int
+                uid = int(uid)
+                this_score = model_data.get("score", 0)
+
+                if this_score is None or this_score <= top_score * (1.0+constants.PERCENT_IMPROVEMENT/100):
+                    # If this score is less than the (improved by PERCENT_IMPROVEMENT) top model score, skip this UID. This is not a good improvement.
+                    bt.logging.warning(f"Competition {competition_parameters.competition_id}: UID {uid} has score {model_data.get('score', 0)} which is less than the top model score {top_score} with UID {top_score_uid}. Skipping this UID.")
+                    scores_per_uid[uid] = 0
+                    continue
+                failed_uids.remove(uid)
                 # Extract score and block, defaulting to None if not present
                 score = model_data.get('score', 0)
                 block = model_data.get('block', 0)
@@ -606,8 +622,8 @@ class Validator:
                 bt.logging.info(f"Competition {competition_parameters.competition_id}: UID {uid} initial score from API: {score}, non-zero details: {uid_to_non_zero_scores.get(uid, 0)}")
                 if score is not None:
                     # Only assign score if minimum non-zero scores requirement is met
-                    if uid_to_non_zero_scores[uid] >= constants.MIN_NON_ZERO_SCORES:
-                        scores_per_uid[uid] = score
+                    # if uid_to_non_zero_scores[uid] >= constants.MIN_NON_ZERO_SCORES:
+                    scores_per_uid[uid] = score
                     
                 if block is not None:
                     uid_to_block[uid] = block
@@ -617,6 +633,8 @@ class Validator:
             # Compute wins and win rates per uid.
             wins, win_rate = compute_wins(uids, scores_per_uid, uid_to_block)
 
+            # print(wins, win_rate)
+            # print(f"{failed_uids=}")
             # Loop through all models and check for duplicate model hashes. If found, score 0 for model with the newer block.
             uids_penalized_for_hash_duplication = set()
             for uid in uids:
@@ -638,14 +656,20 @@ class Validator:
 
             # Compute softmaxed weights based on win rate.
             model_weights = torch.tensor(
-                [win_rate[uid] for uid in uids], dtype=torch.float32
+                [scores_per_uid[uid] for uid in uids], dtype=torch.float32
             )
             step_weights = torch.softmax(model_weights / constants.temperature, dim=0)
+            
             for i, uid_i in enumerate(uids):
                 curr_comp_weights[uid_i] = step_weights[i]
             scale = competition_parameters.reward_percentage
             curr_comp_weights *= scale / curr_comp_weights.sum()
             new_weights += curr_comp_weights
+            
+            # burn emissions for uids that failed with previous model
+            for i, uid_i in enumerate(uids):
+                if uid_i in failed_uids:
+                    new_weights[uid_i] = 0.0
 
             self.log_step(
                 competition_parameters.competition_id,
@@ -1235,6 +1259,54 @@ class Validator:
                     return model_scores
                 if attempt > 0:
                     bt.logging.debug(f"Successfully retrieved model scores after {attempt + 1} attempts")
+            
+            except requests.exceptions.RequestException as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get all model scores request failed (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.debug(f"Final attempt failed. Request error: {str(e)}")
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get all model scores unexpected error (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}: {traceback.format_exc()}")
+        
+        return None
+    
+    def get_top_model_scores(self) -> typing.Optional[typing.Dict[str, any]]:
+        """
+        Gets all the current scores of models from the SN21 API. Can't be async because it's called from a multiprocessing process.
+        Will retry up to 3 times with a 5 second pause between retries if the request fails.
+
+        Returns:
+        - Dict[str, float]: A dictionary of model IDs to their scores, or None if all retries fail.
+            {"o1":[{"uid":"70","score":0.5713390324769394}],"v1":[{"uid":"42","score":0.35129849999999996}]}%      
+        """
+        MAX_RETRIES = 3
+        RETRY_DELAY = 5
+        
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.get(
+                    self.get_top_model_scores_endpoint,
+                    timeout=120
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                return response_json
+                # if "success" in response_json and not response_json["success"]:
+                #     bt.logging.warning(response_json["message"])
+                #     return None
+                # elif "success" in response_json and response_json["success"]:
+                #     model_scores = response_json["model_scores"]
+                #     bt.logging.info(f"Retrieved model scores from API")
+                #     return model_scores
+                # if attempt > 0:
+                #     bt.logging.debug(f"Successfully retrieved model scores after {attempt + 1} attempts")
             
             except requests.exceptions.RequestException as e:
                 if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
