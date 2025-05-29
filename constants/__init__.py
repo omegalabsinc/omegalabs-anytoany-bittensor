@@ -64,4 +64,4 @@ MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
 MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8
-PERCENT_IMPROVEMENT = 5 # Minimum percentage improvement required for a model to be considered better than the previous one
+PERCENT_IMPROVEMENT = 20 # Minimum percentage improvement required for a model to be considered better than the previous one
