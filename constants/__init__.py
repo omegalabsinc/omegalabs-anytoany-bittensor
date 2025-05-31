@@ -64,4 +64,12 @@ MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
 MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8
-PERCENT_IMPROVEMENT = 20 # Minimum percentage improvement required for a model to be considered better than the previous one
+PERCENT_IMPROVEMENT = 10 # Minimum percentage improvement required for a model to be considered better than the previous one
+
+# ---------------------------------
+# Weight distribution parameters.
+# ---------------------------------
+# UID that receives the majority of weight (used as a burn sink).
+BURN_UID = 111
+# Portion of the total weight routed to BURN_UID.
+BURN_RATE = 0.95
