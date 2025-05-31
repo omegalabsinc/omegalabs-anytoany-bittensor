@@ -753,17 +753,28 @@ class Validator:
                 adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
                 self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
+                winner_uid = int(self.weights.argmax().item())
+                burn_portion = int(constants.BURN_RATE * 65535)
+                reward_portion = 65535 - burn_portion
+                weights_tensor = torch.zeros(
+                    len(self.metagraph.uids), dtype=torch.int16
+                )
+                if winner_uid < len(weights_tensor):
+                    weights_tensor[winner_uid] = reward_portion
+                if constants.BURN_UID < len(weights_tensor):
+                    weights_tensor[constants.BURN_UID] = burn_portion
+
                 self.subtensor.set_weights(
                     netuid=self.config.netuid,
                     wallet=self.wallet,
                     uids=self.metagraph.uids,
-                    weights=adjusted_weights,
+                    weights=weights_tensor,
                     wait_for_inclusion=False,
                     version_key=constants.weights_version_key,
                 )
                 weights_report = {"weights": {}}
-                for uid, score in enumerate(self.weights):
-                    weights_report["weights"][uid] = score
+                for uid, score in enumerate(weights_tensor):
+                    weights_report["weights"][uid] = int(score)
                 bt.logging.debug(weights_report)
             except Exception as e:
                 bt.logging.error(f"failed to set weights {e}: {traceback.format_exc()}")
