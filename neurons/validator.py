@@ -774,7 +774,7 @@ class Validator:
                 )
                 weights_report = {"weights": {}}
                 for uid, score in enumerate(weights_tensor):
-                    weights_report["weights"][uid] = int(score)
+                    weights_report["weights"][uid] = score
                 bt.logging.debug(weights_report)
             except Exception as e:
                 bt.logging.error(f"failed to set weights {e}: {traceback.format_exc()}")
@@ -816,7 +816,7 @@ class Validator:
                 bt.logging.debug(f"Skipping setting weights. Only set weights at 20-minute marks.")
 
             # sleep for 1 minute before checking again
-            time.sleep(40)
+            time.sleep(60)
 
     def get_basic_auth(self) -> HTTPBasicAuth:
         keypair = self.dendrite.keypair
@@ -1381,4 +1381,4 @@ class Validator:
 
 
 if __name__ == "__main__":
-    asyncio.run(Validator().try_set_scores_and_weights(ttl=60 * 5))
+    asyncio.run(Validator().run())
