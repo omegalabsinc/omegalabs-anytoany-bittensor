@@ -254,7 +254,7 @@ async def main():
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
 
-    port = 8000 if IS_PROD else 8001
+    port = 8001 if IS_PROD else 8001
     
     # Initialize database at application startup
     init_database()

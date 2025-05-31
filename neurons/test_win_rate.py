@@ -249,7 +249,7 @@ class TestWinRate:
         self.weights = torch.zeros_like(self.metagraph.S)
         
         # Set up API endpoints - use localhost for testing
-        self.get_all_model_scores_endpoint = "http://localhost:8000/get-all-model-scores"
+        self.get_all_model_scores_endpoint = "http://localhost:8001/get-all-model-scores"
         bt.logging.info(f"Using API endpoint: {self.get_all_model_scores_endpoint}")
 
 

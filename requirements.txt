@@ -1,3 +1,4 @@
+numpy~=2.0.1
 # imagebind @ git+https://github.com/facebookresearch/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
 accelerate==1.2.1
 datasets==3.1.0
@@ -20,3 +21,4 @@ librosa==0.10.2.post1
 wandb==0.19.1
 python-dotenv==1.0.1
 substrate-interface==1.7.11
+pymysql
