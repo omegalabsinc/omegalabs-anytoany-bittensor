@@ -599,7 +599,7 @@ class Validator:
                 uid = int(uid)
                 this_score = model_data.get("score", 0)
 
-                if this_score is None or this_score <= top_score * (1.0+constants.PERCENT_IMPROVEMENT/100):
+                if this_score is None: # or this_score <= top_score * (1.0+constants.PERCENT_IMPROVEMENT/100):
                     # If this score is less than the (improved by PERCENT_IMPROVEMENT) top model score, skip this UID. This is not a good improvement.
                     bt.logging.warning(f"Competition {competition_parameters.competition_id}: UID {uid} has score {model_data.get('score', 0)} which is less than the top model score {top_score} with UID {top_score_uid}. Skipping this UID.")
                     scores_per_uid[uid] = 0
@@ -754,10 +754,10 @@ class Validator:
                 self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
                 winner_uid = int(self.weights.argmax().item())
-                burn_portion = int(constants.BURN_RATE * 65535)
-                reward_portion = 65535 - burn_portion
+                burn_portion = float(constants.BURN_RATE * 1)
+                reward_portion = 1 - burn_portion
                 weights_tensor = torch.zeros(
-                    len(self.metagraph.uids), dtype=torch.int16
+                    len(self.metagraph.uids), dtype=torch.float32
                 )
                 if winner_uid < len(weights_tensor):
                     weights_tensor[winner_uid] = reward_portion
@@ -778,8 +778,8 @@ class Validator:
                 bt.logging.debug(weights_report)
             except Exception as e:
                 bt.logging.error(f"failed to set weights {e}: {traceback.format_exc()}")
-            ws, ui = self.weights.topk(len(self.weights))
-            table = Table(title="All Weights")
+            ws, ui = weights_tensor.topk(len(weights_tensor))
+            table = Table(title="All Weights - Burn adjusted")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
             table.add_column("weight", style="magenta")
             for index, weight in list(zip(ui.tolist(), ws.tolist())):
@@ -816,7 +816,7 @@ class Validator:
                 bt.logging.debug(f"Skipping setting weights. Only set weights at 20-minute marks.")
 
             # sleep for 1 minute before checking again
-            time.sleep(60)
+            time.sleep(40)
 
     def get_basic_auth(self) -> HTTPBasicAuth:
         keypair = self.dendrite.keypair
@@ -1381,4 +1381,4 @@ class Validator:
 
 
 if __name__ == "__main__":
-    asyncio.run(Validator().run())
+    asyncio.run(Validator().try_set_scores_and_weights(ttl=60 * 5))
