@@ -749,9 +749,9 @@ class Validator:
                 # Fetch latest metagraph
                 metagraph = self.subtensor.metagraph(self.config.netuid)
                 consensus = metagraph.C.cpu().numpy()
-                cpu_weights = self.weights.cpu().numpy()
-                adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
-                self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
+                # cpu_weights = self.weights.cpu().numpy()
+                # adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
+                # self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
                 winner_uid = int(self.weights.argmax().item())
                 burn_portion = float(constants.BURN_RATE * 1)
