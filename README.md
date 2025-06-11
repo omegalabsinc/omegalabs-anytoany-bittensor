@@ -10,8 +10,11 @@
 </div>
 
 - [Introduction](#introduction)
-- [Why Any-to-Any?](#why-any-to-any-)
+- [Why Any-to-Any?](#our-vision)
 - [Roadmap](#roadmap-)
+- [Application Layer](#application-layer-real-world-access--impact)
+  - [Partnership](#-partnership-spotlight-clayo)
+  - [Live Access](#️-sn21ai-muse-live-voice-to-voice-for-everyone)
 - [Getting Started](#getting-started-)
   - [For Miners](#for-miners)
   - [For Validators](#for-validators)
@@ -29,52 +32,201 @@
 
 **TestNet UID**: 157
 
-## Why Any-to-Any? 🧠📚🌃🎧🎥
+## Our Vision
 
-- **Multimodal First**: A2A jointly models all modalities (text, image, audio, video) at once, with the belief that true intelligence lies in the associative representations present at the intersection of all modalities.
-- **Unified Fundamental Representation of Reality**: The [Platonic Representation Hypothesis](https://phillipi.github.io/prh/) suggests that as AI models increase in scale and capability, they converge towards a shared, fundamental representation of reality. A2A models, by jointly modeling all modalities, are uniquely positioned to capture this underlying structure, potentially accelerating the path towards more general and robust AI.
-- **Decentralized Data Collection**: Thanks to our [SN24 data collection](https://github.com/omegalabsinc/omegalabs-bittensor-subnet), we leverage a fresh stream of data that mimics real-world demand distribution for training and evaluation. By frequently refreshing our data collection topics based on gaps in the current data, we avoid the issue of underrepresented data classes (see [this paper](https://arxiv.org/abs/2404.04125) for more discussion on this issue). Through self-play, our SN's best checkpoints can learn from each other and pool their intelligence.
-- **Incentivized Research**: World class AI researchers and engineers already love open source. With Bittensor's model for incentivizing intelligence, researchers can be permissionlessly compensated for their efforts and have their compute subsidized according to their productivity.
-- **Bittensor Subnet Orchestrator**: Incorporates specialist models from other Bittensor subnets, acting as a high-bandwidth, general-purpose router. By being the best open source natively multimodal model, future AI projects can leverage our rich multimodal embeddings to bootstrap their own expert models.
-- **Public-Driven Capability Expansion**: Public demand dictates which capabilities the model learns first through the decentralized incentive structure.
-- **Beyond Transformers**: Integrate emerging state-of-the-art architectures like [early fusion transformers](https://arxiv.org/pdf/2405.09818), [diffusion transformers](https://arxiv.org/pdf/2401.08740), [liquid neural networks](https://arxiv.org/pdf/2006.04439), and [KANs](https://arxiv.org/pdf/2404.19756). 
+#### 🧠 A Multimodal-First Foundation
 
-## Roadmap 🚀
+Our long-term focus is **true any-to-any modeling**—models that **jointly learn** from all modalities and express a **deeper understanding of the world** through associative representations. This isn’t just about data format translation; it’s about building models that **see patterns across domains**, capturing richer, more universal signals.
 
-### Phase 1: Foundation (Remainder of Q2 2024)
+#### 🗣️ Starting with Voice-to-Voice
 
-- [x] Design a hard-to-game validation mechanism that rewards deep video understanding
-- [ ] Produce the first checkpoint with SOTA image and video understanding capabilities with our ImageBind + Llama-3 architecture as a proof-of-concept starting point
-- [ ] Generalize the validation mechanism to enable broad architecture search and new multimodal tokenization methods
-- [ ] Onboard 20+ top AI researchers from frontier labs and open source projects
-- [ ] Expand SN24 data collection beyond YouTube to include multimodal websites (e.g. Reddit, blogposts) and synthetic data pipelines
-- [ ] Launch OMEGA Focus screen recording app, providing rich data for modelling long-horizon human workflows, combatting the hallucination and distraction problem found in top closed-source LLMs
+To build toward that future, our current focus is on **voice-to-voice generation**—training models that can fluently listen, understand, and respond. Speech is one of the most information-dense and underexplored modalities, making it the perfect starting point. Success here lays the foundation for more complex multimodal capabilities.
 
-### Phase 2: Fully Multimodal (Q3 2024)
+#### 📐 The Platonic Representation Hypothesis
 
-- [ ] Produce the first any-to-any checkpoint natively modelling all modalities that can beat other OSS models on top multimodal and reasoning benchmarks
-- [ ] Develop a user-friendly interface for miners and validators to interact with the subnet's top models
-- [ ] Onboard 50 more top AI researchers from top labs and open source research collectives
-- [ ] Publish a research paper on A2A's architecture, incentive model, and performance
-- [ ] Release open source multimodal embedding models (based on our top A2A checkpoint's internal embedding space) for other labs to condition their models on
-- [ ] Integrate a framework that can auto-evaluate all the models & commodities produced by other subnets on Bittensor which our top models can then interact with, both through tool-use and through native communication in the latent-space via projection modules
+As models grow, something remarkable happens: whether trained on images, text, or audio, **their internal representations begin to align**. We believe this trend is pointing toward a **shared statistical model of reality**—a *Platonic representation* where different modalities map to the same underlying concepts.
 
-### Phase 3: Exponential Open Research Progress (Q4 2024)
+SN21 is designed to support that convergence: by evaluating, rewarding, and encouraging models that move us closer to this **unified understanding**.
 
-- [ ] Produce the first any-to-any OSS checkpoint that beats all closed-source SOTA general intelligence models
-- [ ] Establish partnerships with AI labs, universities, and industry leaders to drive adoption
-- [ ] Expand our one-stop-shop Bittensor model evaluation and router framework to arbitrary open source and closed-source checkpoints and APIs
-- [ ] Implement task-driven learning, with OMEGA Labs routinely curating high-signal tasks for model trainers to master
-- [ ] Start crafting an entirely new "online" validation mechanism that rewards miners for producing agentic models that can complete real-world tasks
-- [ ] Use our top checkpoint to power up the multimodal intelligence features of the OMEGA Focus app
+#### 🛠️ Built for Builders & Researchers
 
-### Phase 4: Agentic Focus (Q1 2025)
+SN21 aims to function as a **self-sustaining, open research lab** where contributors—whether they're providing compute, training models, or designing evaluations—are **incentivized for pushing the frontier**. With Bittensor's reward infrastructure, researchers and engineers are compensated permissionlessly for real impact.
 
-- [ ] Launch our agent-focused "online" validation mechanism centered around long-range task completion
-- [ ] Achieve SOTA performance on agent benchmarks
-- [ ] Use OMEGA Focus as an outlet to provide OMEGA digital twin companions to users
-- [ ] Launch an app store for A2A-powered applications leveraging our open source models
-- [ ] Reach 10M+ users with the OMEGA Focus app
+#### 🌍 Open, Decentralized, Demand-Driven
+
+We embrace a **community-driven roadmap**, where feedback, public interest, and real-world demand influence what we prioritize. Every update, benchmark, and leaderboard improvement is shared in the open. And in the future, SN21 will serve as a **high-bandwidth router** for specialized models across subnets, bootstrapping new applications with rich, multimodal embeddings.
+
+---
+
+### Our Commitment to the Community
+
+- **⚖️ Fair & Innovation-Aligned Incentives**
+
+    We're committed to reward mechanisms that **push real progress**, penalize stagnation, and make emissions meaningful. Innovation shouldn't just be encouraged—it should be *necessary to win*.
+
+- **🔍Radical Transparency**
+
+    We’re building in public. Expect **regular updates** in our Discord, and full visibility into evaluation metrics, miner performance, and validator behavior.
+
+    📊 A revamped **dashboard & leaderboard** will offer metric-level clarity, moving averages, and emissions insights—so miners truly understand how they’re performing.
+
+- **🧠 Collaborative Growth**
+
+    ​Our community isn’t just a group of miners — it’s a **think tank for frontier AI**. Your insights, discussions, and pattern-spotting directly shape SN21’s evolution.
+
+    You’ll have avenues to contribute via **Discord threads** on -
+
+    - **Leaderboard performance observations**
+
+    - **Evaluation metric design & tweaks**
+
+    - **Bug reports & emission anomalies**
+
+    - **SOTA model evaluations & ideas**
+
+---
+
+
+## Roadmap v0.1🚀
+### **Phase 1: Build the Bedrock (Current Focus)**
+
+**🎯 Goal:** Lock down a **rock-solid base of trust, transparency, and reward alignment** that can scale with SN21’s ambitions.
+
+**Key Deliverables:**
+
+- **New Emissions Mechanism**
+
+    - A 75/25 emissions split: models **above a dynamic performance baseline** share 75% emissions; those below share 25%.
+
+        > Imagine your efforts to **push the limits** being rewarded with access to the **premium 75% emissions pool**.
+
+        This majority share is **exclusively reserved for models that surpass the performance baseline**— ensuring that real innovation gets the recognition (and rewards) it deserves.
+
+    - Reputation score that rewards innovators who beat the baseline consistently.
+
+- **Metric-Driven Leaderboard**
+
+    Reveal full transparency into performance breakdowns: MIMI, PESQ, WER, response timing, and more.
+
+- **Validator Consistency & Trust Tools**
+
+    Tracking script updates, runtime reliability, and emissions from all validators. Making validator behavior visible and accountable.
+
+- **Open Communication Rhythm**
+
+    Frequent updates on Discord: bug reports, emissions graphs, leaderboard anomalies, research discussions.
+
+---
+
+### 🧠 **Phase 2: Race to the SOTA (Near-Term Goals)**
+
+**🎯 Goal:** Benchmark against the world’s best, and push SN21 submissions toward true **state-of-the-art performance**.
+
+**Key Deliverables:**
+
+- **SOTA Intelligence & Integration**
+
+    Ongoing tracking and benchmarking against elite models like **GPT-4o**, **Moshi**, and others in any-to-any generation.
+
+- **Refined Evaluation Standards**
+
+    Research, Exploration and iteration on robust metrics: including but not limited to **MIMI token distance**, **WER**, **PESQ**, **VAD overlap**, **pause fluency**.
+
+- **Public Benchmark Comparisons**
+
+    Showcase SN21 performance vs. top open/closed source baselines—make our progress visible to the broader ML community.
+
+- **Enhanced Miner Dashboard**
+
+    Metric breakdowns, emissions history, trend graphs, and possibly gamified features like:
+
+    - 🏅 Achievement badges
+
+    - Improvement streaks
+
+    - Performance decay/recovery indicators
+
+---
+
+### 🌍 **Phase 3: Scale the Impact (Medium-Term Outlook)**
+
+**🎯 Goal:** Expand SN21’s utility, attract more top-tier talent, and evolve into a top-3 emissions subnet.
+
+**Key Deliverables:**
+
+- **Ecosystem & Docs Overhaul**
+
+    More complete miner/dev documentation, sample validators, and easier onboarding for new contributors.
+
+- **Feedback-Driven Evaluation Evolution**
+
+    Log anonymized user feedback & real-world usage from sn21.ai—using it to tweak the evaluation logic dynamically.
+
+- **Grow a Builder Culture**
+
+    Build a subnet that’s not just about mining—but about *building things on top*. We want devs to prototype apps, demos, and toolkits using SN21 models.
+
+---
+
+### 🧩 Future Considerations / Open Questions
+
+- How aggressive should performance decay be for stagnant miners?
+
+- What baseline-setting mechanism strikes the best balance between challenge and accessibility?
+
+- Should we include semantic metrics like **SeMa Score** for a better content alignment signal?
+
+## 🔌**Application Layer: Real-World Access & Impact**
+
+While SN21’s core mission is to push the boundaries of any-to-any model development, we’re equally committed to ensuring these capabilities drive **real-world value**. Our **API layer** and flagship applications are designed not just to showcase research—but to power **business use cases**, generate **revenue**, and create a thriving ecosystem around voice-first AI.
+
+---
+
+### 💼 **The Voice Opportunity: Real Demand, Real Revenue**
+
+Voice interfaces are no longer just futuristic demos—they’re a growing industry. From AI contact centers to voice agents, smart tools, and accessibility tech, businesses are actively looking for **high-quality, customizable voice models** they can trust.
+
+SN21’s low-latency, speaker-adaptive, multilingual voice models are already seeing demand across multiple verticals. Through our API, we’re enabling developers and companies to **deploy production-grade voice solutions**—and in doing so, creating real **economic pull** for the subnet.
+
+---
+
+### 🤝 **Partnership Spotlight: Clayo**
+
+One example is our work with **Clayo**, a startup building next-generation AI contact center tools. They are integrating SN21’s voice-to-voice API to power seamless, dynamic agent interactions—demonstrating how **SN21 models can directly serve high-demand B2B workflows**.
+
+This kind of real-world usage doesn't just validate our models—it also drives emissions back into the subnet through demand.
+
+![Clayo Partnership](assets/image.png)
+
+---
+
+### 🎙️ **sn21.ai (Muse): Live Voice-to-Voice for Everyone**
+
+[OMEGA Muse](https://sn21.ai/), also known as *Muse*, is our public platform for exploring SN21’s latest voice models. It lets anyone:
+
+- Experience real-time voice-to-voice generation
+
+- Evaluate speed, fluency, and expressiveness
+
+- Provide feedback that directly improves the subnet
+
+Muse isn’t just a showcase—it’s a living testbed. Every interaction informs evaluation logic, helping the subnet evolve based on actual usage, not just abstract metrics.
+
+---
+
+### 🛠️ **SN21 Voice API: Powering Integration & Ecosystem Growth**
+
+Our API enables developers to plug SN21’s SOTA voice models into their own tools, bots, and applications. It's built for:
+
+- Fast, scalable integration
+
+- High-availability voice generation
+
+- Use cases ranging from call centers and education to entertainment and accessibility
+
+As adoption grows, so does the economic value of emissions—creating a **self-reinforcing loop** between model quality, usage, and miner rewards.
+
+
 
 ## Getting Started 🏁
 
