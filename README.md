@@ -10,8 +10,8 @@
 </div>
 
 - [Introduction](#introduction)
-- [Why Any-to-Any?](#our-vision)
-- [Roadmap](#roadmap-)
+- [Our Vision](#our-vision)
+- [Roadmap](#roadmap-v01)
 - [Application Layer](#application-layer-real-world-access--impact)
   - [Partnership](#-partnership-spotlight-clayo)
   - [Live Access](#️-sn21ai-muse-live-voice-to-voice-for-everyone)
