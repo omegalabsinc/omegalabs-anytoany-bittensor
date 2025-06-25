@@ -65,7 +65,7 @@ MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8
 PERCENT_IMPROVEMENT = 10 # Minimum percentage improvement required for a model to be considered better than the previous one
-
+PLAYERS_IN_ABOVE_BASELINE = 3
 # ---------------------------------
 # Weight distribution parameters.
 # ---------------------------------
