@@ -101,13 +101,10 @@ def update_reputations(session: Session, metagraph: bt.metagraph, all_model_scor
         else:
             performance = 1 if miner_score > baseline_score else 0
         
-        simulation_intervals=900
         old_rep = rep.reputation
-        for i in range(simulation_intervals):
-            # EMA calculation
-            new_rep = (1 - ALPHA) * old_rep + ALPHA * performance
-            old_rep = new_rep
-        
+        # EMA calculation
+        new_rep = (1 - ALPHA) * old_rep + ALPHA * performance
+        old_rep = new_rep
         rep.reputation = new_rep
 
         logging.debug(f"Updating reputation for {rep.hotkey}: old={old_rep:.4f}, new={new_rep:.4f}, performance={performance}")
