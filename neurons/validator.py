@@ -320,6 +320,8 @@ class Validator:
         self.get_top_model_scores_endpoint = f"{api_root}/get-top-model"
         self.start_model_scoring_endpoint = f"{self.config.scoring_api_url}/api/start_model_scoring"
         self.check_scoring_status_endpoint = f"{self.config.scoring_api_url}/api/check_scoring_status"
+        self.get_baseline_endpoint = f"{api_root}/baseline-score"
+        self.get_reputation_endpoint = f"{api_root}/reputations"
 
         # Dont check registration status if offline.
         if not self.config.offline:
@@ -700,6 +702,128 @@ class Validator:
         #bt.logging.debug(load_model_perf.summary_str())
         #bt.logging.debug(compute_loss_perf.summary_str())
 
+    def run_baseline_incentive(self):
+        """
+        New incentive mechanism: calculates and sets weights using the two-pool system.
+        - Pulls scores from the API (like _try_win_rate_competition)
+        - Fetches baseline and reputation
+        - Assigns weights as per the new pool logic
+        """
+
+        # 1. Pull all model scores from the API
+        try:
+            all_model_scores = self.get_all_model_scores()
+        except Exception as e:
+            bt.logging.error(f"Failed to get all model scores: {e}: {traceback.format_exc()}")
+            return
+
+        if all_model_scores is None:
+            bt.logging.error("No model scores returned from API.")
+            return
+
+        competition_parameters = constants.COMPETITION_SCHEDULE[0] #TODO: Use loop later maybe. not a good way.
+        # v1 competition
+
+        # 2. Build scores_per_uid for this competition
+        uids = [int(uid) for uid in self.metagraph.uids.tolist()]
+        scores_per_uid = {uid: 0.0 for uid in uids}
+        for uid in uids:
+            models_data = all_model_scores.get(str(uid), [])
+            for model_data in models_data:
+                if model_data.get("competition_id") == competition_parameters.competition_id:
+                    score = model_data.get("score", 0.0)
+                    if score is not None:
+                        scores_per_uid[uid] = score
+                    break
+        from collections import OrderedDict
+        scores_per_uid = OrderedDict(sorted(scores_per_uid.items(), key=lambda x: x[1], reverse=True))
+
+        # 3. Fetch baseline and reputations
+        baseline = self.get_baseline_score(competition_parameters.competition_id)
+        if not baseline:
+            bt.logging.info("failed to get baseline")
+            return
+        bt.logging.info(f"Baseline for competition {competition_parameters.competition_id}: {baseline}")
+      
+        hotkey_to_rep = self.get_reputations()
+        if not hotkey_to_rep:
+            bt.logging.info("failed to get reputations")
+            return
+        bt.logging.info(f"fetched reputations for : {len(hotkey_to_rep)} hotkeys")
+        # hotkey_to_rep -> {hotkey: {"reputation": float, "last_updated": str|None}}
+
+        # 4. Map hotkey reputation to UID
+        uid_to_rep = {}
+        for uid in uids:
+            hotkey = self.metagraph.hotkeys[uid]
+            rep = hotkey_to_rep.get(hotkey, {}).get("reputation")
+            if rep is None:
+                bt.logging.error(f"No reputation found for hotkey {hotkey} (UID {uid}), using 0.5")
+                rep = 0.5
+            uid_to_rep[uid] = rep
+
+        # 5. Split UIDs into below and above baseline
+        below_baseline = []
+        above_baseline = []
+        for uid, score in scores_per_uid.items():
+            if score>baseline and len(above_baseline)<constants.PLAYERS_IN_ABOVE_BASELINE: # limit the above baseline pool
+                above_baseline.append(uid)
+            elif score>0:
+                below_baseline.append(uid)
+
+        weights = torch.zeros(len(uids), dtype=torch.float32)
+        
+        # 7. 75% pool: above baseline, softmax on score
+        if above_baseline:
+            score_vec = torch.tensor([scores_per_uid[uid] for uid in above_baseline], dtype=torch.float32)
+            score_softmax = torch.softmax(score_vec/ constants.temperature, dim=0)
+            for i, uid in enumerate(above_baseline):
+                weights[uid] = 0.75 * score_softmax[i]
+            bt.logging.info(f"Assigned {len(above_baseline)} UIDs to 75% pool (above baseline)")
+        else:
+            # Burn 75%: assign all to UID 111 (if exists)
+            weights[111] = 0.75
+            bt.logging.warning("No UIDs above baseline, burning 75% (assigning to UID 111)")
+
+        # 6. 25% pool: below baseline, softmax on reputation
+        if below_baseline:
+            rep_vec = torch.tensor([uid_to_rep[uid] for uid in below_baseline], dtype=torch.float32)
+            score_vec = torch.tensor([scores_per_uid[uid] for uid in below_baseline], dtype=torch.float32)
+            W_REP = 0.7
+            rep_softmax = torch.softmax((W_REP*rep_vec+(1-W_REP)*score_vec), dim=0)
+            for i, uid in enumerate(below_baseline):
+                weights[uid] = 0.25 * rep_softmax[i]
+            bt.logging.info(f"Assigned {len(below_baseline)} UIDs to 25% pool (below baseline)")
+        
+        self.log_step_weight_calc(
+            "below baseline", 
+            competition_parameters.competition_id,
+            below_baseline,
+            scores_per_uid,
+            weights,
+            uid_to_rep,
+            baseline
+        )
+
+        self.log_step_weight_calc(
+            "above baseline", 
+            competition_parameters.competition_id,
+            above_baseline,
+            scores_per_uid,
+            weights,
+            uid_to_rep,
+            baseline
+        )
+
+        # 8. Normalize to sum to 1 (optional, for safety)
+        if weights.sum() > 0:
+            print(f"WEIGHTS SUM IS {weights.sum()}")
+            weights = weights / weights.sum()
+
+        bt.logging.info(f"Final pool weights: {weights}")
+        self.weights = weights
+        return
+    
     @staticmethod
     def adjust_for_vtrust(weights: np.ndarray, consensus: np.ndarray, vtrust_min: float = 0.5):
         """
@@ -753,32 +877,22 @@ class Validator:
                 # adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
                 # self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
-                winner_uid = int(self.weights.argmax().item())
-                burn_portion = float(constants.BURN_RATE * 1)
-                reward_portion = 1 - burn_portion
-                weights_tensor = torch.zeros(
-                    len(self.metagraph.uids), dtype=torch.float32
-                )
-                if winner_uid < len(weights_tensor):
-                    weights_tensor[winner_uid] = reward_portion
-                if constants.BURN_UID < len(weights_tensor):
-                    weights_tensor[constants.BURN_UID] = burn_portion
 
                 self.subtensor.set_weights(
                     netuid=self.config.netuid,
                     wallet=self.wallet,
                     uids=self.metagraph.uids,
-                    weights=weights_tensor,
+                    weights=self.weights,
                     wait_for_inclusion=False,
                     version_key=constants.weights_version_key,
                 )
                 weights_report = {"weights": {}}
-                for uid, score in enumerate(weights_tensor):
+                for uid, score in enumerate(self.weights):
                     weights_report["weights"][uid] = score
                 bt.logging.debug(weights_report)
             except Exception as e:
                 bt.logging.error(f"failed to set weights {e}: {traceback.format_exc()}")
-            ws, ui = weights_tensor.topk(len(weights_tensor))
+            ws, ui = self.weights.topk(len(self.weights))
             table = Table(title="All Weights - Burn adjusted")
             table.add_column("uid", justify="right", style="cyan", no_wrap=True)
             table.add_column("weight", style="magenta")
@@ -796,7 +910,7 @@ class Validator:
             if minutes % 20 == 0 or self.config.immediate:
                 try:
                     bt.logging.debug("Gathering scores and running win-rate competition.")
-                    self._try_win_rate_competition()
+                    self.run_baseline_incentive()
                     bt.logging.debug("Finished running win-rate competition.")
 
                     if not self.config.dont_set_weights and not self.config.offline:
@@ -1169,6 +1283,78 @@ class Validator:
         # Sink step log.
         #bt.logging.info(f"Step results: {step_log}")
 
+    def log_step_weight_calc(
+        self,
+        pool:str,
+        competition_id:str,
+        uids:list[int],
+        scores_per_uid:dict,
+        weights:list[int],
+        uid_to_rep:dict,
+        baseline:float
+    ):
+        # Build step log
+        step_log = {
+            "timestamp": time.time(),
+            "competition_id": competition_id,
+            "uids": uids,
+            "uid_data": {},
+        }
+        for uid in uids:
+            step_log["uid_data"][str(uid)] = {
+                "uid": uid,
+                "score": scores_per_uid[uid],
+                "weight": weights[uid].item(),
+                "rep": uid_to_rep[uid]
+            }
+        
+        table = Table(title=f"Miners in {pool} pool. Competition \"{competition_id}\"")
+        table.add_column("rank", style="magenta")
+        table.add_column("uid", justify="right", style="cyan", no_wrap=True)
+        table.add_column("baseline", style="magenta")
+        table.add_column("score", style="magenta")
+        table.add_column("weights", style="magenta")
+        table.add_column("reputations", style="magenta")
+
+        # Collect and sort data
+        miner_data = []
+        for uid in uids:
+            str_uid = str(uid)
+            try:
+                if str_uid not in step_log["uid_data"]:
+                    continue
+                uid_data = step_log["uid_data"][str_uid]
+                # if score is 0 from penalty, set win rate to 0
+                miner_data.append({
+                    'uid': uid,
+                    'score': round(uid_data.get('score', 0.0), 4),
+                    'weight': round(uid_data.get('weight', 0), 4),
+                    'rep': round(uid_data.get('rep', 0), 4),
+                })
+            except Exception as e:
+                bt.logging.warning(f"Error processing UID {uid}: {str(e)}: {traceback.format_exc()}")
+                continue
+
+        # Sort by win_rate (descending) and take top 25
+        sorted_miners = sorted(
+            miner_data, 
+            key=lambda x: x['weight'], 
+            reverse=True
+        )
+        # Add rows to table
+        for rank, miner in enumerate(sorted_miners, 1):
+            table.add_row(
+                str(rank),
+                str(miner['uid']),
+                str(baseline),
+                f"{miner['score']:.4f}",
+                f"{miner['weight']:.6f}",
+                f"{miner['rep']:.6f}",
+
+            )
+        console = Console()
+        console.print(table)
+
     async def get_model_to_score(self, competition_id: str) -> str:
         """
         Queries the SN21 API for the next model to score.
@@ -1336,6 +1522,70 @@ class Validator:
         
         return None
 
+    def get_reputations(self):
+        MAX_RETRIES = 3
+        RETRY_DELAY = 5
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.get(
+                    self.get_reputation_endpoint,
+                    auth=self.get_basic_auth(),
+                    timeout=120
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                if len(response_json)==0:
+                    return None
+                return response_json
+            except requests.exceptions.RequestException as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get reputations request failed (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.debug(f"Final attempt failed. Request error: {str(e)}")
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get reputations unexpected error (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}: {traceback.format_exc()}")
+        
+        return None
+    
+    def get_baseline_score(self, comp_id):
+        MAX_RETRIES = 3
+        RETRY_DELAY = 5
+        url = f"{self.get_baseline_endpoint}/{comp_id}"
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = requests.get(
+                    url,
+                    auth=self.get_basic_auth(),
+                    timeout=120
+                )
+                response.raise_for_status()
+                response_json = response.json()
+                baseline = response_json["score"]
+                return baseline
+            except requests.exceptions.RequestException as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get baseline request failed (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.debug(f"Final attempt failed. Request error: {str(e)}")
+            except Exception as e:
+                if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
+                    bt.logging.debug(f"Get baseline unexpected error (attempt {attempt + 1}/{MAX_RETRIES}): {str(e)}")
+                    bt.logging.debug(f"Retrying in {RETRY_DELAY} seconds...")
+                    time.sleep(RETRY_DELAY)
+                else:
+                    bt.logging.error(f"Final attempt failed. Unexpected error: {str(e)}: {traceback.format_exc()}")
+        
+        return None
+            
     async def run(self):
         while True:
             try:
