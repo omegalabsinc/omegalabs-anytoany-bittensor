@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from model.storage.mysql_model_queue import init_database, ModelQueueManager
 from model.storage.eval_leaderboard import init_database as init_eval_database, EvalLeaderboardManager
+from model.storage.reputation_store import init_database as init_rep_database, ReputationStore
 from vali_api.config import NETWORK, NETUID, IS_PROD, SENTRY_DSN
 from constants import MODEL_EVAL_TIMEOUT, MIN_NON_ZERO_SCORES, penalty_score, deviation_percent
 from utilities.compare_block_and_model import compare_block_and_model
@@ -443,8 +444,10 @@ async def main():
     # Initialize database at application startup
     init_database()
     init_eval_database()
+    init_rep_database()
     queue_manager = ModelQueueManager()
     eval_manager = EvalLeaderboardManager()
+    reputation_store = ReputationStore()
 
     async def resync_metagraph():
         while True:
@@ -910,6 +913,57 @@ async def main():
             with _cache_lock:
                 print(f"Clearing block-model comparison cache. Stats before clear: {_cache_stats}")
                 _block_model_cache.clear()
+
+    @app.get("/baseline-score/{competition_id}", summary="Get the latest baseline score for a competition.")
+    async def get_baseline(
+        competition_id: str, 
+        hotkey: Annotated[str, Depends(get_hotkey)] = None
+    ):
+        """
+        Returns the most recent baseline score for the specified competition_id.
+        """
+        if not authenticate_with_bittensor(hotkey, metagraph):
+            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Valid hotkey required.",
+            )
+        # get uid of bittensor validator
+        uid = metagraph.hotkeys.index(hotkey)
+        print(f"UID:{uid} hit the get_baseline endpoint")
+
+        try:
+            latest_baseline = reputation_store.get_latest_baseline_score(competition_id)
+        except Exception as e:
+            logging.error(f"Error getting baseline score: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+        
+        if not latest_baseline:
+            raise HTTPException(status_code=404, detail=f"No baseline score found for competition_id: {competition_id}")
+        return latest_baseline
+
+    @app.get("/reputations", summary="Get reputations for all miners.")
+    async def get_all_reputations(
+        hotkey: Annotated[str, Depends(get_hotkey)] = None
+    ):
+        """
+        Returns a mapping of hotkey to its current reputation for all miners.
+        """
+        if not authenticate_with_bittensor(hotkey, metagraph):
+            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Valid hotkey required.",
+            )
+        # get uid of bittensor validator
+        uid = metagraph.hotkeys.index(hotkey)
+        print(f"UID:{uid} hit the get_reputations endpoint")
+        try:
+            reputation_map = reputation_store.get_all_reputations()
+            return reputation_map
+        except Exception as e:
+            logging.error(f"Error getting all miner reputations: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     await asyncio.gather(
         resync_metagraph(),
