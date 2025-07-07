@@ -41,6 +41,7 @@ class ScoreModelInputs(BaseModel):
 class ModelScoreTaskData(BaseModel):
     inputs: ScoreModelInputs
     score: Optional[float] = None
+    metric_scores: Optional[dict] = None
     status: ModelScoreStatus = ModelScoreStatus.SCORING
     started_at: datetime = Field(default_factory=datetime.now)
     error: Optional[str] = None
@@ -155,17 +156,20 @@ class ScoringManager:
         """ Actual model scoring logic """
         start_time = time.time()
         fn_to_call = run_o1_scoring if inputs.competition_id == "o1" else run_v2v_scoring
-        score = fn_to_call(
+        result_dict = fn_to_call(
             hf_repo_id=inputs.hf_repo_id,
             hotkey=inputs.hotkey,
             block=inputs.block,
             model_tracker=self.model_tracker,
             local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
         )
-        if score is not None:
+        if result_dict is not None:
+            score = result_dict['combined_score']
             score = float(score)
+        else:
+            score = None
         bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
-        return score
+        return result_dict
     
     def kill_docker_images(self):
         """
@@ -194,9 +198,9 @@ class ScoringManager:
         try:
             self.kill_docker_images()
             bt.logging.info(f"Starting scoring for model: {inputs.hf_repo_id}")
-            score = self._score_model(inputs)
+            result_dict = self._score_model(inputs)
             bt.logging.info(f"Completed scoring for model: {inputs.hf_repo_id}")
-            result_queue.put(('success', score))
+            result_queue.put(('success', result_dict))
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
             bt.logging.error(f"Failed to score model {inputs.hf_repo_id}: {error_msg}")
@@ -237,15 +241,16 @@ class ScoringManager:
 
         # Get result if process completed
         if not result_queue.empty():
-            status, result = result_queue.get()
+            status, result_dict = result_queue.get()
             if status == 'error':
                 self.current_task.status = ModelScoreStatus.FAILED
                 self.current_task.score = None
-                self.current_task.error = result
+                self.current_task.error = result_dict # won't be a dict in case of error.
                 return
 
-            self.current_task.status = ModelScoreStatus.COMPLETED if result is not None else ModelScoreStatus.FAILED
-            self.current_task.score = result
+            self.current_task.status = ModelScoreStatus.COMPLETED if result_dict is not None else ModelScoreStatus.FAILED
+            self.current_task.score = result_dict['combined_score']
+            self.current_task.metric_scores = result_dict
 
         else:
             bt.logging.error(f"Process terminated without returning a result for {inputs.hf_repo_id}")
