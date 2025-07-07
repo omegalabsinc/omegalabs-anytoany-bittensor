@@ -116,7 +116,7 @@ def pull_latest_diarization_dataset_fallback() -> Optional[Dataset]:
         bt.logging.error(f"Error pulling dataset: {str(e)}")
         return None
     
-def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda'):
+def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, hotkey: str, block, model_tracker, device: str='cuda')->dict:
     cleanup_gpu_memory()
     log_gpu_memory('before container start')
     
@@ -149,12 +149,12 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
                     hotkey_contents = file.read()
                 if hotkey_contents != hotkey:
                     bt.logging.warning("Hotkey mismatch. Returning score of 0.")
-                    return penalty_score
+                    return {'combined_score':penalty_score}
             except huggingface_hub.utils.EntryNotFoundError:
                 bt.logging.info("No hotkey file found in repository")
             except Exception as e:
                 bt.logging.error(f"Error reading hotkey file: {str(e)}")
-                return 0
+                return {'combined_score':0}
 
         log_gpu_memory('after container start')
         
@@ -229,11 +229,19 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
             except Exception as e:
                 bt.logging.error(f"Error during inference: {str(e)}")
                 continue
+                
+        result_dict = {
+            'mimi_score': np.mean(metrics['mimi_score']),
+            'wer_score': np.mean(metrics['wer_score']),
+            'length_penalty': np.mean(metrics['length_penalty']),
+            'pesq_score': np.mean(metrics['pesq_score']),
+            'anti_spoofing_score': np.mean(metrics['anti_spoofing_score']),
+            'combined_score': np.mean(metrics['combined_score'])
+        }
 
-        mean_score = np.mean(metrics['combined_score'])
-        bt.logging.info(f"Scoring {hf_repo_id} complete: {mean_score:0.5f}")
+        bt.logging.info(f"Scoring {hf_repo_id} complete: {result_dict['combined_score']:0.5f}")
         
-        return mean_score
+        return result_dict
 
     finally:
         # Cleanup
@@ -247,7 +255,7 @@ def compute_s2s_metrics(hf_repo_id: str, local_dir: str, mini_batch: Dataset, ho
 def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str, local_dir: str):
     if not compare_block_and_model(block, hf_repo_id):
         bt.logging.info(f"Block {block} is older than model {hf_repo_id}. Penalizing model.")
-        return penalty_score
+        return {"combined_score":penalty_score}
     
     start_time = time.time()
     diar_time = time.time()
@@ -258,7 +266,7 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
         mini_batch = pull_latest_diarization_dataset_fallback()
         if mini_batch is None:
             bt.logging.error(f"No diarization dataset found")
-            return 0
+            return {"combined_score":0}
             
     bt.logging.info(f"Time taken for diarization dataset: {time.time() - diar_time:.2f} seconds")
     
@@ -269,11 +277,11 @@ def run_v2v_scoring(hf_repo_id: str, hotkey: str, block: int, model_tracker: str
         hotkey=hotkey,
         block=block,
         model_tracker=model_tracker
-    )
+    ) #vals is a dict containing all metrics. with keys mimi_score, wer_score, length_penalty, pesq_score, anti_spoofing_score, combined_score
     
     end_time = time.time()
     bt.logging.info(f"Processing {hf_repo_id} complete. Time taken: {end_time - start_time:.2f} seconds")
-    bt.logging.info(f"Combined score: {vals}")
+    bt.logging.info(f"All scores: {vals}")
     return vals
 
 

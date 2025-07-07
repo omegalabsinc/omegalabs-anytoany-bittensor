@@ -431,6 +431,7 @@ class ModelScoreResponse(BaseModel):
     model_metadata: dict
     model_hash: Optional[str] = None
     model_score: float
+    metric_scores: Optional[dict] = None
 
 
 async def main():
@@ -580,8 +581,9 @@ async def main():
                 model_score_results.miner_uid,
                 hotkey,
                 model_score_results.model_hash,
-                model_score_results.model_score
-                #model_score_results.model_metadata
+                model_score_results.model_score,
+                model_score_results.metric_scores
+                #model_score_results.model_metadata,
             )
             if success:
                 return {

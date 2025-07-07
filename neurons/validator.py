@@ -1021,6 +1021,7 @@ class Validator:
             f"Computing metrics on {uids} for competition {competition_parameters.competition_id}"
         )
         scores_per_uid = {muid: None for muid in uids}
+        metric_scores_per_uid = {muid: None for muid in uids}
 
         self.model_tracker.release_all()
         uid_to_hotkey_and_model_metadata: typing.Dict[
@@ -1113,6 +1114,8 @@ class Validator:
                             scoring_response_json = scoring_response.json()
                             is_scoring = scoring_response_json.get("status") == "scoring"
                             score = scoring_response_json["score"]
+                            metric_scores = scoring_response_json["metric_scores"]
+                            metric_scores = {} if metric_scores is None else metric_scores
                         bt.logging.info(f"Score for {model_i_metadata} is {score}, took {time.time() - start_time} seconds")
                     except Exception as e:
                         bt.logging.error(
@@ -1134,6 +1137,7 @@ class Validator:
                 score = 0
 
             scores_per_uid[uid_i] = score
+            metric_scores_per_uid[uid_i] = metric_scores
 
             bt.logging.info(
                 f"UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'} assigned final score: {score} for competition {competition_parameters.competition_id}"
@@ -1143,6 +1147,7 @@ class Validator:
         # Post model scores to the API
         for uid, score in scores_per_uid.items():
             hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
+            metric_scores = metric_scores_per_uid[uid]
             if model_metadata is not None:
                 try:
                     # Check if the model hash is in the tracker
@@ -1150,7 +1155,7 @@ class Validator:
                     if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
                         model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
                     if not self.config.offline:
-                        await self.post_model_score(hotkey, uid, model_metadata, model_hash, score)
+                        await self.post_model_score(hotkey, uid, model_metadata, model_hash, score, metric_scores)
                 except Exception as e:
                     bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
                     bt.logging.error(traceback.format_exc())
@@ -1388,7 +1393,7 @@ class Validator:
             bt.logging.debug(f"Error retrieving model to score from API: {e}: {traceback.format_exc()}")
             return None
         
-    async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_hash, model_score) -> bool:
+    async def post_model_score(self, miner_hotkey, miner_uid, model_metadata, model_hash, model_score, model_metric_scores) -> bool:
         """
         Posts the score of a model to the SN21 API.
 
@@ -1413,6 +1418,7 @@ class Validator:
                         },
                         "model_hash": model_hash,
                         "model_score": model_score,
+                        "metric_scores": model_metric_scores, #dict
                     },
                 ) as response:
                     response.raise_for_status()

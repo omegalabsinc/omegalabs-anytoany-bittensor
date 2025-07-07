@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, JSON, func, desc, exists, ForeignKey, or_, and_, case
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.mysql import JSON as MySQLJSON
 from sqlalchemy.orm import Session, sessionmaker, aliased, relationship
 from contextlib import contextmanager
 from collections import defaultdict
@@ -99,7 +100,7 @@ class ScoreHistory(Base):
     model_hash = Column(String(255))
     scorer_hotkey = Column(String(255), index=True)
     is_archived = Column(Boolean, default=False)
-
+    metric_scores = Column(MySQLJSON, nullable=True)
     # Relationship to ModelQueue using dynamic table name (lambda function)
     model = relationship(
         "ModelQueue",
@@ -466,8 +467,8 @@ class ModelQueueManager:
             bt.logging.error(f"Failed to mark model as being scored after {self.max_retries} attempts: {str(e)}")
             return False
 
-    def submit_score(self, model_hotkey, model_uid, scorer_hotkey, model_hash, score):
-        """Submit score with retry logic."""
+    def submit_score(self, model_hotkey, model_uid, scorer_hotkey, model_hash, score, metric_scores):
+        """Submit score with retry logic. Mark the model in queue as scored. Remove from queue."""
         def _submit_score():
             with self.session_scope() as session:
                 try:
@@ -511,7 +512,8 @@ class ModelQueueManager:
                             block=model.block,
                             model_hash=model_hash,
                             scorer_hotkey=scorer_hotkey,
-                            model_metadata=model.model_metadata 
+                            model_metadata=model.model_metadata,
+                            metric_scores=metric_scores
                         )
                         session.add(new_score)
                         model.is_new = False
