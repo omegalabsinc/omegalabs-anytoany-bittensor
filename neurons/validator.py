@@ -1135,6 +1135,7 @@ class Validator:
             if score is None:
                 bt.logging.error(f"Failed to get score for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}. Setting score to 0.")
                 score = 0
+                metric_scores = {}
 
             scores_per_uid[uid_i] = score
             metric_scores_per_uid[uid_i] = metric_scores
