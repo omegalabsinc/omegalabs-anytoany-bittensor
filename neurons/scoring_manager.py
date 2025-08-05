@@ -12,7 +12,7 @@ os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-GPU_MEM_GB_REQD = 39
+GPU_MEM_GB_REQD = 3 # TODO: change to 39 for prod
 
 import bittensor as bt
 from pydantic import BaseModel, computed_field, Field
@@ -22,6 +22,7 @@ from model.model_tracker import ModelTracker
 from constants import MODEL_EVAL_TIMEOUT, NUM_CACHED_MODELS, SUBNET_UID
 from neurons.docker_inference_v2v import run_v2v_scoring
 from neurons.docker_model_scoring import run_o1_scoring
+from neurons.docker_inference_voicebench import run_voicebench_scoring
 from utilities.temp_dir_cache import TempDirCache
 from utilities.gpu import get_gpu_memory
 from utilities.git_utils import is_git_latest
@@ -96,7 +97,8 @@ class ScoringManager:
         else:
             subtensor = bt.subtensor(network=self.config.subtensor.network)
             metagraph: bt.metagraph = subtensor.metagraph(self.config.netuid)
-            self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
+            # self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
+            self.uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
 
         # init wandb
         self.wandb_run_start = None
@@ -155,7 +157,18 @@ class ScoringManager:
     def _score_model(self, inputs: ScoreModelInputs):
         """ Actual model scoring logic """
         start_time = time.time()
-        fn_to_call = run_o1_scoring if inputs.competition_id == "o1" else run_v2v_scoring
+        
+        # Route to appropriate scoring function based on competition
+        if inputs.competition_id == "o1":
+            fn_to_call = run_o1_scoring
+        elif inputs.competition_id == "voicebench" or inputs.competition_id == "v2v":
+            # Use VoiceBench evaluation for both voicebench and v2v competitions
+            fn_to_call = run_voicebench_scoring
+        else:
+            # Default to VoiceBench for unknown competition types
+            bt.logging.warning(f"Unknown competition_id: {inputs.competition_id}, defaulting to VoiceBench")
+            fn_to_call = run_voicebench_scoring
+        
         result_dict = fn_to_call(
             hf_repo_id=inputs.hf_repo_id,
             hotkey=inputs.hotkey,

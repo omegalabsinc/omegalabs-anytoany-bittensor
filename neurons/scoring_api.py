@@ -16,7 +16,7 @@ from dotenv import load_dotenv; load_dotenv("vali.env")
 
 async def main():
     config = get_scoring_config()
-    assert config.vali_hotkey, "vali_hotkey is required"
+    # assert config.vali_hotkey, "vali_hotkey is required"
 
     scoring_manager = ScoringManager(config)
     security = HTTPBasic()

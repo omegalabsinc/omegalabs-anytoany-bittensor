@@ -55,17 +55,75 @@ class DockerManager:
                 bt.logging.info(f"Cleaning up existing directory: {miner_dir}")
                 shutil.rmtree(miner_dir)
             
+            # Also clean up global HF cache that might have corrupted paths
+            hf_cache_home = Path.home() / '.cache' / 'huggingface'
+            if hf_cache_home.exists():
+                corrupted_paths = list(hf_cache_home.rglob('*.incomplete'))
+                if corrupted_paths:
+                    bt.logging.info(f"Cleaning up {len(corrupted_paths)} corrupted HF cache files")
+                    for path in corrupted_paths:
+                        try:
+                            path.unlink()
+                        except:
+                            pass
+            
             miner_dir.mkdir(parents=True, exist_ok=True)
             
             bt.logging.info(f"Downloading files from {repo_id} to {miner_dir}")
             
             try:
-                # Configure HuggingFace download
-                downloaded_path = huggingface_hub.snapshot_download(
-                    repo_id=repo_id,
-                    local_dir=miner_dir,
-                    local_dir_use_symlinks=False,
+                # Alternative approach: use git clone instead of snapshot_download
+                import subprocess
+                
+                bt.logging.info(f"Using git clone to avoid path issues...")
+                
+                # Use git clone with LFS for more reliable download
+                clone_cmd = [
+                    'git', 'clone', '--depth=1',  # Shallow clone for speed
+                    f'https://huggingface.co/{repo_id}',
+                    str(miner_dir)
+                ]
+                
+                bt.logging.info(f"Running: {' '.join(clone_cmd)}")
+                result = subprocess.run(
+                    clone_cmd, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=1800  # 30 minutes timeout
                 )
+                
+                # If clone successful, pull LFS files
+                if result.returncode == 0:
+                    bt.logging.info("Pulling LFS files...")
+                    lfs_cmd = ['git', 'lfs', 'pull']
+                    lfs_result = subprocess.run(
+                        lfs_cmd,
+                        cwd=str(miner_dir),
+                        capture_output=True,
+                        text=True,
+                        timeout=1800
+                    )
+                    if lfs_result.returncode != 0:
+                        bt.logging.warning(f"LFS pull failed: {lfs_result.stderr}")
+                    else:
+                        bt.logging.info("LFS files pulled successfully")
+                
+                if result.returncode != 0:
+                    bt.logging.warning(f"Git clone failed: {result.stderr}")
+                    bt.logging.info("Falling back to HuggingFace Hub download...")
+                    
+                    # Fallback to HF download with very simple cache
+                    import tempfile
+                    with tempfile.TemporaryDirectory() as temp_cache:
+                        downloaded_path = huggingface_hub.snapshot_download(
+                            repo_id=repo_id,
+                            local_dir=miner_dir,
+                            local_dir_use_symlinks=False,
+                            cache_dir=temp_cache,
+                        )
+                else:
+                    bt.logging.info("Git clone successful")
+                    downloaded_path = miner_dir
                 
                 bt.logging.info(f"Successfully downloaded files to {downloaded_path}")
                 return miner_dir
@@ -264,14 +322,16 @@ class DockerManager:
                 ],
                 cap_drop=['ALL'],
                 mem_limit=self.get_memory_limit(),
-                ports={'8000/tcp': ('0.0.0.0', host_port)},
+                ports={'8010/tcp': ('0.0.0.0', host_port)},
                 environment={
                     'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
                     'PYTHONUNBUFFERED': '1',
                     'MODEL_ID': repo_id,
                     'REPO_ID': repo_id,
                     'NVIDIA_VISIBLE_DEVICES': 'all',
-                    'NVIDIA_DRIVER_CAPABILITIES': 'compute,utility,graphics'
+                    'NVIDIA_DRIVER_CAPABILITIES': 'compute,utility,graphics',
+                    'TRANSFORMERS_CACHE': '/tmp/transformers_cache',
+                    'HF_HOME': '/tmp/hf_cache'
                 },
                 runtime='nvidia',
                 device_requests=[
@@ -397,7 +457,7 @@ class DockerManager:
             
             # Send request
             response = requests.post(
-                f"{url}/api/v1/inference",
+                f"{url}/api/v1/v2t",
                 json={
                     "audio_data": audio_b64,
                     "sample_rate": sample_rate
@@ -409,13 +469,28 @@ class DockerManager:
             
             # Parse response
             result = response.json()
-            audio_bytes = base64.b64decode(result["audio_data"])
-            audio = np.load(io.BytesIO(audio_bytes))
             
-            return {
-                "audio": audio,
-                "text": result.get("text", "")
-            }
+            # Handle both v2t (text only) and v2v (audio + text) responses
+            response_data = {}
+            
+            # Get text if available
+            if "text" in result:
+                response_data["text"] = result["text"]
+            
+            # Get audio if available (for v2v models)
+            if "audio_data" in result:
+                try:
+                    audio_bytes = base64.b64decode(result["audio_data"])
+                    audio = np.load(io.BytesIO(audio_bytes))
+                    response_data["audio"] = audio
+                except Exception as e:
+                    bt.logging.warning(f"Failed to decode audio data: {e}")
+            
+            # Ensure we always have at least text field
+            if "text" not in response_data:
+                response_data["text"] = ""
+                
+            return response_data
             
         except requests.exceptions.RequestException as e:
             bt.logging.error(f"Inference request failed: {str(e)}")
@@ -440,7 +515,7 @@ class DockerManager:
         try:
             # Send request
             response = requests.post(
-                f"{url}/api/v1/inference",
+                f"{url}/api/v1/v2t",
                 json={
                     "embedding": video_embed
                 },
@@ -463,7 +538,7 @@ class DockerManager:
             bt.logging.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
             raise
 
-    def _wait_for_container(self, container: Container, timeout: int = 180) -> None:
+    def _wait_for_container(self, container: Container, timeout: int = 300) -> None:
         """
         Implements a robust health check mechanism for container initialization.
         
@@ -480,13 +555,18 @@ class DockerManager:
         # Get the actual port mapping from container
         container.reload()
         ports = container.attrs['NetworkSettings']['Ports']
-        if not ports or '8000/tcp' not in ports:
+        if not ports or '8010/tcp' not in ports:
             raise RuntimeError("Container port mapping not found")
             
-        host_port = ports['8000/tcp'][0]['HostPort']
-        health_check_url = f"http://localhost:{host_port}/api/v1/health"
+        host_port = ports['8010/tcp'][0]['HostPort']
+        # Try multiple possible health check endpoints
+        health_check_urls = [
+            f"http://localhost:{host_port}/api/v1/health",
+            f"http://localhost:{host_port}/health",
+            f"http://localhost:{host_port}/"  # Root endpoint as fallback
+        ]
         
-        bt.logging.info(f"Checking container health at {health_check_url}")
+        bt.logging.info(f"Checking container health on port {host_port}")
         
         while time.time() - start_time < timeout:
             try:
@@ -499,17 +579,22 @@ class DockerManager:
                     logs = container.logs().decode('utf-8')
                     raise RuntimeError(f"Container exited unexpectedly. Logs:\n{logs}")
                 
-                # Try health check endpoint
-                response = requests.get(health_check_url, timeout=5)
-                if response.status_code == 200:
-                    health_data = response.json()
-                    if health_data.get("status") == "healthy":
-                        bt.logging.info("Container is healthy and ready")
-                        return
-                    elif "initialization_status" in health_data:
-                        init_status = health_data["initialization_status"]
-                        if init_status.get("error"):
-                            bt.logging.warning(f"Initialization error: {init_status['error']}")
+                # Try health check endpoints
+                for health_check_url in health_check_urls:
+                    try:
+                        response = requests.get(health_check_url, timeout=5)
+                        if response.status_code == 200:
+                            # Any 200 response means the server is ready
+                            bt.logging.info(f"Container is healthy and ready at {health_check_url}")
+                            return
+                    except requests.exceptions.RequestException:
+                        continue  # Try next endpoint
+                
+                # If we see "Uvicorn running" in logs, container is ready
+                logs = container.logs().decode('utf-8', errors='ignore')
+                if "Uvicorn running on" in logs and "Press CTRL+C to quit" in logs:
+                    bt.logging.info("Container is ready (detected Uvicorn startup)")
+                    return
                 
             except requests.exceptions.RequestException as e:
                 bt.logging.debug(f"Health check not ready: {str(e)}")

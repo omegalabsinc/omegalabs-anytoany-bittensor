@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, JSON, func, desc, exists, ForeignKey, or_, and_, case
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, JSON, func, desc, exists, ForeignKey, or_, and_, case, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.mysql import JSON as MySQLJSON
@@ -33,18 +33,39 @@ def init_database():
         bt.logging.warning("Database already initialized")
         return
 
-    try:
-        connection_string = f'mysql://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}'
-        _engine = create_engine(connection_string)
-        Session = sessionmaker(bind=_engine)
-        
-        # Create all tables
-        Base.metadata.create_all(_engine)
-        bt.logging.info("Database initialized successfully")
-        
-    except Exception as e:
-        bt.logging.error(f"Failed to initialize database: {str(e)}")
-        raise
+    # Try different MySQL drivers in order of preference
+    drivers_to_try = [
+        ('mysql', 'mysqlclient (MySQLdb)'),
+        ('mysql+pymysql', 'PyMySQL')
+    ]
+    
+    for driver, driver_name in drivers_to_try:
+        try:
+            connection_string = f'{driver}://{DBUSER}:{DBPASS}@{DBHOST}/{DBNAME}'
+            bt.logging.info(f"Attempting database connection with {driver_name}")
+            
+            _engine = create_engine(connection_string)
+            Session = sessionmaker(bind=_engine)
+            
+            # Test the connection
+            with Session() as session:
+                session.execute(text('SELECT 1'))
+            
+            # Create all tables
+            Base.metadata.create_all(_engine)
+            bt.logging.info(f"Database initialized successfully with {driver_name}")
+            return
+            
+        except ImportError as e:
+            bt.logging.warning(f"Driver {driver_name} not available: {e}")
+            continue
+        except Exception as e:
+            bt.logging.error(f"Failed to connect with {driver_name}: {e}")
+            if driver == drivers_to_try[-1][0]:  # Last driver in list
+                raise
+            continue
+    
+    raise RuntimeError("Failed to initialize database with any available MySQL driver")
 
 def get_session() -> Session:
     """
