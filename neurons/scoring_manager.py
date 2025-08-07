@@ -177,19 +177,8 @@ class ScoringManager:
     def _score_model(self, inputs: ScoreModelInputs):
         """ Actual model scoring logic """
         start_time = time.time()
-        
-        # Route to appropriate scoring function based on competition
-        if inputs.competition_id == "o1":
-            fn_to_call = run_o1_scoring
-        elif inputs.competition_id == "voicebench" or inputs.competition_id == "v2v":
-            # Use VoiceBench evaluation for both voicebench and v2v competitions
-            fn_to_call = run_voicebench_scoring
-        else:
-            # Default to VoiceBench for unknown competition types
-            bt.logging.warning(f"Unknown competition_id: {inputs.competition_id}, defaulting to VoiceBench")
-            fn_to_call = run_voicebench_scoring
-        
-        result_dict = fn_to_call(
+
+        result_dict = run_voicebench_scoring(
             hf_repo_id=inputs.hf_repo_id,
             hotkey=inputs.hotkey,
             block=inputs.block,
