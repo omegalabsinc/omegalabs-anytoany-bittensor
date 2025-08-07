@@ -223,13 +223,7 @@ Your model will be evaluated across 11 comprehensive datasets:
 - Weighted average across all datasets
 - Real accuracy assessment, not just API success rate
 
-### Legacy V2V Metrics (For Audio Output Models)
-1. Voice conversion quality (MIMI score)
-2. Speech recognition accuracy (WER score)
-3. Output length appropriateness (Length penalty)
-4. Audio quality (PESQ score)
-5. Anti-spoofing robustness
-6. Overall combined score
+
 
 The system calculates a final score:
 ```python
