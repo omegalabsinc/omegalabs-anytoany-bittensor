@@ -750,7 +750,7 @@ class Validator:
         hotkey_to_rep = self.get_reputations()
         if not hotkey_to_rep:
             bt.logging.info("failed to get reputations")
-            return
+            hotkey_to_rep = {}
         bt.logging.info(f"fetched reputations for : {len(hotkey_to_rep)} hotkeys")
         # hotkey_to_rep -> {hotkey: {"reputation": float, "last_updated": str|None}}
 
@@ -1544,7 +1544,7 @@ class Validator:
                 response.raise_for_status()
                 response_json = response.json()
                 if len(response_json)==0:
-                    return None
+                    return {}
                 return response_json
             except requests.exceptions.RequestException as e:
                 if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt
