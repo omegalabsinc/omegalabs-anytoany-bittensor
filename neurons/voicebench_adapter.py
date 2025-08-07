@@ -119,7 +119,7 @@ def evaluate_dataset_with_proper_evaluator(
                 for i, response in enumerate(llm_responses):
                     # Extract the llm_score from the response dict
                     # # Convert score to string format expected by OpenEvaluator
-                    scores = response.get('scores', ['0'])
+                    scores = response.get('score', ['0'])
                     eval_data.append({
                         'score':  scores  # OpenEvaluator expects list of score strings
                     })
