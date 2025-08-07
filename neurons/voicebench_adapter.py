@@ -689,6 +689,7 @@ class VoiceBenchEvaluator:
         for i, item in enumerate(dataset):
             max_retries = 2
             retry_delay = 1
+            bt.logging.info(f"Processing item {i+1}/{len(dataset)}")
             
             for attempt in range(max_retries + 1):
                 try:
@@ -702,17 +703,16 @@ class VoiceBenchEvaluator:
                             response = ""
                         else:
                             audio_data = item['audio']
-                            bt.logging.info(f"Processing item {i+1}/{len(dataset)}")
-                            bt.logging.info(f"Audio data type: {type(audio_data)}")
-                            bt.logging.info(f"Audio data keys: {audio_data.keys() if hasattr(audio_data, 'keys') else 'N/A'}")
+                            # bt.logging.info(f"Audio data type: {type(audio_data)}")
+                            # bt.logging.info(f"Audio data keys: {audio_data.keys() if hasattr(audio_data, 'keys') else 'N/A'}")
                             
                             # Log the exact data being passed
-                            if isinstance(audio_data, dict):
-                                bt.logging.info(f"Audio dict keys: {list(audio_data.keys())}")
-                                if 'array' in audio_data:
-                                    bt.logging.info(f"Array shape: {audio_data['array'].shape if hasattr(audio_data['array'], 'shape') else 'N/A'}")
-                                if 'sampling_rate' in audio_data:
-                                    bt.logging.info(f"Sampling rate: {audio_data['sampling_rate']}")
+                            # if isinstance(audio_data, dict):
+                            #     bt.logging.info(f"Audio dict keys: {list(audio_data.keys())}")
+                            #     if 'array' in audio_data:
+                            #         bt.logging.info(f"Array shape: {audio_data['array'].shape if hasattr(audio_data['array'], 'shape') else 'N/A'}")
+                            #     if 'sampling_rate' in audio_data:
+                            #         bt.logging.info(f"Sampling rate: {audio_data['sampling_rate']}")
                             
                             response = self._generate_with_timeout(
                                 model_adapter.generate_audio, audio_data, timeout=60
