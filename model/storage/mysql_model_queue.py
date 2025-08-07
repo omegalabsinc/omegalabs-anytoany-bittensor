@@ -268,7 +268,7 @@ class ModelQueueManager:
         Get next model to score with retry logic.
         
         The updated prioritization logic ensures:
-        1. New models (highest priority)
+            
         2. Models never scored with non-zero scores
         3a. High-scoring models not scored for over a week
         3b. Models not scored for more than 7 days (safety net for winning models)

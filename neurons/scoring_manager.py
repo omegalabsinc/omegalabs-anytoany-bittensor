@@ -68,6 +68,26 @@ def get_scoring_config():
     parser = get_argparse()
     return bt.config(parser)
 
+def format_voicebench_output(scores: dict, status: dict, metadata: dict) -> dict:
+    """
+    Format VoiceBench output according to the required structure.
+    
+    Args:
+        scores: Dictionary with dataset scores and 'overall' key
+        status: Dictionary with evaluation status for each dataset
+        metadata: Dictionary with evaluation metadata
+        
+    Returns:
+        Formatted output dictionary
+    """
+    return {
+        'raw_scores': {k: v for k, v in scores.items() if k != 'overall'},
+        'combined_score': scores.get('overall', 0.0),
+        'evaluation_status': status,
+        'metadata': metadata
+    }
+
+
 class ScoringManager:
     def __init__(self, config):
         self.config = config
@@ -176,14 +196,21 @@ class ScoringManager:
             model_tracker=self.model_tracker,
             local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
         )
-        if result_dict is not None:
-            score = result_dict['combined_score']
-            score = float(score)
-        else:
-            score = None
-        bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
-        return result_dict
-    
+        
+        total_time_seconds = time.time() - start_time
+        
+        result_dict['total_time_seconds'] = total_time_seconds
+        
+        print(f"RESULT dict: \n{result_dict}")
+        # The result_dict should already contain only native Python types
+        # based on the scoring flow, but let's validate to be safe
+        serializable_result = result_dict
+                
+        bt.logging.info(f"Score for {inputs} is completed.")
+        
+        return serializable_result
+
+
     def kill_docker_images(self):
         """
         Kill and clean up docker images that have 'none' as image name or 'miner_' in the name
@@ -300,10 +327,18 @@ if __name__ == "__main__":
         block=config.block
     )
     scoring_manager.current_task = ModelScoreTaskData(inputs=scoring_inputs)
-    score = scoring_manager._score_model(scoring_inputs)
+    result = scoring_manager._score_model(scoring_inputs)
     current_task = scoring_manager.get_current_task()
-    current_task.score = score
-    current_task.status = ModelScoreStatus.COMPLETED
+    if result:
+        current_task.score = result.get('combined_score')
+        current_task.metric_scores = result
+    current_task.status = ModelScoreStatus.COMPLETED if result else ModelScoreStatus.FAILED
     print(current_task)
     with open("scoring_task_result.json", "w") as f:
         f.write(current_task.model_dump_json(indent=4))
+    
+    # Also save the formatted result separately for inspection
+    if result:
+        import json
+        with open("output/voicebench_formatted_result.json", "w") as f:
+            json.dump(result, f, indent=4)

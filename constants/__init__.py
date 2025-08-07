@@ -59,7 +59,8 @@ deviation_percent = 0.1
 # Model scoring parameters.
 # ---------------------------------
 
-MIN_AGE = 4 * 60 * 60  # 4 hours
+# MIN_AGE = 4 * 60 * 60  # 4 hours
+MIN_AGE = 0  # 4 hours #TODO: Remove for prod
 MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
 MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6

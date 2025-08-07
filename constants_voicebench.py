@@ -17,65 +17,6 @@ DEFAULT_S2S_WEIGHT = 0.0
 # Set to None to use all datasets, or specify list of datasets to use
 VOICEBENCH_DATASETS = None  # Use all available datasets
 
-# Specific dataset configurations
-VOICEBENCH_DATASET_CONFIGS = {
-    'alpacaeval': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'alpacaeval_full': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'commoneval': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'wildvoice': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'openbookqa': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'mmsu': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'sd-qa': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['aus', 'usa', 'gbr', 'ind']
-    },
-    'mtbench': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'ifeval': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'bbh': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    },
-    'advbench': {
-        'enabled': True,
-        'weight': 1.0,
-        'splits': ['test']
-    }
-}
-
 # Performance and resource limits
 MAX_VOICEBENCH_SAMPLES_PER_DATASET = None  # None = no limit
 VOICEBENCH_TIMEOUT_SECONDS = 1800  # 30 minutes per dataset

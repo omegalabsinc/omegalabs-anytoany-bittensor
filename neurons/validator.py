@@ -307,14 +307,14 @@ class Validator:
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.metagraph: bt.metagraph = self.subtensor.metagraph(self.config.netuid)
         torch.backends.cudnn.benchmark = True
-
-        api_root = (
-            # TODO: change to https://sn21-api.omegatron.ai for prod
-            "https://dev-sn21-api.omegatron.ai"
-            if self.config.subtensor.network == "test"
-            #else "https://sn21-api.omegatron.ai"
-            else "http://localhost:8003"
-        )
+        # api_root = (
+        #     # TODO: change to https://sn21-api.omegatron.ai for prod
+        #     "https://dev-sn21-api.omegatron.ai"
+        #     if self.config.subtensor.network == "test"
+        #     #else "https://sn21-api.omegatron.ai"
+        #     else "http://localhost:8003"
+        # )
+        api_root = "http://localhost:8003" #TODO: change to prod
         bt.logging.info(f"Using SN21 API: {api_root}")
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
         self.score_model_endpoint = f"{api_root}/score-model"

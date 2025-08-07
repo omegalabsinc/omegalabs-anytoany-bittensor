@@ -6,27 +6,309 @@ to be evaluated using the VoiceBench framework. It bridges the interface gap
 between VoiceBench's expected model API and the Docker container HTTP API.
 """
 
-import os
-import sys
-import subprocess
-import tempfile
 import json
-import numpy as np
 import time
 import signal
+import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import bittensor as bt
 
-# Add VoiceBench to Python path
-VOICEBENCH_PATH = "/home/salman/anmol/VoiceBench"
-if VOICEBENCH_PATH not in sys.path:
-    sys.path.insert(0, VOICEBENCH_PATH)
+# Remove VoiceBench dependency - everything is now in neurons/
 
 from datasets import load_dataset, Audio
 from neurons.docker_manager import DockerManager
 from neurons.miner_model_assistant import MinerModelAssistant, create_miner_assistant
-from neurons.llm_judge import calculate_llm_scores
+from neurons.llm_judge import evaluate_responses_with_llm
+from neurons.voicebench_evaluators import (
+    OpenEvaluator, MCQEvaluator, IFEvaluator, 
+    BBHEvaluator, HarmEvaluator
+)
+
+
+# Dataset to evaluator mapping based on VoiceBench DATASETS_CONFIG
+DATASET_EVALUATOR_MAP = {
+    # Open-ended QA datasets (need GPT evaluation)
+    'alpacaeval': 'open',
+    'alpacaeval_full': 'open',
+    'commoneval': 'open',
+    'wildvoice': 'open',
+    
+    # Multiple-choice QA datasets (no GPT needed)
+    'openbookqa': 'mcq',
+    'mmsu': 'mcq',  # All MMSU subjects use MCQ
+    
+    # Instruction following (no GPT needed)
+    'ifeval': 'ifeval',
+    
+    # Reasoning (no GPT needed)
+    'bbh': 'bbh',
+    
+    # Safety (no GPT needed)
+    'advbench': 'harm',
+}
+
+# Datasets that need LLM scoring first
+NEEDS_LLM_JUDGE = ['alpacaeval', 'alpacaeval_full', 'commoneval', 'wildvoice']
+
+
+def evaluate_dataset_with_proper_evaluator(
+    dataset_name: str,
+    dataset_results: Dict[str, Any]
+) -> tuple[float, Dict[str, Any]]:
+    """
+    Evaluate dataset responses using the correct VoiceBench evaluator.
+    
+    Returns:
+        Tuple of (score, status_dict)
+        
+        status = {
+                'dataset': dataset_name,
+                'total_samples': dataset_results.get('total_samples', 0),
+                'successful_responses': dataset_results.get('successful_responses', 0),
+                'success_rate': dataset_results.get('success_rate', 0.0),
+                'evaluator_used': None,
+                'evaluation_status': 'pending',
+                'evaluation_error': None,
+                'evaluation_details': None,
+                'score': 0.0
+            }
+    """
+    status = {
+        'dataset': dataset_name,
+        'total_samples': dataset_results.get('total_samples', 0),
+        'successful_responses': dataset_results.get('successful_responses', 0),
+        'success_rate': dataset_results.get('success_rate', 0.0),
+        'evaluator_used': None,
+        'evaluation_status': 'pending',
+        'evaluation_error': None,
+        'evaluation_details': None,
+        'score': 0.0
+    }
+    
+    # Check for dataset-level error
+    if 'error' in dataset_results:
+        status['evaluation_status'] = 'failed'
+        status['evaluation_error'] = dataset_results['error']
+        return 0.0, status
+    
+    # Get responses
+    responses = dataset_results.get('responses', [])
+    if not responses:
+        status['evaluation_status'] = 'no_responses'
+        return 0.0, status
+    
+    # Determine evaluator type
+    dataset_base = dataset_name.split('_')[0]  # Handle dataset_split format
+    evaluator_type = DATASET_EVALUATOR_MAP.get(dataset_base, 'open')
+    status['evaluator_used'] = evaluator_type
+    
+    try:
+        # Prepare data for evaluation
+        eval_data = []
+        
+        if evaluator_type == 'open':
+            # OpenEvaluator needs LLM scores
+            if dataset_base in NEEDS_LLM_JUDGE:
+                # First get LLM scores
+                #TODO: Validate if two step process is being done properly. api_judge -> evaluation.
+                bt.logging.info(f"Getting LLM scores for {dataset_name}")
+                llm_responses = evaluate_responses_with_llm(responses)
+                
+                
+                for i, response in enumerate(llm_responses):
+                    # Extract the llm_score from the response dict
+                    # # Convert score to string format expected by OpenEvaluator
+                    scores = response.get('scores', ['0'])
+                    eval_data.append({
+                        'score':  scores  # OpenEvaluator expects list of score strings
+                    })
+            else:
+                # Shouldn't happen but fallback
+                for response in responses:
+                    eval_data.append({'score': ['0']})
+                    
+        elif evaluator_type == 'mcq':
+            # MCQEvaluator needs response and reference
+            for response in responses:
+                eval_data.append({
+                    'response': response.get('response', ''),
+                    'reference': response.get('reference', '')
+                })
+                
+        elif evaluator_type == 'ifeval':
+            # IFEvaluator needs special format
+            for response in responses:
+                eval_data.append({
+                    'key': response.get('id', 0),
+                    'instruction_id_list': response.get('instruction_id_list', []),
+                    'prompt': response.get('prompt', ''),
+                    'response': response.get('response', ''),
+                    'kwargs': response.get('kwargs', [])
+                })
+                
+        elif evaluator_type == 'bbh':
+            # BBHEvaluator needs id and reference
+            for response in responses:
+                # BBH task IDs have specific format like 'bbh_navigate_147'
+                task_id = response.get('id', response.get('task_id', 'unknown'))
+                if isinstance(task_id, str) and task_id.startswith('bbh_'):
+                    # Use the existing BBH task ID
+                    bbh_id = task_id
+                else:
+                    # Create a default BBH task ID
+                    bbh_id = f'bbh_unknown_{task_id}'
+                    
+                eval_data.append({
+                    'id': bbh_id,
+                    'response': response.get('response', ''),
+                    'reference': response.get('reference', '')
+                })
+                
+        elif evaluator_type == 'harm':
+            # HarmEvaluator just needs response
+            for response in responses:
+                eval_data.append({
+                    'response': response.get('response', '')
+                })
+        
+        # Create and run evaluator
+        if evaluator_type == 'open':
+            evaluator = OpenEvaluator()
+        elif evaluator_type == 'mcq':
+            evaluator = MCQEvaluator()
+        elif evaluator_type == 'ifeval':
+            evaluator = IFEvaluator()
+        elif evaluator_type == 'bbh':
+            evaluator = BBHEvaluator()
+        elif evaluator_type == 'harm':
+            evaluator = HarmEvaluator()
+        else:
+            bt.logging.warning(f"Unknown evaluator type {evaluator_type}, using OpenEvaluator")
+            evaluator = OpenEvaluator()
+        
+        # Evaluate
+        eval_result = evaluator.evaluate(eval_data)
+        
+        # Extract score based on evaluator output format
+        if 'gpt' in eval_result:
+            # OpenEvaluator returns 1-5, normalize to 0-1
+            score = eval_result['gpt'] / 5.0
+        elif 'acc' in eval_result:
+            # MCQ/BBH return 0-100 percentage
+            score = eval_result['acc'] / 100.0
+        elif 'final' in eval_result:
+            # IFEvaluator returns final score 0-1
+            score = eval_result['final']
+        elif 'refusal_rate' in eval_result:
+            # HarmEvaluator returns refusal rate (higher is better for safety)
+            score = eval_result['refusal_rate']
+        elif 'strict-prompt' in eval_result:
+            # IFEvaluator alternative
+            score = eval_result['strict-prompt']
+        else:
+            bt.logging.warning(f"Unknown evaluation result format: {eval_result}")
+            score = 0.0
+        
+        status['score'] = score
+        status['evaluation_status'] = 'completed'
+        status['evaluation_details'] = eval_result
+        
+        bt.logging.info(f"Dataset {dataset_name} evaluated with {evaluator_type}: score={score:.3f}")
+        
+        return score, status
+        
+    except Exception as e:
+        bt.logging.error(f"Error evaluating dataset {dataset_name}: {e}")
+        status['evaluation_status'] = 'failed'
+        status['evaluation_error'] = str(e)
+        return 0.0, status
+
+
+def calculate_voicebench_scores_with_status(
+    results: Dict[str, Any]
+) -> tuple[Dict[str, float], Dict[str, Any]]:
+    """
+    Calculate VoiceBench scores using proper evaluators with status tracking.
+    
+    Returns:
+        Tuple of (scores_dict, status_dict)
+    """
+    scores = {}
+    status = {}
+    
+    # Dataset weights for weighted average
+    dataset_weights = {
+        'alpacaeval_test': 2.0,
+        'commoneval_test': 2.0,
+        'wildvoice_test': 2.0,
+        'alpacaeval_full_test': 1.0,
+        'openbookqa_test': 1.0,
+        'mmsu_physics': 1.0,
+        'mmsu_biology': 1.0,
+        'mmsu_chemistry': 1.0,
+        'mmsu_business': 1.0,
+        'mmsu_economics': 1.0,
+        'mmsu_engineering': 1.0,
+        'mmsu_health': 1.0,
+        'mmsu_history': 1.0,
+        'mmsu_law': 1.0,
+        'mmsu_other': 1.0,
+        'mmsu_philosophy': 1.0,
+        'mmsu_psychology': 1.0,
+        'ifeval_test': 1.5,
+        'bbh_test': 1.0,
+        'advbench_test': 1.0,
+    }
+    
+    weighted_scores = {}
+    total_weight = 0.0
+    
+    for dataset_key, dataset_results in results.items():
+        # Evaluate with proper evaluator
+        score, dataset_status = evaluate_dataset_with_proper_evaluator(
+            dataset_key, dataset_results
+        )
+        """ Per dataset_split status format:
+        dataset_status = {
+                'dataset': dataset_name,
+                'total_samples': dataset_results.get('total_samples', 0),
+                'successful_responses': dataset_results.get('successful_responses', 0),
+                'success_rate': dataset_results.get('success_rate', 0.0),
+                'evaluator_used': None,
+                'evaluation_status': 'pending',
+                'evaluation_error': None,
+                'evaluation_details': {}, # depends on evaluator
+                'score': 0.0
+            }
+        """
+        scores[dataset_key] = float(score)
+        status[dataset_key] = dataset_status
+        
+        # Apply weighting for overall score
+        weight = dataset_weights.get(dataset_key, 1.0)
+        weighted_scores[dataset_key] = float(score) * weight
+        total_weight += weight
+    
+    # Calculate weighted overall score
+    if total_weight > 0:
+        scores['overall'] = sum(weighted_scores.values()) / total_weight
+    else:
+        scores['overall'] = 0.0
+    
+    # Add overall status summary
+    # I need an overall count of total samples, successful responses
+    overall_status = {
+        'total_datasets': len(results),
+        'completed_evaluations': sum(1 for s in status.values() if isinstance(s, dict) and s.get('evaluation_status') == 'completed'),
+        'failed_evaluations': sum(1 for s in status.values() if isinstance(s, dict) and s.get('evaluation_status') == 'failed'),
+        'total_samples': sum(s.get('total_samples', 0) for s in status.values() if isinstance(s, dict)),
+        'successful_responses': sum(s.get('successful_responses', 0) for s in status.values() if isinstance(s, dict)),
+        'overall_score': float(scores['overall'])
+    }
+    status['overall'] = overall_status
+    
+    return scores, status
 
 
 class MinerModelAdapter:
@@ -60,6 +342,7 @@ class MinerModelAdapter:
         try:
             # Validate input
             if not isinstance(audio_input, dict):
+                bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
                 raise ValueError("audio_input must be a dictionary")
             
             if 'array' not in audio_input or 'sampling_rate' not in audio_input:
@@ -132,55 +415,48 @@ class DockerModelAdapter:
         Returns:
             Text response from the model
         """
-        try:
-            # Validate input
-            if not isinstance(audio_input, dict):
-                raise ValueError("audio_input must be a dictionary")
-            
-            if 'array' not in audio_input or 'sampling_rate' not in audio_input:
-                raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
-            
-            audio_array = np.array(audio_input['array'])
-            sample_rate = audio_input['sampling_rate']
-            
-            # Validate audio data
-            if audio_array.size == 0:
-                bt.logging.warning("Empty audio array provided")
-                return ""
-            
-            if sample_rate <= 0:
-                raise ValueError(f"Invalid sample rate: {sample_rate}")
-            
-            # Call Docker container inference
-            result = self.docker_manager.inference_v2v(
-                url=self.container_url,
-                audio_array=audio_array,
-                sample_rate=sample_rate
-            )
-            
-            # Validate and extract text response
-            if not isinstance(result, dict):
-                bt.logging.warning(f"Unexpected result type: {type(result)}")
-                return ""
-            
-            # Handle voice-to-voice models that may not return text
-            text_response = result.get('text', '')
-            
-            # If no text response, this might be a voice-to-voice only model
-            if not text_response and 'audio' in result:
-                bt.logging.info("Model returned audio but no text - this appears to be a voice-to-voice only model")
-                # For VoiceBench evaluation, we need text responses
-                # We could potentially use speech-to-text here, but for now return empty
-                return "[VOICE_OUTPUT_NO_TEXT]"
-            
-            if not isinstance(text_response, str):
-                text_response = str(text_response) if text_response is not None else ""
-            
-            return text_response.strip()
-            
-        except Exception as e:
-            bt.logging.error(f"Error in Docker model inference: {e}")
+        bt.logging.info("DockerModelAdapter.generate_audio called")
+        bt.logging.info(f"Received type: {type(audio_input)}")
+        
+        # Validate input
+        if not isinstance(audio_input, dict):
+            bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
+            raise ValueError("audio_input must be a dictionary")
+        
+        if 'array' not in audio_input or 'sampling_rate' not in audio_input:
+            raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
+        
+        audio_array = np.array(audio_input['array'])
+        sample_rate = audio_input['sampling_rate']
+        
+        # Validate audio data
+        if audio_array.size == 0:
+            bt.logging.warning("Empty audio array provided")
+            raise ValueError(f"Empty audio array provided")
+
+        if sample_rate <= 0:
+            raise ValueError(f"Invalid sample rate: {sample_rate}")
+        
+        # Call Docker container inference
+        result = self.docker_manager.inference_v2t(
+            url=self.container_url,
+            audio_array=audio_array,
+            sample_rate=sample_rate
+        )
+        
+        # Validate and extract text response
+        if not isinstance(result, dict):
+            bt.logging.warning(f"Unexpected result type: {type(result)}")
             return ""
+        
+        # Handle voice-to-voice models that may not return text
+        text_response = result.get('text')
+        
+        if not isinstance(text_response, str):
+            bt.logging.error(f"Expected string response but got {type(text_response)}: {text_response}")
+            raise ValueError("Model response must be a string")
+        
+        return text_response.strip()
     
     def generate_text(self, text_input: str) -> str:
         """
@@ -212,36 +488,32 @@ class VoiceBenchEvaluator:
     Main evaluator that runs VoiceBench evaluation on Docker-containerized models.
     """
     
-    # All available VoiceBench datasets with their appropriate splits
+    # All available VoiceBench datasets with their appropriate splits. which datasets to run.
     VOICEBENCH_DATASETS = {
-        'alpacaeval': ['test'],
-        'alpacaeval_full': ['test'], 
+        #TODO: use only what are decided.
+        # 'alpacaeval': ['test'],
+        # 'alpacaeval_full': ['test'], 
         'commoneval': ['test'],
         'wildvoice': ['test'],
-        'openbookqa': ['test'],
-        'mmsu': ['physics'],  # Use one specific domain instead of 'test'
-        'sd-qa': ['usa'],  # Using USA dataset only
-        'mtbench': ['test'],
+        # 'openbookqa': ['test'],
+        # 'mmsu': ['physics'],  # Use one specific domain instead of 'test'
+        # 'sd-qa': ['usa'],  # Using USA dataset only
+        # 'mtbench': ['test'],
         'ifeval': ['test'],
-        'bbh': ['test'],
+        # 'bbh': ['test'],
         'advbench': ['test']
     }
     
-    def __init__(self, voicebench_path: str = VOICEBENCH_PATH):
+    def __init__(self, max_samples_per_dataset: Optional[int] = None):
         """
         Initialize the VoiceBench evaluator.
         
         Args:
-            voicebench_path: Path to VoiceBench installation
+            max_samples_per_dataset: Maximum number of samples to evaluate per dataset.
+                                    None means evaluate all samples (default).
         """
-        self.voicebench_path = Path(voicebench_path)
-        self.setup_environment()
-    
-    def setup_environment(self):
-        """Set up the VoiceBench environment."""
-        # Ensure VoiceBench is in Python path
-        if str(self.voicebench_path) not in sys.path:
-            sys.path.insert(0, str(self.voicebench_path))
+        self.max_samples_per_dataset = max_samples_per_dataset
+        bt.logging.info(f"VoiceBenchEvaluator initialized with max_samples={max_samples_per_dataset or 'all'}")
     
     def _generate_with_timeout(self, func, *args, timeout=30):
         """
@@ -277,7 +549,7 @@ class VoiceBenchEvaluator:
         finally:
             signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
     
-    def evaluate_model(
+    def inference_model(
         self,
         container_url: str,
         docker_manager: DockerManager,
@@ -317,12 +589,13 @@ class VoiceBenchEvaluator:
                     dataset = load_dataset('hlt-lab/voicebench', dataset_name, split=split)
                     dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
                     
-                    # For testing, limit to first 6 samples
-                    if len(dataset) > 6:
-                        dataset = dataset.select([0,1,2,3,4,5])
+                    # Apply sample limit if configured
+                    if self.max_samples_per_dataset and len(dataset) > self.max_samples_per_dataset:
+                        dataset = dataset.select(range(self.max_samples_per_dataset))
+                        bt.logging.info(f"Limited {dataset_name}_{split} to {self.max_samples_per_dataset} samples")
                     
-                    # Run evaluation
-                    dataset_results = self._evaluate_dataset(
+                    # Run Inference
+                    dataset_results = self._inference_dataset(
                         adapter, dataset, dataset_name, split, modality
                     )
                     
@@ -371,12 +644,13 @@ class VoiceBenchEvaluator:
                     dataset = load_dataset('hlt-lab/voicebench', dataset_name, split=split)
                     dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
                     
-                    # For testing, limit to first 6 samples
-                    if len(dataset) > 6:
-                        dataset = dataset.select([0,1,2,3,4,5])
-                    
-                    # Run evaluation
-                    dataset_results = self._evaluate_dataset(
+                    # Apply sample limit if configured
+                    if self.max_samples_per_dataset and len(dataset) > self.max_samples_per_dataset:
+                        dataset = dataset.select(range(self.max_samples_per_dataset))
+                        bt.logging.info(f"Limited {dataset_name}_{split} to {self.max_samples_per_dataset} samples")
+
+                    # Run inference
+                    dataset_results = self._inference_dataset(
                         model_adapter, dataset, dataset_name, split, modality
                     )
                     
@@ -388,7 +662,7 @@ class VoiceBenchEvaluator:
         
         return results
     
-    def _evaluate_dataset(
+    def _inference_dataset(
         self,
         model_adapter: DockerModelAdapter,
         dataset,
@@ -397,24 +671,24 @@ class VoiceBenchEvaluator:
         modality: str
     ) -> Dict[str, Any]:
         """
-        Evaluate model on a specific dataset.
+        This is inference on Miner model.
         
         Args:
             model_adapter: DockerModelAdapter instance
             dataset: Loaded dataset
             dataset_name: Name of the dataset
             split: Data split
-            modality: Evaluation modality
+            modality: Evaluation modality #TODO: No need for this. Only using for audio-to-text.
             
         Returns:
-            Evaluation results for this dataset
+            Inference results for this dataset
         """
         responses = []
         
         # Generate responses with timeout and retry logic
         for i, item in enumerate(dataset):
             max_retries = 2
-            retry_delay = 5
+            retry_delay = 1
             
             for attempt in range(max_retries + 1):
                 try:
@@ -427,17 +701,30 @@ class VoiceBenchEvaluator:
                             bt.logging.warning(f"No audio field in item {i+1}, skipping")
                             response = ""
                         else:
+                            audio_data = item['audio']
+                            bt.logging.info(f"Processing item {i+1}/{len(dataset)}")
+                            bt.logging.info(f"Audio data type: {type(audio_data)}")
+                            bt.logging.info(f"Audio data keys: {audio_data.keys() if hasattr(audio_data, 'keys') else 'N/A'}")
+                            
+                            # Log the exact data being passed
+                            if isinstance(audio_data, dict):
+                                bt.logging.info(f"Audio dict keys: {list(audio_data.keys())}")
+                                if 'array' in audio_data:
+                                    bt.logging.info(f"Array shape: {audio_data['array'].shape if hasattr(audio_data['array'], 'shape') else 'N/A'}")
+                                if 'sampling_rate' in audio_data:
+                                    bt.logging.info(f"Sampling rate: {audio_data['sampling_rate']}")
+                            
                             response = self._generate_with_timeout(
-                                model_adapter.generate_audio, item['audio'], timeout=60
+                                model_adapter.generate_audio, audio_data, timeout=60
                             )
-                    elif modality == 'text':
-                        response = self._generate_with_timeout(
-                            model_adapter.generate_text, item['prompt'], timeout=30
-                        )
-                    elif modality == 'ttft':
-                        response = self._generate_with_timeout(
-                            model_adapter.generate_ttft, item['audio'], timeout=30
-                        )
+                    # elif modality == 'text':
+                    #     response = self._generate_with_timeout(
+                    #         model_adapter.generate_text, item['prompt'], timeout=30
+                    #     )
+                    # elif modality == 'ttft':
+                    #     response = self._generate_with_timeout(
+                    #         model_adapter.generate_ttft, item['audio'], timeout=30
+                    #     )
                     else:
                         raise ValueError(f"Unsupported modality: {modality}")
                     
@@ -461,7 +748,7 @@ class VoiceBenchEvaluator:
                     
                 except Exception as e:
                     bt.logging.warning(f"Error processing item {i+1}/{len(dataset)} (attempt {attempt+1}): {e}")
-                    
+                    #TODO: Only retry in certain error cases. Not needed for all errors.
                     if attempt < max_retries:
                         bt.logging.info(f"Retrying in {retry_delay} seconds...")
                         time.sleep(retry_delay)
@@ -494,7 +781,7 @@ class VoiceBenchEvaluator:
     
     def run_gpt_evaluation(self, results_file: str) -> Dict[str, Any]:
         """
-        Run GPT-4 evaluation on generated responses.
+        Run GPT-4 evaluation on generated responses using llm_judge.
         
         Args:
             results_file: Path to results file
@@ -503,36 +790,27 @@ class VoiceBenchEvaluator:
             GPT evaluation results
         """
         try:
-            # Run VoiceBench GPT evaluation
-            cmd = [
-                sys.executable,
-                str(self.voicebench_path / "api_judge.py"),
-                "--src_file", results_file
-            ]
+            # Load results from file
+            data = []
+            with open(results_file, 'r') as f:
+                for line in f:
+                    json_obj = json.loads(line.strip())
+                    data.append(json_obj)
             
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.voicebench_path),
-                capture_output=True,
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
+            # Use the llm_judge module to evaluate responses
+            bt.logging.info(f"Running LLM evaluation on {len(data)} samples")
+            eval_results = evaluate_responses_with_llm(data)
             
-            if result.returncode == 0:
-                # Load evaluation results
-                eval_file = results_file.replace('.jsonl', '_eval.jsonl')
-                if os.path.exists(eval_file):
-                    with open(eval_file, 'r') as f:
-                        eval_results = [json.loads(line) for line in f]
-                    return {'gpt_evaluation': eval_results}
-                else:
-                    return {'gpt_evaluation': 'completed', 'message': 'Evaluation file not found'}
-            else:
-                return {'error': f"GPT evaluation failed: {result.stderr}"}
+            # Save evaluation results
+            eval_file = results_file.replace('.jsonl', '_eval.jsonl')
+            with open(eval_file, 'w') as f:
+                for result in eval_results:
+                    f.write(json.dumps(result) + '\n')
+            
+            return {'gpt_evaluation': eval_results}
                 
-        except subprocess.TimeoutExpired:
-            return {'error': 'GPT evaluation timed out'}
         except Exception as e:
+            bt.logging.error(f"GPT evaluation error: {str(e)}")
             return {'error': f'GPT evaluation error: {str(e)}'}
     
     def calculate_final_scores(self, results: Dict[str, Any]) -> Dict[str, float]:
@@ -625,7 +903,8 @@ def run_voicebench_evaluation_miner(
     api_url: str,
     datasets: Optional[List[str]] = None,
     splits: Optional[List[str]] = None,
-    timeout: int = 600
+    timeout: int = 600,
+    max_samples_per_dataset: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Convenience function to run VoiceBench evaluation on a miner model API.
@@ -635,11 +914,12 @@ def run_voicebench_evaluation_miner(
         datasets: List of datasets to evaluate (None = all VoiceBench datasets)
         splits: List of splits to evaluate (None = use dataset-specific splits)
         timeout: Request timeout for API calls
+        max_samples_per_dataset: Maximum number of samples per dataset (None = all samples)
         
     Returns:
         Complete evaluation results including scores
     """
-    evaluator = VoiceBenchEvaluator()
+    evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
     
     bt.logging.info("Starting comprehensive VoiceBench evaluation via miner API...")
     
@@ -654,25 +934,17 @@ def run_voicebench_evaluation_miner(
         modality='audio'
     )
     
-    # Calculate traditional scores
-    scores = evaluator.calculate_final_scores(results)
-    
-    # Calculate LLM-based scores
-    bt.logging.info("Starting LLM-based evaluation...")
-    llm_scores = calculate_llm_scores(results)
+    # Calculate scores using proper evaluators with status tracking
+    bt.logging.info("Starting VoiceBench evaluation with proper evaluators...")
+    scores, status = calculate_voicebench_scores_with_status(results)
     
     bt.logging.info(f"VoiceBench evaluation completed.")
-    bt.logging.info(f"Traditional score: {scores.get('overall', 0.0):.3f}")
-    bt.logging.info(f"🤖 LLM-based score (PRIMARY): {llm_scores.get('overall', 0.0):.3f}")
-    
-    # Use LLM scores as the primary VoiceBench score
-    primary_scores = llm_scores.copy()
+    bt.logging.info(f"Overall score: {scores.get('overall', 0.0):.3f}")
+    bt.logging.info(f"Evaluation status: {status.get('overall', {})}")
     
     return {
-        'voicebench_results': results,
-        'voicebench_scores': primary_scores,  # LLM scores as primary
-        'traditional_scores': scores,         # Keep traditional for comparison
-        'llm_scores': llm_scores
+        'voicebench_scores': scores,
+        'evaluation_status': status
     }
 
 
@@ -680,7 +952,8 @@ def run_voicebench_evaluation(
     container_url: str,
     docker_manager: DockerManager,
     datasets: Optional[List[str]] = None,
-    splits: Optional[List[str]] = None
+    splits: Optional[List[str]] = None,
+    max_samples_per_dataset: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Convenience function to run VoiceBench evaluation on a Docker model.
@@ -690,40 +963,100 @@ def run_voicebench_evaluation(
         docker_manager: DockerManager instance
         datasets: List of datasets to evaluate (None = all VoiceBench datasets)
         splits: List of splits to evaluate (None = use dataset-specific splits)
+        max_samples_per_dataset: Maximum number of samples per dataset (None = all samples)
         
     Returns:
-        Complete evaluation results including scores
+            {
+            'voicebench_scores': scores,
+            'evaluation_status': status.get('overall', {})
+            }
     """
-    evaluator = VoiceBenchEvaluator()
+    evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
     
     bt.logging.info("Starting comprehensive VoiceBench evaluation across all datasets...")
     
-    # Run model evaluation on all VoiceBench datasets
-    results = evaluator.evaluate_model(
+    # Run model inference on all VoiceBench datasets
+    results = evaluator.inference_model(
         container_url=container_url,
         docker_manager=docker_manager,
         datasets=datasets,  # None means all datasets
         splits=splits,      # None means dataset-specific splits
         modality='audio'
     )
-    
-    # Calculate traditional scores
-    scores = evaluator.calculate_final_scores(results)
-    
-    # Calculate LLM-based scores
-    bt.logging.info("Starting LLM-based evaluation...")
-    llm_scores = calculate_llm_scores(results)
-    
+    """
+    Output format:
+    {   datast_split: {
+                'dataset': dataset_name,
+                'split': split,
+                'modality': modality,
+                'total_samples': total_responses,
+                'successful_responses': successful_responses,
+                'success_rate': success_rate,
+                'responses': [
+                        # in case of successful response
+                        {
+                            'prompt': item.get('prompt', ''),
+                            'response': response,
+                            'reference': item.get('output', ''),
+                            'inference_time': inference_time,
+                            'attempt': attempt + 1
+                        }
+                        # In case of error
+                        { 
+                            'prompt': prompt,
+                            'response': model_response,
+                            'reference': item.get('output', ''), # Reference output in dataset
+                            'error': str(e),
+                            'failed_attempts': attempt + 1
+                        }
+                ]
+            }
+        }
+    """
+    #TODO: Here we are returning reference key for all, but the reference is present only in some datasets. 
+    # And this also affects which prompt is used in llm_judge. Validate this.
+
+    # Calculate scores using proper evaluators with status tracking
+    bt.logging.info("Starting VoiceBench evaluation with proper evaluators...")
+    scores, status = calculate_voicebench_scores_with_status(results)
+    """ status:{
+        dataset_split :
+                {
+                    'dataset': dataset_name,
+                    'total_samples': dataset_results.get('total_samples', 0),
+                    'successful_responses': dataset_results.get('successful_responses', 0),
+                    'success_rate': dataset_results.get('success_rate', 0.0),
+                    'evaluator_used': None,
+                    'evaluation_status': 'pending',
+                    'evaluation_error': None,
+                    'evaluation_details': {}, # depends on evaluator
+                    'score': 0.0
+                },
+        
+        overall :
+            {
+                'total_datasets': len(results),
+                'completed_evaluations': sum(1 for s in status.values() if isinstance(s, dict) and s.get('evaluation_status') == 'completed'),
+                'failed_evaluations': sum(1 for s in status.values() if isinstance(s, dict) and s.get('evaluation_status') == 'failed'),
+                'total_samples': sum(s.get('total_samples', 0) for s in status.values() if isinstance(s, dict)),
+                'successful_responses': sum(s.get('successful_responses', 0) for s in status.values() if isinstance(s, dict)),
+                'overall_score': scores['overall']
+            }
+        }
+    """
+
+    """
+    scores: {
+        dataset_split: score,
+        overall: overall_score
+        }
+    """
+
     bt.logging.info(f"VoiceBench evaluation completed.")
-    bt.logging.info(f"Traditional score: {scores.get('overall', 0.0):.3f}")
-    bt.logging.info(f"🤖 LLM-based score (PRIMARY): {llm_scores.get('overall', 0.0):.3f}")
-    
-    # Use LLM scores as the primary VoiceBench score
-    primary_scores = llm_scores.copy()
+    bt.logging.info(f"Overall score: {scores.get('overall', 0.0):.3f}")
+    bt.logging.info(f"Evaluation status: {status.get('overall', {})}")
     
     return {
-        'voicebench_results': results,
-        'voicebench_scores': primary_scores,  # LLM scores as primary
-        'traditional_scores': scores,         # Keep traditional for comparison
-        'llm_scores': llm_scores
+        'voicebench_scores': scores,
+        'evaluation_status': status.get('overall', {})
     }

@@ -8,8 +8,9 @@ with configuration from vali.env file.
 import os
 import json
 import tempfile
+import time
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 from openai import OpenAI
 import bittensor as bt
 from dotenv import load_dotenv
@@ -19,14 +20,21 @@ vali_env_path = Path(__file__).parent.parent / "vali.env"
 if vali_env_path.exists():
     load_dotenv(vali_env_path)
 
-# Initialize OpenAI client with environment configuration
-client = OpenAI(
+# Initialize OpenAI clients with environment configuration
+chutes_client = OpenAI(
+    base_url=os.getenv("CHUTES_API_BASE", "https://llm.chutes.ai/v1"),
+    api_key=os.getenv("CHUTES_API_KEY")
+)
+CHUTES_MODEL = os.getenv("CHUTES_MODEL", "Qwen/Qwen3-235B-A22B-Instruct-2507")
+
+openai_client = OpenAI(
     base_url=os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1"),
     api_key=os.getenv("OPENAI_API_KEY")
 )
-MODEL = os.getenv("MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-print(f"Using LLM model: {MODEL}")
+print(f"Primary model (Chutes): {CHUTES_MODEL}")
+print(f"Fallback model (OpenAI): {OPENAI_MODEL}")
 
 # Evaluation prompts from VoiceBench
 META_PROMPT_OPEN = """
@@ -63,6 +71,93 @@ Please only output a single "Yes" or "No". Do not output anything else.
 """.strip()
 
 
+def call_llm_with_fallback(messages: List[Dict[str, str]], max_tokens: int = 10, temperature: float = 0.1, max_retries: int = 2) -> Tuple[str, str]:
+    """
+    Call LLM API with fallback mechanism and retry logic.
+    
+    First tries chutes_client with retries, then falls back to openai_client on:
+    - 429 (rate limit) errors
+    - Connection timeouts or no response
+    - Any other API errors
+    
+    Args:
+        messages: List of message dictionaries for the API call
+        max_tokens: Maximum tokens to generate
+        temperature: Temperature for generation
+        max_retries: Maximum number of retries per client
+        
+    Returns:
+        Tuple of (response content string, client_name used)
+        
+    Raises:
+        Exception: If both clients fail after all retries
+    """
+    def _try_api_call(client, model_name, client_name, retries=max_retries):
+        """Try API call with exponential backoff."""
+        for attempt in range(retries):
+            try:
+                bt.logging.debug(f"Attempting {client_name} API call (attempt {attempt + 1}/{retries})")
+                
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    n=1,
+                    timeout=30  # 30 second timeout
+                )
+                
+                content = response.choices[0].message.content
+                if content is None or content.strip() == "":
+                    raise Exception(f"Empty response from {client_name} API")
+                    
+                bt.logging.debug(f"Successfully got response from {client_name} API")
+                return content.strip(), client_name
+                
+            except Exception as e:
+                error_msg = str(e).lower()
+                bt.logging.warning(f"{client_name} API attempt {attempt + 1} failed: {e}")
+                
+                # Check error type for retry decision
+                is_rate_limit = "429" in error_msg or "rate limit" in error_msg
+                is_retryable = any(term in error_msg for term in [
+                    "timeout", "connection", "network", "unreachable", "no response",
+                    "rate limit", "429", "500", "502", "503", "504"
+                ])
+                
+                if attempt < retries - 1 and is_retryable:
+                    # Exponential backoff: 1s, 2s, 4s, 8s...
+                    wait_time = 2 ** attempt
+                    if is_rate_limit:
+                        wait_time = max(wait_time, 5)  # Minimum 5s for rate limits
+                    
+                    bt.logging.info(f"Retrying {client_name} API in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    # Last attempt or non-retryable error
+                    raise e
+    
+    all_errors = []
+    
+    # Try Chutes API first with retries
+    try:
+        return _try_api_call(chutes_client, CHUTES_MODEL, "Chutes")
+    except Exception as e:
+        bt.logging.warning(f"Chutes API failed after all retries: {e}")
+        all_errors.append(f"Chutes (all retries): {e}")
+    
+    # Fallback to OpenAI API with retries
+    try:
+        bt.logging.info("Falling back to OpenAI API")
+        return _try_api_call(openai_client, OPENAI_MODEL, "OpenAI")
+    except Exception as e:
+        bt.logging.error(f"OpenAI API also failed after all retries: {e}")
+        all_errors.append(f"OpenAI (all retries): {e}")
+        
+        # Both APIs failed completely
+        raise Exception(f"Both APIs failed after all retries. Errors: {'; '.join(all_errors)}")
+
+
 def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
     """
     Generate LLM score for a single evaluation item.
@@ -76,12 +171,14 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
     try:
         # Choose prompt based on whether reference answer exists
         if "reference" in item and item["reference"]:
+            print(f"[REF] Using QA prompt for {item['prompt']}")
             prompt = META_PROMPT_QA.format(
                 prompt=item['prompt'], 
                 reference=item['reference'], 
                 response=item['response']
             )
         else:
+            print(f"[Ref] Using OPEN prompt for {item['prompt']}")
             prompt = META_PROMPT_OPEN.format(
                 prompt=item['prompt'], 
                 response=item['response']
@@ -89,41 +186,53 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
         
         bt.logging.debug(f"Sending LLM evaluation request for prompt: {item['prompt'][:50]}...")
         
-        # Call OpenAI API
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant who tries to help answer the user's question."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
-            ],
-            max_tokens=10,  # We only need a short response (score or Yes/No)
-            temperature=0.1,  # Low temperature for consistent scoring
-            n=1
-        )
+        # Call LLM API with fallback mechanism
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant who tries to help answer the user's question."
+            },
+            {
+                "role": "user", 
+                "content": prompt
+            }
+        ]
         
-        score_text = response.choices[0].message.content.strip()
+        scores = []
+        for _ in range(3):
+            score_text, used_client = call_llm_with_fallback(
+                messages=messages,
+                max_tokens=64,
+                temperature=0.1
+            )
+            if "reference" in item and item["reference"]:
+                llm_score = 1.0 if score_text.lower().startswith('yes') else 0.0
+            else:
+                try:
+                    llm_score = float(score_text)
+                except ValueError:
+                    bt.logging.warning(f"Could not parse LLM score: {score_text}")
+                    llm_score = 0.0
+            scores.append(llm_score)
+        item['score'] = scores
         
-        # Parse score
+        # Track which client was used
+        item['llm_client_used'] = used_client
+        
+        # Parse score checked  with api_judge in VoiceBench
         if "reference" in item and item["reference"]:
             # For QA tasks, convert Yes/No to binary score
             llm_score = 1.0 if score_text.lower().startswith('yes') else 0.0
         else:
             # For open-ended tasks, parse numeric score
             try:
-                llm_score = float(score_text) / 5.0  # Normalize to 0-1
+                llm_score = float(score_text) 
             except ValueError:
                 bt.logging.warning(f"Could not parse LLM score: {score_text}")
                 llm_score = 0.0
         
         item['llm_score'] = llm_score
         item['llm_raw_response'] = score_text
-        
         bt.logging.debug(f"LLM score: {llm_score} (raw: {score_text})")
         
     except Exception as e:
@@ -136,7 +245,7 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
 
 def evaluate_responses_with_llm(responses: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Evaluate a list of responses using LLM judge.
+    LLM Judge: Evaluate a list of responses using LLM judge.
     
     Args:
         responses: List of response dictionaries
@@ -144,7 +253,7 @@ def evaluate_responses_with_llm(responses: List[Dict[str, Any]]) -> List[Dict[st
     Returns:
         List of responses with LLM scores added
     """
-    bt.logging.info(f"Starting LLM evaluation of {len(responses)} responses using {MODEL}")
+    bt.logging.info(f"Starting LLM evaluation of {len(responses)} responses using {CHUTES_MODEL}")
     
     evaluated_responses = []
     

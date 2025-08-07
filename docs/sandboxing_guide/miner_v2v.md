@@ -1,7 +1,7 @@
-#  Bittensor Voice-to-Voice - Miner's Guide
+#  Bittensor Voice-to-Voice & Voice-to-Text - Miner's Guide
 
 ## Overview
-Evaluation system runs the models in isolated Docker containers and scores them based on their performance on voice-to-voice task.
+Evaluation system runs the models in isolated Docker containers and scores them based on their performance on voice-to-voice (V2V) or voice-to-text (V2T) tasks. The primary evaluation uses VoiceBench for comprehensive assessment across 11 datasets with LLM-based quality scoring.
 
 ## How to Submit Your Model
 
@@ -17,9 +17,9 @@ your_repo/
 └── your_model_files/   # Your model files
 ```
 
-**Example repository:** [tezuesh/moshi_general](https://huggingface.co/tezuesh/moshi_general/)
+**Example repository:** [siddhantoon/miner_v2t](https://huggingface.co/siddhantoon/miner_v2t/)
 
-### 2. Required Endpoints
+### 2. Required Endpoints in server.py
 
 #### Health Check Endpoint
 ```python
@@ -34,7 +34,7 @@ def health_check():
     }
 ```
 
-#### Inference Endpoint
+#### Voice-to-Voice Inference Endpoint
 ```python
 @app.post("/api/v1/inference")
 async def inference(request: AudioRequest) -> AudioResponse:
@@ -45,6 +45,18 @@ async def inference(request: AudioRequest) -> AudioResponse:
     class AudioResponse(BaseModel):
         audio_data: str  # Base64 encoded output audio
         text: str = ""   # Optional generated text
+```
+
+#### Voice-to-Text Inference Endpoint
+```python
+@app.post("/api/v1/v2t")
+async def voice_to_text(request: AudioRequest) -> TextResponse:
+    class AudioRequest(BaseModel):
+        audio_data: str  # Base64 encoded audio array
+        sample_rate: int
+
+    class TextResponse(BaseModel):
+        text: str  # Generated text response
 ```
 
 ## How The Evaluation Works
@@ -70,8 +82,23 @@ container_url = docker_manager.start_container(
 ```
 
 ### 3. Evaluation Process
+
+#### VoiceBench Evaluation (Primary)
 ```python
-# For each audio sample:
+# For voice-to-text evaluation using VoiceBench:
+1. Load VoiceBench datasets (11 comprehensive benchmarks)
+2. Send audio samples to model:
+   result = docker_manager.inference_v2t(
+       url=container_url,
+       audio_array=input_audio,
+       sample_rate=sample_rate
+   )
+3. Evaluate with LLM judge for quality scoring
+```
+
+#### Legacy V2V Evaluation
+```python
+# For voice-to-voice models:
 1. Extract audio segments
 2. Send to model container:
    result = docker_manager.inference_v2v(
@@ -79,14 +106,7 @@ container_url = docker_manager.start_container(
        audio_array=input_audio,
        sample_rate=sample_rate
    )
-
-3. Compute metrics:
-   - MIMI score
-   - WER score
-   - Length penalty
-   - PESQ score
-   - Anti-spoofing score
-   - Combined score
+3. Compute traditional metrics
 ```
 
 ### 4. Security Features
@@ -143,7 +163,29 @@ async def shutdown_event():
     cleanup_resources()
 ```
 
-2. **Error Handling**
+2. **Complete V2T Endpoint Example**
+```python
+@app.post("/api/v1/v2t")
+async def voice_to_text(request: AudioRequest):
+    try:
+        # Decode audio
+        audio_bytes = base64.b64decode(request.audio_data)
+        audio_array = np.load(io.BytesIO(audio_bytes))
+        
+        # Process with your model
+        # 1. Speech recognition (e.g., Whisper)
+        text = whisper_model.transcribe(audio_array, sample_rate=request.sample_rate)
+        
+        # 2. Generate response (e.g., LLM)
+        response = llm_model.generate(text)
+        
+        return TextResponse(text=response)
+    except Exception as e:
+        logger.error(f"V2T inference failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+3. **Error Handling**
 ```python
 @app.post("/api/v1/inference")
 async def inference(request: AudioRequest):
@@ -155,7 +197,7 @@ async def inference(request: AudioRequest):
         raise HTTPException(status_code=500, detail=str(e))
 ```
 
-3. **Audio Processing**
+4. **Audio Processing**
 ```python
 def _load_audio(self, audio_array: np.ndarray, sample_rate: int):
     # Implement proper audio preprocessing
@@ -166,7 +208,34 @@ def _load_audio(self, audio_array: np.ndarray, sample_rate: int):
 
 ## Scoring Metrics
 
-Your model will be evaluated on:
+### VoiceBench Evaluation (Recommended for V2T)
+Your model will be evaluated across 11 comprehensive datasets:
+
+**Instruction Following & General Knowledge:**
+1. **AlpacaEval** - General instruction following
+2. **CommonEval** - Common knowledge questions
+3. **WildVoice** - Conversational scenarios
+4. **MTBench** - Multi-turn conversations
+5. **IFEval** - Instruction following accuracy
+
+**Academic & Reasoning:**
+6. **MMSU** - Subject-specific knowledge (physics, chemistry, etc.)
+7. **OpenBookQA** - Science reasoning questions
+8. **BBH** - Big-Bench Hard reasoning tasks
+
+**Regional & Accent Diversity:**
+9. **SD-QA** - Multiple accent variations (USA, GBR, AUS, etc.)
+
+**Safety & Security:**
+10. **AdvBench** - Adversarial robustness
+
+**Scoring with LLM Judge:**
+- Each response is evaluated by an LLM judge (Qwen/GPT-4)
+- Quality-based scoring (1-5 scale for open questions, Yes/No for QA)
+- Weighted average across all datasets
+- Real accuracy assessment, not just API success rate
+
+### Legacy V2V Metrics (For Audio Output Models)
 1. Voice conversion quality (MIMI score)
 2. Speech recognition accuracy (WER score)
 3. Output length appropriateness (Length penalty)
@@ -176,7 +245,9 @@ Your model will be evaluated on:
 
 The system calculates a final score:
 ```python
-mean_score = np.mean(metrics['combined_score'])
+# VoiceBench scoring (primary):
+voicebench_score = weighted_average(llm_scores_per_dataset)
+
 ```
 
 The key differences from previous approaches are:

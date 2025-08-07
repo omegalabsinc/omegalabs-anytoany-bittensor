@@ -499,6 +499,38 @@ class DockerManager:
             bt.logging.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
             raise
     
+    def inference_v2t(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 60) -> Dict[str, Any]:
+        """
+        Send inference request to container.
+        
+        Args:
+            url: Container API URL
+            audio_array: Input audio array
+            sample_rate: Audio sample rate
+            timeout: Request timeout in seconds
+            
+        Returns:
+            Dict containing inference results
+        """
+        # Convert audio array to base64
+        buffer = io.BytesIO()
+        np.save(buffer, audio_array)
+        audio_b64 = base64.b64encode(buffer.getvalue()).decode()
+        
+        # Send request
+        response = requests.post(
+            f"{url}/api/v1/v2t",
+            json={
+                "audio_data": audio_b64,
+                "sample_rate": sample_rate
+            },
+            timeout=timeout
+        )
+        
+        response.raise_for_status()
+            
+        return response.json()
+    
 
     def inference_ibllama(self, url: str, video_embed: List[float], timeout: int = 60) -> Dict[str, Any]:
         """
