@@ -212,22 +212,10 @@ def _load_audio(self, audio_array: np.ndarray, sample_rate: int):
 Your model will be evaluated across 11 comprehensive datasets:
 
 **Instruction Following & General Knowledge:**
-1. **AlpacaEval** - General instruction following
-2. **CommonEval** - Common knowledge questions
-3. **WildVoice** - Conversational scenarios
-4. **MTBench** - Multi-turn conversations
+1. **CommonEval** - Common knowledge questions
+2. **WildVoice** - Conversational scenarios
+4. **AdvBench** - Multi-turn conversations
 5. **IFEval** - Instruction following accuracy
-
-**Academic & Reasoning:**
-6. **MMSU** - Subject-specific knowledge (physics, chemistry, etc.)
-7. **OpenBookQA** - Science reasoning questions
-8. **BBH** - Big-Bench Hard reasoning tasks
-
-**Regional & Accent Diversity:**
-9. **SD-QA** - Multiple accent variations (USA, GBR, AUS, etc.)
-
-**Safety & Security:**
-10. **AdvBench** - Adversarial robustness
 
 **Scoring with LLM Judge:**
 - Each response is evaluated by an LLM judge (Qwen/GPT-4)
