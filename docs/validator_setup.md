@@ -52,6 +52,8 @@ If the API is running and accessible, you should receive a response. If you can'
 - At least 16 GB of CPU RAM
 - At least 200 GB of free storage space
 - Install libatlas-base-dev: `apt install libatlas-base-dev`
+- OPENAI_API_KEY and CHUTES_API_KEY needed for llm as a judge in `vali.env`
+
 
 ## Running with Docker
 1. Clone the repo and `cd` into it:
