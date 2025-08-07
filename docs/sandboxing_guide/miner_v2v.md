@@ -1,4 +1,4 @@
-#  Bittensor Voice-to-Voice & Voice-to-Text - Miner's Guide
+#  Bittensor Voice-to-Voice & Voice-to-Text - Miner's Guide for new competition-id = v2
 
 ## Overview
 Evaluation system runs the models in isolated Docker containers and scores them based on their performance on voice-to-voice (V2V) or voice-to-text (V2T) tasks. The primary evaluation uses VoiceBench for comprehensive assessment across 11 datasets with LLM-based quality scoring.

@@ -80,7 +80,7 @@ def update_reputations(session: Session, metagraph: bt.metagraph, all_model_scor
     for uid in uids:
         models_data = all_model_scores.get(str(uid), [])
         for model_data in models_data:
-            if model_data.get("competition_id") == "v1":
+            if model_data.get("competition_id") == "v2":
                 score = model_data.get("score", 0.0)
                 if score is not None:
                     scores_per_uid[uid] = score
