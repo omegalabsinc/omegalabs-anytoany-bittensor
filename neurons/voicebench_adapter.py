@@ -490,7 +490,6 @@ class VoiceBenchEvaluator:
     
     # All available VoiceBench datasets with their appropriate splits. which datasets to run.
     VOICEBENCH_DATASETS = {
-        #TODO: use only what are decided.
         # 'alpacaeval': ['test'],
         # 'alpacaeval_full': ['test'], 
         'commoneval': ['test'],

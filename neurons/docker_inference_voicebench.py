@@ -20,20 +20,11 @@ from pathlib import Path
 from neurons.docker_manager import DockerManager
 from evaluation.S2S.distance import S2SMetrics
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
-from constants import penalty_score
+from constants import penalty_score, VOICEBENCH_MAX_SAMPLES
 from utilities.compare_block_and_model import compare_block_and_model
 
 # VoiceBench integration
 from neurons.voicebench_adapter import run_voicebench_evaluation
-from constants_voicebench import (
-    VOICEBENCH_ENABLED,
-    DEFAULT_VOICEBENCH_WEIGHT,
-    DEFAULT_S2S_WEIGHT,
-    ENABLE_S2S_FALLBACK,
-    S2S_FALLBACK_WEIGHT,
-    VOICEBENCH_MAX_RETRIES,
-    VOICEBENCH_RETRY_DELAY
-)
 
 # Existing dataset import for fallback compatibility
 from neurons.docker_inference_v2v import (
@@ -180,9 +171,7 @@ def run_voicebench_scoring(
         bt.logging.info("Running comprehensive VoiceBench evaluation...")
         try:
             # Get max samples from environment or use default
-            # max_samples = os.environ.get('VOICEBENCH_MAX_SAMPLES')
-            max_samples = 5
-            max_samples = int(max_samples) if max_samples else None
+            max_samples = VOICEBENCH_MAX_SAMPLES
             
             voicebench_results = run_voicebench_evaluation(
                 container_url=container_url,
