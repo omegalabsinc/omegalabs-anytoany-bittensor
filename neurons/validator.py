@@ -307,14 +307,11 @@ class Validator:
         self.dendrite = bt.dendrite(wallet=self.wallet)
         self.metagraph: bt.metagraph = self.subtensor.metagraph(self.config.netuid)
         torch.backends.cudnn.benchmark = True
-        # api_root = (
-        #     # TODO: change to https://sn21-api.omegatron.ai for prod
-        #     "https://dev-sn21-api.omegatron.ai"
-        #     if self.config.subtensor.network == "test"
-        #     #else "https://sn21-api.omegatron.ai"
-        #     else "http://localhost:8003"
-        # )
-        api_root = "http://localhost:8003" #TODO: change to prod
+        api_root = (
+            "https://dev-sn21-api.omegatron.ai"
+            if self.config.subtensor.network == "test"
+            else "https://sn21-api.omegatron.ai"
+        )
         bt.logging.info(f"Using SN21 API: {api_root}")
         self.get_model_endpoint = f"{api_root}/get-model-to-score"
         self.score_model_endpoint = f"{api_root}/score-model"
@@ -1102,42 +1099,68 @@ class Validator:
                         start_response.raise_for_status()
                         start_response_json = start_response.json()
                         if not start_response_json.get("success", False):
-                            bt.logging.error(f"Failed to start scoring for {model_i_metadata}: {start_response_json.get('message', 'Unknown error')}")
-                            return
-                        is_scoring = True
-                        while is_scoring:
-                            time.sleep(15)
-                            scoring_response = requests.get(
-                                self.check_scoring_status_endpoint,
-                                auth=self.get_basic_auth(),
-                                timeout=30,
-                            )
-                            scoring_response.raise_for_status()
-                            scoring_response_json = scoring_response.json()
-                            is_scoring = scoring_response_json.get("status") == "scoring"
-                            score = scoring_response_json["score"]
-                            metric_scores = scoring_response_json["metric_scores"]
-                            metric_scores = {} if metric_scores is None else metric_scores
-                        bt.logging.info(f"Score for {model_i_metadata} is {score}, took {time.time() - start_time} seconds")
+                            error_msg = f"Failed to start scoring for {model_i_metadata}: {start_response_json.get('message', 'Unknown error')}"
+                            bt.logging.error(error_msg)
+                            score = 0
+                            metric_scores = {
+                                "error": error_msg
+                            }
+                        else:
+                            is_scoring = True
+                            while is_scoring:
+                                time.sleep(300)  # Wait for 5 minutes before checking scoring status
+                                scoring_response = requests.get(
+                                    self.check_scoring_status_endpoint,
+                                    auth=self.get_basic_auth(),
+                                    timeout=30,
+                                )
+                                scoring_response.raise_for_status()
+                                scoring_response_json = scoring_response.json()
+                                is_scoring = scoring_response_json.get("status") == "scoring"
+                                score = scoring_response_json["score"]
+                                metric_scores = scoring_response_json["metric_scores"]
+                                metric_scores = {} if metric_scores is None else metric_scores
+                                if not is_scoring and score is None:
+                                    error_msg = f"Scoring API failed. Error: {scoring_response_json.get('error', 'Unknown error')}"
+                                    bt.logging.error(error_msg)
+                                    score = 0
+                                    metric_scores = {
+                                        "error": error_msg
+                                    }
+
+                            bt.logging.info(f"Score for {model_i_metadata} is {score}, took {time.time() - start_time} seconds")
                     except Exception as e:
-                        bt.logging.error(
-                            f"Error in eval loop for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}: {e}. Setting score to 0. \n {traceback.format_exc()}"
-                        )
+                        error_msg = f"Error in eval loop for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}: {e}"
+                        bt.logging.error(f"{error_msg}. Setting score to 0. \n {traceback.format_exc()}")
+                        score = 0
+                        metric_scores = {
+                            "error": str(e),
+                            "traceback": traceback.format_exc()
+                        }
                     finally:
                         # After we are done with the model, release it.
                         self.model_tracker.release_model_metadata_for_miner_hotkey(hotkey, model_i_metadata)
                 else:
-                    bt.logging.info(
-                        f"Skipping UID {uid_i} ({hotkey}), submission is for a different competition ({model_i_metadata.id.competition_id} vs {competition_parameters.competition_id}). Setting score to 0."
-                    )
+                    error_msg = f"Skipping UID {uid_i} ({hotkey}), submission is for a different competition ({model_i_metadata.id.competition_id} vs {competition_parameters.competition_id})"
+                    bt.logging.info(f"{error_msg}. Setting score to 0.")
+                    score = 0
+                    metric_scores = {
+                        "error": error_msg
+                    }
             else:
-                bt.logging.info(
-                    f"Unable to load model for UID {uid_i} ({hotkey}) (perhaps a duplicate or metadata issue?). Setting score to 0."
-                )
-            if score is None:
-                bt.logging.error(f"Failed to get score for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}. Setting score to 0.")
+                error_msg = f"Unable to load model for UID {uid_i} ({hotkey}) (perhaps a duplicate or metadata issue?)"
+                bt.logging.info(f"{error_msg}. Setting score to 0.")
                 score = 0
-                metric_scores = {}
+                metric_scores = {
+                    "error": error_msg
+                }
+            if score is None:
+                error_msg = f"Failed to get score for UID {uid_i} ({hotkey}), model {model_i_metadata.id if model_i_metadata else 'Unknown'}"
+                bt.logging.error(f"{error_msg}. Setting score to 0.")
+                score = 0
+                metric_scores = {
+                    "error": error_msg
+                }
 
             scores_per_uid[uid_i] = score
             metric_scores_per_uid[uid_i] = metric_scores
@@ -1151,17 +1174,16 @@ class Validator:
         for uid, score in scores_per_uid.items():
             hotkey, model_metadata = uid_to_hotkey_and_model_metadata[uid]
             metric_scores = metric_scores_per_uid[uid]
-            if model_metadata is not None:
-                try:
-                    # Check if the model hash is in the tracker
-                    model_hash = ""
-                    if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
-                        model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
-                    if not self.config.offline:
-                        await self.post_model_score(hotkey, uid, model_metadata, model_hash, score, metric_scores)
-                except Exception as e:
-                    bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
-                    bt.logging.error(traceback.format_exc())
+            try:
+                # Check if the model hash is in the tracker
+                model_hash = ""
+                if hotkey in self.model_tracker.miner_hotkey_to_model_hash_dict:
+                    model_hash = self.model_tracker.miner_hotkey_to_model_hash_dict[hotkey]
+                if not self.config.offline:
+                    await self.post_model_score(hotkey, uid, model_metadata, model_hash, score, metric_scores)
+            except Exception as e:
+                bt.logging.error(f"Failed to post model score for uid: {uid}: {model_metadata} {e}")
+                bt.logging.error(traceback.format_exc())
 
         # Increment the number of completed run steps by 1
         self.run_step_count += 1
@@ -1416,8 +1438,8 @@ class Validator:
                         "miner_hotkey": miner_hotkey,
                         "miner_uid": miner_uid,
                         "model_metadata": {
-                            "id": model_metadata.id.to_compressed_str(),
-                            "block": model_metadata.block
+                            "id": model_metadata.id.to_compressed_str() if model_metadata is not None else None,
+                            "block": model_metadata.block if model_metadata is not None else None
                         },
                         "model_hash": model_hash,
                         "model_score": model_score,

@@ -76,4 +76,4 @@ BURN_UID = 111
 # Portion of the total weight routed to BURN_UID.
 BURN_RATE = 0.95
 #VoiceBench
-VOICEBENCH_MAX_SAMPLES=300
+VOICEBENCH_MAX_SAMPLES=100

@@ -169,29 +169,22 @@ def run_voicebench_scoring(
         # Run VoiceBench evaluation
         voicebench_score = 0.0
         bt.logging.info("Running comprehensive VoiceBench evaluation...")
-        try:
-            # Get max samples from environment or use default
-            max_samples = VOICEBENCH_MAX_SAMPLES
-            
-            voicebench_results = run_voicebench_evaluation(
-                container_url=container_url,
-                docker_manager=docker_manager,
-                datasets=None,  # Use all datasets
-                splits=None,    # Use dataset-specific splits
-                max_samples_per_dataset=max_samples
-            )
-            
-            voicebench_score = voicebench_results['voicebench_scores'].get('overall', 0.0)
-            results['voicebench_scores'] = voicebench_results['voicebench_scores']
-            results['evaluation_status'] = voicebench_results['evaluation_status']
-            
-            bt.logging.info(f"VoiceBench evaluation completed. Score: {voicebench_score:.3f}")
-            
-        except Exception as e:
-            bt.logging.error(f"VoiceBench evaluation failed: {e}")
-            bt.logging.error(traceback.format_exc())
-            results['error'] = str(e)
-            voicebench_score = 0.0
+        # Get max samples from environment or use default
+        max_samples = VOICEBENCH_MAX_SAMPLES
+        
+        voicebench_results = run_voicebench_evaluation(
+            container_url=container_url,
+            docker_manager=docker_manager,
+            datasets=None,  # Use all datasets
+            splits=None,    # Use dataset-specific splits
+            max_samples_per_dataset=max_samples
+        )
+        
+        voicebench_score = voicebench_results['voicebench_scores'].get('overall', 0.0)
+        results['voicebench_scores'] = voicebench_results['voicebench_scores']
+        results['evaluation_status'] = voicebench_results['evaluation_status']
+        
+        bt.logging.info(f"VoiceBench evaluation completed. Score: {voicebench_score:.3f}")
         
         results['combined_score'] = voicebench_score
         
@@ -202,13 +195,7 @@ def run_voicebench_scoring(
     except Exception as e:
         bt.logging.error(f"Error in hybrid evaluation for {hf_repo_id}: {e}")
         bt.logging.error(traceback.format_exc())
-        return {
-            "combined_score": penalty_score,
-            "error": str(e),
-            "hf_repo_id": hf_repo_id,
-            "hotkey": hotkey,
-            "block": block
-        }
+        raise e
         
     finally:
         # Cleanup
