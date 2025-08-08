@@ -7,12 +7,13 @@ import traceback
 import multiprocessing
 import time
 import docker
-
+import json
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-GPU_MEM_GB_REQD = 39
+GPU_MEM_GB_REQD = 39 # change to 3 for testing
+
 
 import bittensor as bt
 from pydantic import BaseModel, computed_field, Field
@@ -22,6 +23,7 @@ from model.model_tracker import ModelTracker
 from constants import MODEL_EVAL_TIMEOUT, NUM_CACHED_MODELS, SUBNET_UID
 from neurons.docker_inference_v2v import run_v2v_scoring
 from neurons.docker_model_scoring import run_o1_scoring
+from neurons.docker_inference_voicebench import run_voicebench_scoring
 from utilities.temp_dir_cache import TempDirCache
 from utilities.gpu import get_gpu_memory
 from utilities.git_utils import is_git_latest
@@ -67,6 +69,26 @@ def get_scoring_config():
     parser = get_argparse()
     return bt.config(parser)
 
+def format_voicebench_output(scores: dict, status: dict, metadata: dict) -> dict:
+    """
+    Format VoiceBench output according to the required structure.
+    
+    Args:
+        scores: Dictionary with dataset scores and 'overall' key
+        status: Dictionary with evaluation status for each dataset
+        metadata: Dictionary with evaluation metadata
+        
+    Returns:
+        Formatted output dictionary
+    """
+    return {
+        'raw_scores': {k: v for k, v in scores.items() if k != 'overall'},
+        'combined_score': scores.get('overall', 0.0),
+        'evaluation_status': status,
+        'metadata': metadata
+    }
+
+
 class ScoringManager:
     def __init__(self, config):
         self.config = config
@@ -97,6 +119,7 @@ class ScoringManager:
             subtensor = bt.subtensor(network=self.config.subtensor.network)
             metagraph: bt.metagraph = subtensor.metagraph(self.config.netuid)
             self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
+            # self.uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
 
         # init wandb
         self.wandb_run_start = None
@@ -155,22 +178,29 @@ class ScoringManager:
     def _score_model(self, inputs: ScoreModelInputs):
         """ Actual model scoring logic """
         start_time = time.time()
-        fn_to_call = run_o1_scoring if inputs.competition_id == "o1" else run_v2v_scoring
-        result_dict = fn_to_call(
+
+        result_dict = run_voicebench_scoring(
             hf_repo_id=inputs.hf_repo_id,
             hotkey=inputs.hotkey,
             block=inputs.block,
             model_tracker=self.model_tracker,
             local_dir=self.temp_dir_cache.get_temp_dir(inputs.hf_repo_id),
         )
-        if result_dict is not None:
-            score = result_dict['combined_score']
-            score = float(score)
-        else:
-            score = None
-        bt.logging.info(f"Score for {inputs} is {score}, took {time.time() - start_time} seconds")
-        return result_dict
-    
+        
+        total_time_seconds = time.time() - start_time
+        
+        result_dict['total_time_seconds'] = total_time_seconds
+        
+        bt.logging.info(f"RESULT dict: \n{json.dumps(result_dict)}")
+        # The result_dict should already contain only native Python types
+        # based on the scoring flow, but let's validate to be safe
+        serializable_result = result_dict
+                
+        bt.logging.info(f"Score for {inputs} is completed.")
+        
+        return serializable_result
+
+
     def kill_docker_images(self):
         """
         Kill and clean up docker images that have 'none' as image name or 'miner_' in the name
@@ -287,10 +317,18 @@ if __name__ == "__main__":
         block=config.block
     )
     scoring_manager.current_task = ModelScoreTaskData(inputs=scoring_inputs)
-    score = scoring_manager._score_model(scoring_inputs)
+    result = scoring_manager._score_model(scoring_inputs)
     current_task = scoring_manager.get_current_task()
-    current_task.score = score
-    current_task.status = ModelScoreStatus.COMPLETED
+    if result:
+        current_task.score = result.get('combined_score')
+        current_task.metric_scores = result
+    current_task.status = ModelScoreStatus.COMPLETED if result else ModelScoreStatus.FAILED
     print(current_task)
     with open("scoring_task_result.json", "w") as f:
         f.write(current_task.model_dump_json(indent=4))
+    
+    # Also save the formatted result separately for inspection
+    if result:
+        
+        with open("output/voicebench_formatted_result.json", "w") as f:
+            json.dump(result, f, indent=4)

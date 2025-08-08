@@ -28,11 +28,12 @@ ROOT_DIR = Path(__file__).parent.parent
 MAX_HUGGING_FACE_BYTES: int = 18 * 1024 * 1024 * 1024
 O1_MODEL_ID = "o1"
 V1_MODEL_ID = "v1"
+V2_MODEL_ID = "v2"
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
         reward_percentage=1.0,
-        competition_id=V1_MODEL_ID,
+        competition_id=V2_MODEL_ID,
     ),
 ]
 ORIGINAL_COMPETITION_ID = O1_MODEL_ID
@@ -59,8 +60,9 @@ deviation_percent = 0.1
 # Model scoring parameters.
 # ---------------------------------
 
-MIN_AGE = 4 * 60 * 60  # 4 hours
-MODEL_EVAL_TIMEOUT = 60 * 45  # 45 minutes
+# MIN_AGE = 4 * 60 * 60  # 4 hours
+MIN_AGE = 0  # 4 hours #TODO: Remove for prod
+MODEL_EVAL_TIMEOUT = 60 * 60 * 5  # 5 hours
 MIN_NON_ZERO_SCORES = 3  # Minimum number of non-zero scores required for weight assignment
 NUM_CACHED_MODELS = 6
 MAX_DS_FILES = 8
@@ -73,3 +75,5 @@ PLAYERS_IN_ABOVE_BASELINE = 3
 BURN_UID = 111
 # Portion of the total weight routed to BURN_UID.
 BURN_RATE = 0.95
+#VoiceBench
+VOICEBENCH_MAX_SAMPLES=100

@@ -264,9 +264,13 @@ def calculate_stake_weighted_scores_cached(recent_model_scores, cached_metagraph
             total_stake = sum(score['stake'] for score in final_scores)
             weighted_sum = sum(score['score'] * score['stake'] for score in final_scores)
             
+            # print(f"total_stake: {total_stake}")
+            # print(f"weighted_sum: {weighted_sum}")
+
             if total_stake > 0:
                 avg_score = weighted_sum / total_stake
             else:
+                print(f"All scores are zero for model {scores[0]['hotkey']}. Model may be non-functional.")
                 avg_score = None
                 
             unique_validators = len(set(score['scorer_hotkey'] for score in final_scores))
@@ -440,7 +444,7 @@ async def main():
     subtensor = bittensor.subtensor(network=NETWORK)
     metagraph: bittensor.metagraph = subtensor.metagraph(NETUID)
 
-    port = 8000 if IS_PROD else 8001
+    port = 8000 if IS_PROD else 8003
     
     # Initialize database at application startup
     init_database()
@@ -833,7 +837,7 @@ async def main():
                 detail=f"Valid hotkey required.",
             )
         # get uid of bittensor validator
-        uid = metagraph.hotkeys.index(hotkey)
+        uid = metagraph.hotkeys.index(hotkey) 
 
         try:
             all_model_scores = dict()
@@ -958,7 +962,7 @@ async def main():
                 detail=f"Valid hotkey required.",
             )
         # get uid of bittensor validator
-        uid = metagraph.hotkeys.index(hotkey)
+        uid = metagraph.hotkeys.index(hotkey) 
         print(f"UID:{uid} hit the get_reputations endpoint")
         try:
             reputation_map = reputation_store.get_all_reputations()

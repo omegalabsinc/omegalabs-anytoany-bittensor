@@ -8,7 +8,7 @@ Prerequisites:
    2. load_model_dir points to a directory containing a previously trained model, with relevant ckpt file named "checkpoint.pth".
    3. Your miner is registered
 """
-
+import traceback
 import asyncio
 import os
 import argparse
@@ -27,6 +27,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# enable bt.logging
+import logging
+logging.basicConfig(level=logging.INFO)
 
 def get_config():
     # Initialize an argument parser
@@ -179,6 +182,7 @@ async def main(config: bt.config):
         except Exception as e:
             bt.logging.error(f"Failed to advertise model on the chain: {e}")
             bt.logging.error("Retrying in 120 seconds...")
+            traceback.print_exc()
             time.sleep(120)
 
 

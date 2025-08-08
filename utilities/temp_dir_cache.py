@@ -4,6 +4,12 @@ from tempfile import TemporaryDirectory
 from collections import OrderedDict
 
 def clean_directory(path):
+    # Create directory if it doesn't exist
+    if not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+        return
+    
+    # Clean existing directory
     for item in os.listdir(path):
         item_path = os.path.join(path, item)
         if os.path.isfile(item_path) and '.keep' not in item:
