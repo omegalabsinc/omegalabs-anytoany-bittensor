@@ -7,12 +7,13 @@ import traceback
 import multiprocessing
 import time
 import docker
-
+import json
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-GPU_MEM_GB_REQD = 3 # TODO: change to 39 for prod
+GPU_MEM_GB_REQD = 39 # change to 3 for testing
+
 
 import bittensor as bt
 from pydantic import BaseModel, computed_field, Field
@@ -117,8 +118,8 @@ class ScoringManager:
         else:
             subtensor = bt.subtensor(network=self.config.subtensor.network)
             metagraph: bt.metagraph = subtensor.metagraph(self.config.netuid)
-            # self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
-            self.uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
+            self.uid = metagraph.hotkeys.index(self.config.vali_hotkey)
+            # self.uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
 
         # init wandb
         self.wandb_run_start = None
@@ -190,7 +191,7 @@ class ScoringManager:
         
         result_dict['total_time_seconds'] = total_time_seconds
         
-        print(f"RESULT dict: \n{result_dict}")
+        bt.logging.info(f"RESULT dict: \n{json.dumps(result_dict)}")
         # The result_dict should already contain only native Python types
         # based on the scoring flow, but let's validate to be safe
         serializable_result = result_dict
@@ -328,6 +329,6 @@ if __name__ == "__main__":
     
     # Also save the formatted result separately for inspection
     if result:
-        import json
+        
         with open("output/voicebench_formatted_result.json", "w") as f:
             json.dump(result, f, indent=4)

@@ -322,7 +322,7 @@ class DockerManager:
                 ],
                 cap_drop=['ALL'],
                 mem_limit=self.get_memory_limit(),
-                ports={'8010/tcp': ('0.0.0.0', host_port)},
+                ports={'8000/tcp': ('0.0.0.0', host_port)},
                 environment={
                     'CUDA_VISIBLE_DEVICES': str(gpu_id) if gpu_id is not None else "all",
                     'PYTHONUNBUFFERED': '1',
@@ -587,10 +587,10 @@ class DockerManager:
         # Get the actual port mapping from container
         container.reload()
         ports = container.attrs['NetworkSettings']['Ports']
-        if not ports or '8010/tcp' not in ports:
+        if not ports or '8000/tcp' not in ports:
             raise RuntimeError("Container port mapping not found")
             
-        host_port = ports['8010/tcp'][0]['HostPort']
+        host_port = ports['8000/tcp'][0]['HostPort']
         # Try multiple possible health check endpoints
         health_check_urls = [
             f"http://localhost:{host_port}/api/v1/health",

@@ -110,7 +110,7 @@ async def main(config: bt.config):
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
     bt.logging.debug("Subtensor network: ", subtensor.network)
-    metagraph: bt.metagraph = subtensor.metagraph(96)
+    metagraph: bt.metagraph = subtensor.metagraph(config.netuid)
 
     # Make sure we're registered and have a HuggingFace token.
     utils.assert_registered(wallet, metagraph)

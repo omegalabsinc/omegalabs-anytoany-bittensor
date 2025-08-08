@@ -18,7 +18,7 @@ import bittensor as bt
 
 from datasets import load_dataset, Audio
 from neurons.docker_manager import DockerManager
-from neurons.miner_model_assistant import MinerModelAssistant, create_miner_assistant
+from neurons.miner_model_assistant import MinerModelAssistant
 from neurons.llm_judge import evaluate_responses_with_llm
 from neurons.voicebench_evaluators import (
     OpenEvaluator, MCQEvaluator, IFEvaluator, 

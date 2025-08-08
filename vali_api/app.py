@@ -264,8 +264,8 @@ def calculate_stake_weighted_scores_cached(recent_model_scores, cached_metagraph
             total_stake = sum(score['stake'] for score in final_scores)
             weighted_sum = sum(score['score'] * score['stake'] for score in final_scores)
             
-            print(f"total_stake: {total_stake}")
-            print(f"weighted_sum: {weighted_sum}")
+            # print(f"total_stake: {total_stake}")
+            # print(f"weighted_sum: {weighted_sum}")
 
             if total_stake > 0:
                 avg_score = weighted_sum / total_stake
@@ -830,14 +830,14 @@ async def main():
     async def get_all_model_scores(
         hotkey: Annotated[str, Depends(get_hotkey)] = None,
     ):
-        # if not authenticate_with_bittensor(hotkey, metagraph):
-        #     print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail=f"Valid hotkey required.",
-        #     )
+        if not authenticate_with_bittensor(hotkey, metagraph):
+            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Valid hotkey required.",
+            )
         # get uid of bittensor validator
-        uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
+        uid = metagraph.hotkeys.index(hotkey) 
 
         try:
             all_model_scores = dict()
@@ -928,15 +928,14 @@ async def main():
         """
         Returns the most recent baseline score for the specified competition_id.
         """
-        # if not authenticate_with_bittensor(hotkey, metagraph):
-        #     print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail=f"Valid hotkey required.",
-        #     )
+        if not authenticate_with_bittensor(hotkey, metagraph):
+            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Valid hotkey required.",
+            )
         # get uid of bittensor validator
-        # uid = metagraph.hotkeys.index(hotkey)
-        uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
+        uid = metagraph.hotkeys.index(hotkey)
         print(f"UID:{uid} hit the get_baseline endpoint")
 
         try:
@@ -956,8 +955,14 @@ async def main():
         """
         Returns a mapping of hotkey to its current reputation for all miners.
         """
-        uid = 96 # TODO: change to metagraph.hotkeys.index(hotkey) for prod
-       
+        if not authenticate_with_bittensor(hotkey, metagraph):
+            print(f"Valid hotkey required, returning 403. hotkey: {hotkey}")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Valid hotkey required.",
+            )
+        # get uid of bittensor validator
+        uid = metagraph.hotkeys.index(hotkey) 
         print(f"UID:{uid} hit the get_reputations endpoint")
         try:
             reputation_map = reputation_store.get_all_reputations()

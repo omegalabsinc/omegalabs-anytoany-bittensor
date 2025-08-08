@@ -35,7 +35,7 @@ class MinerModelAssistant(VoiceAssistant):
     by calling their HTTP APIs directly.
     """
     
-    def __init__(self, api_url="http://localhost:8010/api/v1/v2t", timeout=600):
+    def __init__(self, api_url="http://localhost:8000/api/v1/v2t", timeout=600):
         """
         Initialize the miner model assistant.
         
@@ -148,7 +148,7 @@ class DynamicMinerModelAssistant(MinerModelAssistant):
     API endpoints and formats.
     """
     
-    def __init__(self, base_url="http://localhost", port=8010, endpoint="/api/v1/v2t", timeout=600):
+    def __init__(self, base_url="http://localhost", port=8000, endpoint="/api/v1/v2t", timeout=600):
         """
         Initialize with flexible URL construction.
         
@@ -191,7 +191,7 @@ def create_miner_assistant(model_config: Dict[str, Any]) -> MinerModelAssistant:
         # Component-based URL construction
         return DynamicMinerModelAssistant(
             base_url=model_config.get('base_url', 'http://localhost'),
-            port=model_config.get('port', 8010),
+            port=model_config.get('port', 8000),
             endpoint=model_config.get('endpoint', '/api/v1/v2t'),
             timeout=model_config.get('timeout', 600)
         )
@@ -200,12 +200,12 @@ def create_miner_assistant(model_config: Dict[str, Any]) -> MinerModelAssistant:
 # Example usage configurations
 EXAMPLE_CONFIGS = {
     'landcruiser_model': {
-        'api_url': 'http://localhost:8010/api/v1/v2t',
+        'api_url': 'http://localhost:8000/api/v1/v2t',
         'timeout': 600
     },
     'generic_miner': {
         'base_url': 'http://localhost',
-        'port': 8010,
+        'port': 8000,
         'endpoint': '/api/v1/inference',
         'timeout': 300
     }
