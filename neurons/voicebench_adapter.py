@@ -83,8 +83,10 @@ def evaluate_dataset_with_proper_evaluator(
         'evaluation_status': 'pending',
         'evaluation_error': None,
         'evaluation_details': None,
+        'evaluation_time': 0.0,
         'score': 0.0
     }
+    start = time.perf_counter()
     
     # Check for dataset-level error
     if 'error' in dataset_results:
@@ -102,32 +104,27 @@ def evaluate_dataset_with_proper_evaluator(
     dataset_base = dataset_name.split('_')[0]  # Handle dataset_split format
     evaluator_type = DATASET_EVALUATOR_MAP.get(dataset_base, 'open')
     status['evaluator_used'] = evaluator_type
-    
+    bt.logging.info(f"Using {evaluator_type} evaluator for {dataset_name}")
     try:
         # Prepare data for evaluation
         eval_data = []
         
         if evaluator_type == 'open':
-            # OpenEvaluator needs LLM scores
-            if dataset_base in NEEDS_LLM_JUDGE:
-                # First get LLM scores
-                #TODO: Validate if two step process is being done properly. api_judge -> evaluation.
-                bt.logging.info(f"Getting LLM scores for {dataset_name}")
-                llm_responses = evaluate_responses_with_llm(responses)
-                
-                
-                for i, response in enumerate(llm_responses):
-                    # Extract the llm_score from the response dict
-                    # # Convert score to string format expected by OpenEvaluator
-                    scores = response.get('score', ['0'])
-                    eval_data.append({
-                        'score':  scores  # OpenEvaluator expects list of score strings
-                    })
-            else:
-                # Shouldn't happen but fallback
-                for response in responses:
-                    eval_data.append({'score': ['0']})
+            # First get LLM scores
+            #TODO: Need some status of llm api calls. how many failed? which model failed?
+            bt.logging.info(f"Getting LLM scores for {dataset_name}")
+            llm_responses = evaluate_responses_with_llm(responses)
+            
+            
+            for i, response in enumerate(llm_responses):
+                # Extract the llm_score from the response dict
+                # # Convert score to string format expected by OpenEvaluator
+                scores = response.get('score', ['0'])
+                eval_data.append({
+                    'score':  scores  # OpenEvaluator expects list of score strings
+                })
                     
+            bt.logging.info(f"Got LLM scores for {dataset_name} for {len(llm_responses)} responses")
         elif evaluator_type == 'mcq':
             # MCQEvaluator needs response and reference
             for response in responses:
@@ -213,7 +210,8 @@ def evaluate_dataset_with_proper_evaluator(
         status['score'] = score
         status['evaluation_status'] = 'completed'
         status['evaluation_details'] = eval_result
-        
+        status['evaluation_time'] = time.perf_counter() - start
+
         bt.logging.info(f"Dataset {dataset_name} evaluated with {evaluator_type}: score={score:.3f}")
         
         return score, status
@@ -415,8 +413,6 @@ class DockerModelAdapter:
         Returns:
             Text response from the model
         """
-        bt.logging.info("DockerModelAdapter.generate_audio called")
-        bt.logging.info(f"Received type: {type(audio_input)}")
         
         # Validate input
         if not isinstance(audio_input, dict):
@@ -972,8 +968,7 @@ def run_voicebench_evaluation(
     """
     evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
     
-    bt.logging.info("Starting comprehensive VoiceBench evaluation across all datasets...")
-    
+    bt.logging.info("Starting VoiceBench inference across all datasets...")
     # Run model inference on all VoiceBench datasets
     results = evaluator.inference_model(
         container_url=container_url,

@@ -93,10 +93,10 @@ def call_llm_with_fallback(messages: List[Dict[str, str]], max_tokens: int = 10,
         Exception: If both clients fail after all retries
     """
     def _try_api_call(client, model_name, client_name, retries=max_retries):
-        """Try API call with exponential backoff."""
+        """Try API call with exponential backoff. Only retry on rate limits."""
         for attempt in range(retries):
             try:
-                bt.logging.debug(f"Attempting {client_name} API call (attempt {attempt + 1}/{retries})")
+                # bt.logging.debug(f"Attempting {client_name} API call (attempt {attempt + 1}/{retries})")
                 
                 response = client.chat.completions.create(
                     model=model_name,
@@ -111,7 +111,7 @@ def call_llm_with_fallback(messages: List[Dict[str, str]], max_tokens: int = 10,
                 if content is None or content.strip() == "":
                     raise Exception(f"Empty response from {client_name} API")
                     
-                bt.logging.debug(f"Successfully got response from {client_name} API")
+                # bt.logging.debug(f"Successfully got response from {client_name} API")
                 return content.strip(), client_name
                 
             except Exception as e:
@@ -131,21 +131,21 @@ def call_llm_with_fallback(messages: List[Dict[str, str]], max_tokens: int = 10,
                     if is_rate_limit:
                         wait_time = max(wait_time, 5)  # Minimum 5s for rate limits
                     
-                    bt.logging.info(f"Retrying {client_name} API in {wait_time} seconds...")
+                    # bt.logging.info(f"Retrying {client_name} API in {wait_time} seconds...")
                     time.sleep(wait_time)
                 else:
                     # Last attempt or non-retryable error
                     raise e
     
     all_errors = []
-    
+    st=time.perf_counter()
     # Try Chutes API first with retries
     try:
         return _try_api_call(chutes_client, CHUTES_MODEL, "Chutes")
     except Exception as e:
-        bt.logging.warning(f"Chutes API failed after all retries: {e}")
         all_errors.append(f"Chutes (all retries): {e}")
-    
+        bt.logging.warning(f"Chutes API failed, time wasted:{time.perf_counter()-st} second. Errors: {all_errors}")
+
     # Fallback to OpenAI API with retries
     try:
         bt.logging.info("Falling back to OpenAI API")
@@ -166,25 +166,26 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
         item: Dictionary containing 'prompt', 'response', and optionally 'reference'
         
     Returns:
-        Item with added 'llm_score' field
+        Item with added 'score' field
     """
+    #TODO: Refactor this, unnecessary calculation here. 
     try:
         # Choose prompt based on whether reference answer exists
         if "reference" in item and item["reference"]:
-            print(f"[REF] Using QA prompt for {item['prompt']}")
+            # print(f"[REF] Using QA prompt for {item['prompt']}")
             prompt = META_PROMPT_QA.format(
                 prompt=item['prompt'], 
                 reference=item['reference'], 
                 response=item['response']
             )
         else:
-            print(f"[Ref] Using OPEN prompt for {item['prompt']}")
+            # print(f"[Ref] Using OPEN prompt for {item['prompt']}")
             prompt = META_PROMPT_OPEN.format(
                 prompt=item['prompt'], 
                 response=item['response']
             )
         
-        bt.logging.debug(f"Sending LLM evaluation request for prompt: {item['prompt'][:50]}...")
+        # bt.logging.debug(f"Sending LLM evaluation request for prompt: {item['prompt'][:50]}...")
         
         # Call LLM API with fallback mechanism
         messages = [
@@ -253,12 +254,12 @@ def evaluate_responses_with_llm(responses: List[Dict[str, Any]]) -> List[Dict[st
     Returns:
         List of responses with LLM scores added
     """
-    bt.logging.info(f"Starting LLM evaluation of {len(responses)} responses using {CHUTES_MODEL}")
+    # bt.logging.info(f"Starting LLM evaluation of {len(responses)} responses using {CHUTES_MODEL}")
     
     evaluated_responses = []
     
     for i, response in enumerate(responses):
-        bt.logging.debug(f"Evaluating response {i+1}/{len(responses)}")
+        # bt.logging.debug(f"LLM judge response {i+1}/{len(responses)}")
         
         # Skip if there's no valid response text
         if not response.get('response', '').strip():
@@ -272,10 +273,10 @@ def evaluate_responses_with_llm(responses: List[Dict[str, Any]]) -> List[Dict[st
         evaluated_responses.append(evaluated_response)
     
     # Calculate average LLM score
-    valid_scores = [r['llm_score'] for r in evaluated_responses if 'llm_score' in r and 'llm_error' not in r]
-    avg_llm_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
+    # valid_scores = [r['llm_score'] for r in evaluated_responses if 'llm_score' in r and 'llm_error' not in r]
+    # avg_llm_score = sum(valid_scores) / len(valid_scores) if valid_scores else 0.0
     
-    bt.logging.info(f"LLM evaluation completed. Average score: {avg_llm_score:.3f}")
+    # bt.logging.info(f"LLM judge inference completed for {len(evaluated_responses)} responses")
     
     return evaluated_responses
 
