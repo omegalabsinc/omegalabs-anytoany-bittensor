@@ -14,6 +14,7 @@ Hello validator, welcome to SN21. We have a 2-node validator system:
 - At least 40 GB of CPU RAM
 - At least 300 GB of free storage space
 - Install libatlas-base-dev: `apt install libatlas-base-dev`
+- Please install git lfs: `git lfs install`
 
 ## Running with PM2
 1. Clone the repo and `cd` into it:
@@ -52,6 +53,7 @@ If the API is running and accessible, you should receive a response. If you can'
 - At least 16 GB of CPU RAM
 - At least 200 GB of free storage space
 - Install libatlas-base-dev: `apt install libatlas-base-dev`
+- Install mysql client `sudo apt update && sudo apt install -y pkg-config default-libmysqlclient-dev build-essential`
 - OPENAI_API_KEY and CHUTES_API_KEY needed for llm as a judge in `vali.env`
 
 
