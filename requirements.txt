@@ -26,7 +26,7 @@ PyMySQL==1.1.1
 absl-py
 langdetect
 loguru>=0.7.2
-nltk
+nltk>=3.8
 immutabledict
 
 # For numerical operations
