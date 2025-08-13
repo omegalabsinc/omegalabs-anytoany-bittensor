@@ -13,6 +13,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import bittensor as bt
+import random
 
 # Remove VoiceBench dependency - everything is now in neurons/
 
@@ -71,7 +72,8 @@ def evaluate_dataset_with_proper_evaluator(
                 'evaluation_status': 'pending',
                 'evaluation_error': None,
                 'evaluation_details': None,
-                'score': 0.0
+                'score': 0.0,
+                'sample_details': []  # NEW: List of per-sample details
             }
     """
     status = {
@@ -84,8 +86,10 @@ def evaluate_dataset_with_proper_evaluator(
         'evaluation_error': None,
         'evaluation_details': None,
         'evaluation_time': 0.0,
-        'score': 0.0
+        'score': 0.0,
+        'sample_details': []  # NEW: Initialize empty list for sample details
     }
+    
     start = time.perf_counter()
     
     # Check for dataset-level error
@@ -115,7 +119,7 @@ def evaluate_dataset_with_proper_evaluator(
             bt.logging.info(f"Getting LLM scores for {dataset_name}")
             llm_responses = evaluate_responses_with_llm(responses)
             
-            
+            # Build sample details for open evaluator datasets
             for i, response in enumerate(llm_responses):
                 # Extract the llm_score from the response dict
                 # # Convert score to string format expected by OpenEvaluator
@@ -123,6 +127,16 @@ def evaluate_dataset_with_proper_evaluator(
                 eval_data.append({
                     'score':  scores  # OpenEvaluator expects list of score strings
                 })
+                
+                # Build sample detail
+                sample_detail = {
+                    'hf_index': response.get('hf_index', i),
+                    'miner_model_response': response.get('response', ''),
+                    'llm_judge_response': response.get('llm_raw_response', ''),
+                    'llm_scores': scores if isinstance(scores, list) else [scores],
+                    'inference_time': response.get('inference_time', 0.0)
+                }
+                status['sample_details'].append(sample_detail)
                     
             bt.logging.info(f"Got LLM scores for {dataset_name} for {len(llm_responses)} responses")
         elif evaluator_type == 'mcq':
@@ -143,6 +157,16 @@ def evaluate_dataset_with_proper_evaluator(
                     'response': response.get('response', ''),
                     'kwargs': response.get('kwargs', [])
                 })
+                
+                # Build sample detail for IFEval
+                sample_detail = {
+                    'hf_index': response.get('hf_index', 0),
+                    'miner_model_response': response.get('response', ''),
+                    'llm_judge_response': '',  # IFEval doesn't use LLM judge
+                    'llm_scores': [],  # No LLM scores for IFEval
+                    'inference_time': response.get('inference_time', 0.0)
+                }
+                status['sample_details'].append(sample_detail)
                 
         elif evaluator_type == 'bbh':
             # BBHEvaluator needs id and reference
@@ -168,6 +192,17 @@ def evaluate_dataset_with_proper_evaluator(
                 eval_data.append({
                     'response': response.get('response', '')
                 })
+                
+                # Build sample detail for Harm evaluator (advbench)
+                # Note: We'll add the per-sample harm score after evaluation
+                sample_detail = {
+                    'hf_index': response.get('hf_index', 0),
+                    'miner_model_response': response.get('response', ''),
+                    'llm_judge_response': '',  # Harm doesn't use LLM judge
+                    'llm_scores': [],  # Will be populated with harm score after evaluation
+                    'inference_time': response.get('inference_time', 0.0)
+                }
+                status['sample_details'].append(sample_detail)
         
         # Create and run evaluator
         if evaluator_type == 'open':
@@ -187,6 +222,14 @@ def evaluate_dataset_with_proper_evaluator(
         # Evaluate
         eval_result = evaluator.evaluate(eval_data)
         
+        # Store per-sample scores for harm evaluator
+        if evaluator_type == 'harm' and 'per_sample_scores' in eval_result:
+            per_sample_scores = eval_result['per_sample_scores']
+            for i, score in enumerate(per_sample_scores):
+                # Store as 1.0 for safe/refused, 0.0 for unsafe
+                status['sample_details'][i]['llm_scores'] = [float(score)]
+            eval_result.pop('per_sample_scores', None)
+
         # Extract score based on evaluator output format
         if 'gpt' in eval_result:
             # OpenEvaluator returns 1-5, normalize to 0-1
@@ -207,6 +250,10 @@ def evaluate_dataset_with_proper_evaluator(
             bt.logging.warning(f"Unknown evaluation result format: {eval_result}")
             score = 0.0
         
+        # limit the sample_details to any random 10 samples
+        if len(status['sample_details']) > 10:
+            status['sample_details'] = random.sample(status['sample_details'], 10)
+
         status['score'] = score
         status['evaluation_status'] = 'completed'
         status['evaluation_details'] = eval_result
@@ -584,14 +631,18 @@ class VoiceBenchEvaluator:
                     dataset = load_dataset('hlt-lab/voicebench', dataset_name, split=split)
                     dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
                     
-                    # Apply sample limit if configured
+                    # Apply sample limit if configured and track indices
+                    dataset_indices = None
                     if self.max_samples_per_dataset and len(dataset) > self.max_samples_per_dataset:
-                        dataset = dataset.select(range(self.max_samples_per_dataset))
+                        dataset_indices = list(range(self.max_samples_per_dataset))
+                        dataset = dataset.select(dataset_indices)
                         bt.logging.info(f"Limited {dataset_name}_{split} to {self.max_samples_per_dataset} samples")
+                    else:
+                        dataset_indices = list(range(len(dataset)))
                     
-                    # Run Inference
+                    # Run Inference with indices
                     dataset_results = self._inference_dataset(
-                        adapter, dataset, dataset_name, split, modality
+                        adapter, dataset, dataset_name, split, modality, dataset_indices
                     )
                     
                     results[f"{dataset_name}_{split}"] = dataset_results
@@ -639,14 +690,18 @@ class VoiceBenchEvaluator:
                     dataset = load_dataset('hlt-lab/voicebench', dataset_name, split=split)
                     dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
                     
-                    # Apply sample limit if configured
+                    # Apply sample limit if configured and track indices
+                    dataset_indices = None
                     if self.max_samples_per_dataset and len(dataset) > self.max_samples_per_dataset:
-                        dataset = dataset.select(range(self.max_samples_per_dataset))
+                        dataset_indices = list(range(self.max_samples_per_dataset))
+                        dataset = dataset.select(dataset_indices)
                         bt.logging.info(f"Limited {dataset_name}_{split} to {self.max_samples_per_dataset} samples")
+                    else:
+                        dataset_indices = list(range(len(dataset)))
 
-                    # Run inference
+                    # Run inference with indices
                     dataset_results = self._inference_dataset(
-                        model_adapter, dataset, dataset_name, split, modality
+                        model_adapter, dataset, dataset_name, split, modality, dataset_indices
                     )
                     
                     results[f"{dataset_name}_{split}"] = dataset_results
@@ -663,7 +718,8 @@ class VoiceBenchEvaluator:
         dataset,
         dataset_name: str,
         split: str,
-        modality: str
+        modality: str,
+        dataset_indices: List[int] = None
     ) -> Dict[str, Any]:
         """
         This is inference on Miner model.
@@ -682,9 +738,14 @@ class VoiceBenchEvaluator:
         
         # Generate responses with timeout and retry logic
         for i, item in enumerate(dataset):
+            # Get the original HuggingFace dataset index
+            hf_index = dataset_indices[i] if dataset_indices else i
+            
             max_retries = 2
             retry_delay = 1
-            bt.logging.info(f"Processing item {i+1}/{len(dataset)}")
+            
+            if i//50:
+                bt.logging.info(f"Processing item {i+1}/{len(dataset)} (HF index: {hf_index})")
             
             for attempt in range(max_retries + 1):
                 try:
@@ -730,6 +791,7 @@ class VoiceBenchEvaluator:
                     inference_time = time.time() - start_time
                     
                     responses.append({
+                        'hf_index': hf_index,  # Add HuggingFace dataset index
                         'prompt': item.get('prompt', ''),
                         'response': response,
                         'reference': item.get('output', ''),
@@ -751,6 +813,7 @@ class VoiceBenchEvaluator:
                     else:
                         # Final attempt failed
                         responses.append({
+                            'hf_index': hf_index,  # Add HuggingFace dataset index
                             'prompt': item.get('prompt', ''),
                             'response': '',
                             'reference': item.get('output', ''),
@@ -989,6 +1052,7 @@ def run_voicebench_evaluation(
                 'responses': [
                         # in case of successful response
                         {
+                            'hf_index':
                             'prompt': item.get('prompt', ''),
                             'response': response,
                             'reference': item.get('output', ''),
@@ -997,6 +1061,7 @@ def run_voicebench_evaluation(
                         }
                         # In case of error
                         { 
+                            'hf_index':
                             'prompt': prompt,
                             'response': model_response,
                             'reference': item.get('output', ''), # Reference output in dataset
@@ -1052,5 +1117,6 @@ def run_voicebench_evaluation(
     
     return {
         'voicebench_scores': scores,
-        'evaluation_status': status.get('overall', {})
+        'evaluation_status': status.get('overall', {}),
+        'evaluation_details': status  # NEW: Full status dict with sample_details for each dataset
     }

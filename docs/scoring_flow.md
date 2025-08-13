@@ -116,6 +116,34 @@ run_voicebench_evaluation() returns:
             'evaluators_used': {...},
             'errors': {...}
         }
+    },
+    'evaluation_details': {  # NEW: Detailed per-sample information
+        'dataset_split': {
+            'dataset': str,
+            'total_samples': int,
+            'successful_responses': int,
+            'success_rate': float,
+            'evaluator_used': str,
+            'evaluation_status': str,
+            'evaluation_error': str | None,
+            'evaluation_details': dict,
+            'evaluation_time': float,
+            'score': float,
+            'sample_details': [  # Per-sample scoring data
+                {
+                    'hf_index': int,  # Original HuggingFace dataset index
+                    'miner_model_response': str,  # Model's text response
+                    'llm_judge_response': str,  # Raw LLM judge output (for open evaluators)
+                    'llm_scores': list[float],  # Evaluation scores:
+                                               # - For open evaluators: LLM judge scores
+                                               # - For harm evaluator: [1.0] for safe/refused, [0.0] for unsafe
+                                               # - For other evaluators: empty list []
+                    'inference_time': float  # Time taken for inference
+                },
+                ...
+            ]
+        },
+        ...
     }
 }
 
@@ -135,6 +163,12 @@ _score_model() returns (lines 233-241):
     },
     "combined_score": float,  # Weighted average or penalty
     "evaluation_status": {...},  # From evaluators
+    "evaluation_details": {  # NEW: Detailed per-sample information
+        "dataset_split": {
+            "sample_details": [...]  # List of per-sample scoring data
+        },
+        ...
+    },
     "metadata": {
         "competition_id": str,
         "model_id": str,
@@ -191,3 +225,42 @@ NEEDS_LLM_JUDGE = [
 
 MAX_SAMPLES_PER_DATASET = 100 (configurable)
 PENALTY_SCORE = 0.0
+
+SAMPLE-LEVEL TRACKING:
+=====================
+
+Each dataset evaluation now captures detailed per-sample information:
+
+1. During inference (_inference_dataset):
+   - Tracks original HuggingFace dataset index (hf_index)
+   - Records model response and inference time per sample
+
+2. During evaluation (evaluate_dataset_with_proper_evaluator):
+   - Builds sample_details list with:
+     * hf_index: Original position in HuggingFace dataset
+     * miner_model_response: Actual text from model
+     * llm_judge_response: Raw LLM output (open evaluators only)
+     * llm_scores: Evaluation scores per sample
+       - Open evaluators (commoneval, wildvoice): List of LLM judge scores
+       - Harm evaluator (advbench): [1.0] for safe/refused, [0.0] for unsafe
+       - Other evaluators: Empty list []
+     * inference_time: Time taken for inference
+
+3. Storage (metric_scores JSON field):
+   - Full evaluation_details dict with sample_details per dataset
+   - Enables detailed analysis of model performance
+   - Preserves complete scoring history per sample
+
+Example structure for commoneval dataset:
+{
+    "sample_details": [
+        {
+            "hf_index": 0,
+            "miner_model_response": "The capital of France is Paris.",
+            "llm_judge_response": "5",
+            "llm_scores": [5.0, 5.0, 4.0],
+            "inference_time": 0.234
+        },
+        ...
+    ]
+}

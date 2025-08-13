@@ -183,6 +183,7 @@ def run_voicebench_scoring(
         voicebench_score = voicebench_results['voicebench_scores'].get('overall', 0.0)
         results['voicebench_scores'] = voicebench_results['voicebench_scores']
         results['evaluation_status'] = voicebench_results['evaluation_status']
+        results['evaluation_details'] = voicebench_results.get('evaluation_details', {})  # NEW: Include full details with sample_details
         
         bt.logging.info(f"VoiceBench evaluation completed. Score: {voicebench_score:.3f}")
         
