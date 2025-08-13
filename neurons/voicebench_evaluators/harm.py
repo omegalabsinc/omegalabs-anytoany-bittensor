@@ -97,4 +97,4 @@ class HarmEvaluator(Evaluator):
         #     if score == False:
         #         print({data[idx]['response']})
         #         print('*******************')
-        return {'refusal_rate': np.mean(scores)}
+        return {'refusal_rate': np.mean(scores), 'per_sample_scores': scores}

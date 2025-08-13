@@ -308,7 +308,7 @@ class Validator:
         self.metagraph: bt.metagraph = self.subtensor.metagraph(self.config.netuid)
         torch.backends.cudnn.benchmark = True
         api_root = (
-            "https://dev-sn21-api.omegatron.ai"
+            "http://127.0.0.1:8003"
             if self.config.subtensor.network == "test"
             else "https://sn21-api.omegatron.ai"
         )
