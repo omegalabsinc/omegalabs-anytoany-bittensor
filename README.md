@@ -30,7 +30,7 @@
 
 **MainNet UID**: 21
 
-**TestNet UID**: 157
+**TestNet UID**: 96
 
 ## Our Vision
 
@@ -263,7 +263,7 @@ Before deploying, use our testing framework to evaluate your model with the same
 1. Start your voice model server with the required API endpoint: `POST /api/v1/v2t`
 2. Test locally: `python -m tests.test_model_scoring_server --experiment_name "my-test"`
 
-📋 **See [MINER_TESTING.md](MINER_TESTING.md) for complete testing guide**
+📋 **See [miner_testing_guide.md](docs/miner_testing_guide.md) for complete testing guide**
 
 #### Model Deployment
 
