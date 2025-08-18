@@ -47,70 +47,58 @@ class MinerModelAssistant(VoiceAssistant):
         self.timeout = timeout
         bt.logging.info(f"Initialized MinerModelAssistant with API: {api_url}")
     
+    def inference_v2t(self, audio_array: np.ndarray, sample_rate: int) -> Dict[str, Any]:
+        """
+        Send inference request to server (matching DockerManager interface).
+        
+        Args:
+            audio_array: Input audio array
+            sample_rate: Audio sample rate
+            
+        Returns:
+            Dict containing inference results
+        """
+        # Convert audio array to base64 (matching Docker flow)
+        buffer = io.BytesIO()
+        np.save(buffer, audio_array)
+        audio_b64 = base64.b64encode(buffer.getvalue()).decode()
+        
+        # Send request
+        response = requests.post(
+            self.api_url,
+            json={
+                "audio_data": audio_b64,
+                "sample_rate": sample_rate
+            },
+            timeout=self.timeout
+        )
+        
+        response.raise_for_status()
+        
+        return response.json()
+    
     def generate_audio(self, audio, max_new_tokens=2048):
         """
-        Generate text response from audio input.
+        Generate text response from audio input (legacy interface).
         
         Args:
             audio: dict with 'array' (numpy array) and 'sampling_rate' keys
-            max_new_tokens: Maximum tokens to generate (unused but kept for compatibility)
+            max_new_tokens: Maximum tokens to generate (unused)
             
         Returns:
             str: Text response from the model
         """
-        try:
-            # Extract audio data - VoiceBench provides it as dict
-            audio_array = audio['array'].astype(np.float32)
-            
-            # Ensure it's mono and reshape to (1, T) as the API expects
-            if audio_array.ndim == 2:
-                audio_array = audio_array.mean(axis=1)
-            audio_array = audio_array.reshape(1, -1)
-            
-            # Validate audio data
-            if audio_array.size == 0:
-                bt.logging.warning("Empty audio array provided")
-                return ""
-            
-            # Serialize to base64 (matching API format)
-            # Use tobytes() instead of np.save to avoid pickle issues
-            buf = io.BytesIO()
-            np.save(buf, audio_array, allow_pickle=False)
-            payload = {
-                "audio_data": base64.b64encode(buf.getvalue()).decode("utf-8"),
-                "sample_rate": audio.get('sampling_rate', 16000)  # Use original sample rate or default to 16kHz
-            }
-            
-            bt.logging.debug(f"Sending audio request to {self.api_url} with sample_rate: {payload['sample_rate']}")
-            
-            # API call
-            response = requests.post(
-                self.api_url, 
-                json=payload, 
-                timeout=self.timeout,
-                headers={'Content-Type': 'application/json'}
-            )
-            response.raise_for_status()
-            
-            data = response.json()
-            text_response = data.get("text", "")
-            
-            if not text_response:
-                bt.logging.warning(f"Empty response from API: {data}")
-                return ""
-            
-            bt.logging.debug(f"Received response: {text_response}...")
-            return text_response.strip()
-            
-        except requests.exceptions.Timeout:
-            bt.logging.error(f"Request timeout after {self.timeout} seconds")
+        audio_array = np.array(audio['array'])
+        sample_rate = audio.get('sampling_rate', 16000)
+        
+        result = self.inference_v2t(audio_array, sample_rate)
+        
+        text_response = result.get("text", "")
+        if not text_response:
+            bt.logging.warning(f"Empty response from API: {result}")
             return ""
-        except requests.exceptions.RequestException as e:
-            bt.logging.error(f"Request error calling miner model API: {e}")
-            return ""
-        except Exception as e:
-            bt.logging.error(f"Error calling miner model API: {e}")
-            return ""
+        
+        return text_response.strip()
     
     def generate_text(self, text):
         """

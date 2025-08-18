@@ -384,27 +384,43 @@ class MinerModelAdapter:
         Returns:
             Text response from the model
         """
-        try:
-            # Validate input
-            if not isinstance(audio_input, dict):
-                bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
-                raise ValueError("audio_input must be a dictionary")
-            
-            if 'array' not in audio_input or 'sampling_rate' not in audio_input:
-                raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
-            
-            # Call the miner model assistant
-            response = self.miner_assistant.generate_audio(audio_input)
-            
-            if not response:
-                bt.logging.warning("Empty response from miner model")
-                return ""
-            
-            return response.strip()
-            
-        except Exception as e:
-            bt.logging.error(f"Error in miner model inference: {e}")
+        # Validate input
+        if not isinstance(audio_input, dict):
+            bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
+            raise ValueError("audio_input must be a dictionary")
+        
+        if 'array' not in audio_input or 'sampling_rate' not in audio_input:
+            raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
+        
+        audio_array = np.array(audio_input['array'])
+        sample_rate = audio_input['sampling_rate']
+        
+        # Validate audio data
+        if audio_array.size == 0:
+            bt.logging.warning("Empty audio array provided")
+            raise ValueError(f"Empty audio array provided")
+
+        if sample_rate <= 0:
+            raise ValueError(f"Invalid sample rate: {sample_rate}")
+        
+        # Call server inference
+        result = self.miner_assistant.inference_v2t(
+            audio_array=audio_array,
+            sample_rate=sample_rate
+        )
+        
+        # Validate and extract text response
+        if not isinstance(result, dict):
+            bt.logging.warning(f"Unexpected result type: {type(result)}")
             return ""
+        
+        text_response = result.get('text')
+        
+        if not isinstance(text_response, str):
+            bt.logging.error(f"Expected string response but got {type(text_response)}: {text_response}")
+            raise ValueError("Model response must be a string")
+        
+        return text_response.strip()
     
     def generate_text(self, text_input: str) -> str:
         """
@@ -653,7 +669,7 @@ class VoiceBenchEvaluator:
         
         return results
     
-    def _evaluate_with_adapter(
+    def _inference_with_adapter(
         self,
         model_adapter,
         datasets: Optional[List[str]] = None,
@@ -661,16 +677,19 @@ class VoiceBenchEvaluator:
         modality: str = 'audio'
     ) -> Dict[str, Any]:
         """
-        Evaluate model using a pre-created adapter.
+        Run inference on model using a pre-created adapter.
+        
+        This method loads datasets and runs inference to collect model responses.
+        The actual evaluation/scoring happens separately in calculate_voicebench_scores_with_status.
         
         Args:
-            model_adapter: Pre-configured model adapter
-            datasets: List of VoiceBench datasets to evaluate on (None = all datasets)
+            model_adapter: Pre-configured model adapter (DockerModelAdapter or ServerModelAdapter)
+            datasets: List of VoiceBench datasets to run inference on (None = all datasets)
             splits: List of data splits to use (None = use dataset-specific splits)
-            modality: Evaluation modality ('audio', 'text', or 'ttft')
+            modality: Inference modality ('audio', 'text', or 'ttft')
             
         Returns:
-            Dictionary containing evaluation results
+            Dictionary containing inference results (responses from the model)
         """
         results = {}
         
@@ -744,7 +763,7 @@ class VoiceBenchEvaluator:
             max_retries = 2
             retry_delay = 1
             
-            if i//50:
+            if i%50==0:
                 bt.logging.info(f"Processing item {i+1}/{len(dataset)} (HF index: {hf_index})")
             
             for attempt in range(max_retries + 1):
@@ -983,9 +1002,8 @@ def run_voicebench_evaluation_miner(
     
     # Create miner model adapter
     adapter = MinerModelAdapter(api_url=api_url, timeout=timeout)
-    
-    # Run model evaluation on all VoiceBench datasets
-    results = evaluator._evaluate_with_adapter(
+    # Run model inference on all VoiceBench datasets
+    results = evaluator._inference_with_adapter(
         model_adapter=adapter,
         datasets=datasets,  # None means all datasets
         splits=splits,      # None means dataset-specific splits
