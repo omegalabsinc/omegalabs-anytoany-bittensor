@@ -118,7 +118,7 @@ We embrace a **community-driven roadmap**, where feedback, public interest, and 
 
 ---
 
-### 🧠 **Phase 2: Race to the SOTA (Near-Term Goals) ** ✅ **SHIPPED**
+### 🧠 **Phase 2: Race to the SOTA (Near-Term Goals)** ✅ **SHIPPED**
 
 **🎯 Goal:** Benchmark against the world’s best, and push SN21 submissions toward true **state-of-the-art performance**.
 
