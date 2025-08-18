@@ -88,13 +88,13 @@ We embrace a **community-driven roadmap**, where feedback, public interest, and 
 
 
 ## Roadmap v0.1🚀
-### **Phase 1: Build the Bedrock (Current Focus)**
+### **Phase 1: Build the Bedrock** ✅ **SHIPPED**
 
 **🎯 Goal:** Lock down a **rock-solid base of trust, transparency, and reward alignment** that can scale with SN21’s ambitions.
 
 **Key Deliverables:**
 
-- **New Emissions Mechanism**
+- ✅ **New Emissions Mechanism - SHIPPED**
 
     - A 75/25 emissions split: models **above a dynamic performance baseline** share 75% emissions; those below share 25%.
 
@@ -104,31 +104,31 @@ We embrace a **community-driven roadmap**, where feedback, public interest, and 
 
     - Reputation score that rewards innovators who beat the baseline consistently.
 
-- **Metric-Driven Leaderboard**
+- ✅ **Metric-Driven Leaderboard - SHIPPED**
 
     Reveal full transparency into performance breakdowns: MIMI, PESQ, WER, response timing, and more.
 
-- **Validator Consistency & Trust Tools**
+- ✅ **Validator Consistency & Trust Tools - SHIPPED**
 
     Tracking script updates, runtime reliability, and emissions from all validators. Making validator behavior visible and accountable.
 
-- **Open Communication Rhythm**
+- ✅ **Open Communication Rhythm - SHIPPED**
 
     Frequent updates on Discord: bug reports, emissions graphs, leaderboard anomalies, research discussions.
 
 ---
 
-### 🧠 **Phase 2: Race to the SOTA (Near-Term Goals)**
+### 🧠 **Phase 2: Race to the SOTA (Near-Term Goals) ** ✅ **SHIPPED**
 
 **🎯 Goal:** Benchmark against the world’s best, and push SN21 submissions toward true **state-of-the-art performance**.
 
 **Key Deliverables:**
 
-- **SOTA Intelligence & Integration**
+- ✅ **SOTA Intelligence & Integration**
 
-    Ongoing tracking and benchmarking against elite models like **GPT-4o**, **Moshi**, and others in any-to-any generation.
+    Ongoing tracking and benchmarking against elite models like **GPT-4o**, **Moshi**, and others in any-to-any generation. Tracked the comparison internally for `v1` competition - which led to insights on the competition, eventually lead to updating the competition.
 
-- **Refined Evaluation Standards**
+- ✅ **Refined Evaluation Standards - SHIPPED**
 
     Research, Exploration and iteration on robust metrics: including but not limited to **MIMI token distance**, **WER**, **PESQ**, **VAD overlap**, **pause fluency**.
 
@@ -136,7 +136,7 @@ We embrace a **community-driven roadmap**, where feedback, public interest, and 
 
     Showcase SN21 performance vs. top open/closed source baselines—make our progress visible to the broader ML community.
 
-- **Enhanced Miner Dashboard**
+- ✅ **Enhanced Miner Dashboard**
 
     Metric breakdowns, emissions history, trend graphs, and possibly gamified features like:
 
@@ -148,13 +148,13 @@ We embrace a **community-driven roadmap**, where feedback, public interest, and 
 
 ---
 
-### 🌍 **Phase 3: Scale the Impact (Medium-Term Outlook)**
+### 🌍 **Phase 3: Scale the Impact (Current focus)**
 
 **🎯 Goal:** Expand SN21’s utility, attract more top-tier talent, and evolve into a top-3 emissions subnet.
 
 **Key Deliverables:**
 
-- **Ecosystem & Docs Overhaul**
+- ✅ **Ecosystem & Docs Overhaul - SHIPPED**
 
     More complete miner/dev documentation, sample validators, and easier onboarding for new contributors.
 
@@ -168,13 +168,6 @@ We embrace a **community-driven roadmap**, where feedback, public interest, and 
 
 ---
 
-### 🧩 Future Considerations / Open Questions
-
-- How aggressive should performance decay be for stagnant miners?
-
-- What baseline-setting mechanism strikes the best balance between challenge and accessibility?
-
-- Should we include semantic metrics like **SeMa Score** for a better content alignment signal?
 
 ## 🔌**Application Layer: Real-World Access & Impact**
 
@@ -236,6 +229,7 @@ As adoption grows, so does the economic value of emissions—creating a **self-r
 - Python 3.11+ with pip
 - GPU with at least 40 GB of VRAM; NVIDIA RTXA6000 is a good choice, or use a 1024xH100 if you wanna train a **really** good model :sunglasses:
 - At least 40 GB of CPU RAM
+- **API Keys**: CHUTES_API_KEY and OPENAI_API_KEY (for evaluation)
 - If running on runpod, `runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04` is a good base template.
 
 #### Setup
@@ -244,24 +238,58 @@ As adoption grows, so does the economic value of emissions—creating a **self-r
 git clone https://github.com/omegalabsinc/omegalabs-anytoany-bittensor.git
 cd omegalabs-anytoany-bittensor
 ```
+
 2. Install the requirements:
   - Using docker: `make build-and-run`
   - Using your local Python: `pip install -e .`
-3. Log into Huggingface: `huggingface-cli login`. Make sure your account has access to Llama-3-8B on HF, you can get access [here](https://huggingface.co/meta-llama/Meta-Llama-3-8B)
-4. Download the base model and datasets: `make download-everything`
-5. Start a finetuning run: `make finetune-x1`
-  - Tweak `config/8B_lora.yaml` to change the hyperparameters of the training run.
-6. Upload the model to Huggingface:
+
+3. Set up API keys (required for evaluation):
+```bash
+# Option 1: Environment variables
+export CHUTES_API_KEY="your_chutes_api_key"
+export OPENAI_API_KEY="your_openai_api_key"
+
+# Option 2: Add to vali.env file
+echo "CHUTES_API_KEY=your_chutes_api_key" >> vali.env
+echo "OPENAI_API_KEY=your_openai_api_key" >> vali.env
 ```
+
+#### Model Development & Testing
+
+**🧪 Test Your Model Locally First**
+
+Before deploying, use our testing framework to evaluate your model with the same logic validators use:
+
+1. Start your voice model server with the required API endpoint: `POST /api/v1/v2t`
+2. Test locally: `python -m tests.test_model_scoring_server --experiment_name "my-test"`
+
+📋 **See [MINER_TESTING.md](MINER_TESTING.md) for complete testing guide**
+
+#### Model Deployment
+
+1. Log into Huggingface: `huggingface-cli login`
+
+2. Upload your model to Huggingface:
+```bash
 python miner_utils/upload_model.py \
-    --hf_repo_id {HF REPO ID e.g. omegalabsinc/omega_agi_model} \
+    --hf_repo_id {HF REPO ID e.g. your-username/your-voice-model} \
     --wallet.name {miner wallet name} \
     --wallet.hotkey {miner hotkey} \
-    --model_dir {the directory that the checkpoint is saved in e.g. output_checkpoints/experiment_1/} \
-    --epoch 0 \
-    --netuid NETUID
+    --model_dir {your model directory} \
+    --netuid 21
 ```
-NOTE: If you want to run on testnet, simply add `--subtensor.network test` at the end of the command and use `--netuid 157`.
+
+**TestNet**: Add `--subtensor.network test --netuid 96` for testing.
+
+#### Current Competition: VoiceBench v2 🎤
+
+Your model will be evaluated on **4 comprehensive datasets** including:
+- **CommonEval**: General knowledge and reasoning
+- **WildVoice**: Real-world audio scenarios  
+- **IfEval**: Instruction following
+- **AdvBench**: Safety and robustness
+
+**Scoring**: Advanced LLM-based evaluation measuring accuracy, fluency, and task completion across diverse voice scenarios.
 
 ### For Validators
 
