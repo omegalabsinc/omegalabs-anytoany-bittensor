@@ -253,6 +253,10 @@ class DockerManager:
                 continue
         raise RuntimeError(f"No available ports found between {start_port} and {max_port}")
 
+    def _ensure_dockerignore_has(self, repo_root: Path, pattern: str = "models/") -> None:
+        with (repo_root / ".dockerignore").open("a", encoding="utf-8") as fh:
+            fh.write(f"\n{pattern}\n")
+
     def start_container(self, uid: str, repo_id: str, gpu_id: Optional[int] = None) -> str:
         """Start a container with proper GPU configuration."""
         container_name = f"miner_{uid}"
@@ -278,8 +282,13 @@ class DockerManager:
 
             # Download miner files
             miner_dir = self._download_miner_files(repo_id, uid)
-            
-            # Create isolated network if it doesn't exist
+
+            # NEW: make sure models/ exists (host side) and is excluded from build
+            models_host_dir = miner_dir / "models"
+            models_host_dir.mkdir(parents=True, exist_ok=True)
+            self._ensure_dockerignore_has(miner_dir, "models/\n.git/")   # exclude from context
+
+            # ensure network
             try:
                 self.client.networks.get('isolated_network')
             except docker.errors.NotFound:
@@ -290,8 +299,13 @@ class DockerManager:
             start = time.time()
             dockerfile_path = str(miner_dir / "Dockerfile")
             self._validate_dockerfile(dockerfile_path)
-            
-            # Check available disk space before building
+
+            # NEW: detect WORKDIR for correct in-container mount path
+            workdir = '/app'
+            container_models_path = f"{workdir.rstrip('/')}/models"
+            bt.logging.info(f"Resolved WORKDIR: {workdir}; will mount models at {container_models_path}")
+
+            # disk info log
             total, used, free = shutil.disk_usage(str(self.base_cache_dir))
             free_gb = free / (1024 * 1024 * 1024)
             bt.logging.info(f"Available disk space before build: {free_gb:.2f}GB")
@@ -310,8 +324,19 @@ class DockerManager:
             host_port = self._find_available_port()
             print(f"Using available port: {host_port}")
             bt.logging.info(f"Using available port: {host_port}")
-            
-            bt.logging.info(f"Starting container: {container_name}")
+
+            # NEW: bind mounts (read-only for models)
+            volumes = {
+                str(models_host_dir.resolve()): {
+                    "bind": container_models_path,
+                    "mode": "ro",
+                },
+                # (optional) mount caches persistently instead of /tmp:
+                # str((self.base_cache_dir / "hub").resolve()): {"bind": "/tmp/hf_cache", "mode": "rw"},
+                # str((self.base_cache_dir / "downloads").resolve()): {"bind": "/tmp/transformers_cache", "mode": "rw"},
+            }
+            bt.logging.info(f"Mounting host models dir {models_host_dir} -> {container_models_path} (ro)")
+
             container = self.client.containers.run(
                 image.id,
                 name=container_name,
@@ -335,14 +360,12 @@ class DockerManager:
                 },
                 runtime='nvidia',
                 device_requests=[
-                    docker.types.DeviceRequest(
-                        count=-1,
-                        capabilities=[['gpu', 'utility', 'compute']]
-                    )
-                ]
+                    docker.types.DeviceRequest(count=-1, capabilities=[['gpu', 'utility', 'compute']])
+                ],
+                # NEW: apply mounts
+                volumes=volumes
             )
-            
-            # Wait for container to be healthy
+
             self._wait_for_container(container)
             
             # Store container reference
