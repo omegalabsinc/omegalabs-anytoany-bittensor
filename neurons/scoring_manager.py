@@ -169,10 +169,9 @@ class ScoringManager:
         client.networks.prune()
         
         # Step 3: Clean temp directories and model cache
-        bt.logging.info("Step 3: Cleaning temp directories and model cache")
+        bt.logging.info("Step 3: Cleaning model cache dir")
         model_cache_dir = "./model_cache"
         if os.path.exists(model_cache_dir):
-            bt.logging.info(f"Cleaning model cache directory: {model_cache_dir}")
             for item in os.listdir(model_cache_dir):
                 item_path = os.path.join(model_cache_dir, item)
                 if os.path.isdir(item_path):
@@ -186,7 +185,6 @@ class ScoringManager:
         bt.logging.info("Step 4: Cleaning model-store directory")
         model_store_dir = "./model-store"
         if os.path.exists(model_store_dir):
-            bt.logging.info(f"Cleaning model-store directory: {model_store_dir}")
             for item in os.listdir(model_store_dir):
                 item_path = os.path.join(model_store_dir, item)
                 if os.path.isdir(item_path):
