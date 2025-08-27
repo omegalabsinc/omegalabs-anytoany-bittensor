@@ -8,6 +8,8 @@ import multiprocessing
 import time
 import docker
 import json
+import shutil
+import subprocess
 os.environ["USE_TORCH"] = "1"
 os.environ["BT_LOGGING_INFO"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -25,7 +27,7 @@ from neurons.docker_inference_v2v import run_v2v_scoring
 from neurons.docker_model_scoring import run_o1_scoring
 from neurons.docker_inference_voicebench import run_voicebench_scoring
 from utilities.temp_dir_cache import TempDirCache
-from utilities.gpu import get_gpu_memory
+from utilities.gpu import get_gpu_memory, cleanup_gpu_memory
 from utilities.git_utils import is_git_latest
 
 class ModelScoreStatus(Enum):
@@ -131,6 +133,125 @@ class ScoringManager:
         else:
             bt.logging.warning("Running with --wandb.off. It is strongly recommended to run with W&B enabled.")
 
+    def _comprehensive_cleanup(self):
+        """
+        Comprehensive cleanup of all resources before scoring.
+        Cleans temp directories, Docker resources, GPU memory, and various caches.
+        """
+        bt.logging.info("Starting comprehensive cleanup before scoring...")
+        
+        # Step 1: Clean GPU memory
+        bt.logging.info("Step 1: Cleaning GPU memory")
+        cleanup_gpu_memory()
+        
+        # Step 2: Clean Docker resources
+        bt.logging.info("Step 2: Cleaning Docker resources")
+        client = docker.from_env()
+        
+        # Stop and remove all containers
+        containers = client.containers.list(all=True)
+        for container in containers:
+            bt.logging.info(f"Removing container: {container.name}")
+            container.stop(timeout=10)
+            container.remove(force=True)
+        
+        # Remove all images with 'miner_' prefix or no tags
+        images = client.images.list()
+        for image in images:
+            if not image.tags or any('miner_' in tag.lower() for tag in image.tags):
+                bt.logging.info(f"Removing Docker image: {image.id[:12]}")
+                client.images.remove(image.id, force=True)
+        
+        # Prune all unused Docker resources
+        client.images.prune(filters={'dangling': True})
+        client.containers.prune()
+        client.volumes.prune()
+        client.networks.prune()
+        
+        # Step 3: Clean temp directories and model cache
+        bt.logging.info("Step 3: Cleaning model cache dir")
+        model_cache_dir = "./model_cache"
+        if os.path.exists(model_cache_dir):
+            for item in os.listdir(model_cache_dir):
+                item_path = os.path.join(model_cache_dir, item)
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                    bt.logging.info(f"Removed directory: {item_path}")
+                else:
+                    os.remove(item_path)
+                    bt.logging.info(f"Removed file: {item_path}")
+        
+        # Step 4: Clean model-store directory
+        bt.logging.info("Step 4: Cleaning model-store directory")
+        model_store_dir = "./model-store"
+        if os.path.exists(model_store_dir):
+            for item in os.listdir(model_store_dir):
+                item_path = os.path.join(model_store_dir, item)
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path)
+                    bt.logging.info(f"Removed model-store directory: {item_path}")
+                else:
+                    os.remove(item_path)
+                    bt.logging.info(f"Removed model-store file: {item_path}")
+        
+        # Step 5: Clean HuggingFace cache
+        bt.logging.info("Step 5: Cleaning HuggingFace cache")
+        hf_cache_paths = [
+            os.path.expanduser("~/.cache/huggingface/hub"),
+            os.path.expanduser("~/.cache/huggingface/transformers"),
+        ]
+        
+        for cache_path in hf_cache_paths:
+            if os.path.exists(cache_path):
+                bt.logging.info(f"Removing HuggingFace cache: {cache_path}")
+                shutil.rmtree(cache_path)
+        
+        # Step 6: Clean Git LFS cache
+        bt.logging.info("Step 6: Cleaning Git LFS cache. Running git lfs prune")
+        subprocess.run(["git", "lfs", "prune"], timeout=300)
+        
+        # Step 7: Clean temporary git repositories
+        bt.logging.info("Step 7: Cleaning temporary git repositories")
+        temp_locations = ["/tmp", "./temp"]
+        for temp_dir in temp_locations:
+            if os.path.exists(temp_dir):
+                for item in os.listdir(temp_dir):
+                    item_path = os.path.join(temp_dir, item)
+                    if os.path.isdir(item_path) and (
+                        item.startswith('tmp') or 
+                        'git' in item.lower() or 
+                        'model' in item.lower() or
+                        'miner' in item.lower()
+                    ):
+                        # Run git lfs prune if it's a git repository
+                        git_dir = os.path.join(item_path, ".git")
+                        if os.path.exists(git_dir):
+                            bt.logging.info(f"Running git lfs prune in {item_path}")
+                            subprocess.run(["git", "lfs", "prune", "--force"], cwd=item_path, timeout=60)
+                        
+                        bt.logging.info(f"Removed temp directory: {item_path}")
+                        shutil.rmtree(item_path)
+        
+        bt.logging.info("Comprehensive cleanup completed")
+
+    def _check_disk_space_requirement(self, required_gb: int = 40):
+        """
+        Check if sufficient disk space is available for model scoring.
+        Raises RuntimeError if insufficient space.
+        """
+        total, used, free = shutil.disk_usage(".")
+        free_gb = free / (1024 * 1024 * 1024)
+        total_gb = total / (1024 * 1024 * 1024)
+        
+        bt.logging.info(f"Disk space check: {free_gb:.2f}GB free out of {total_gb:.2f}GB total")
+        
+        if free_gb < required_gb:
+            error_msg = f"Insufficient disk space: {free_gb:.2f}GB available, {required_gb}GB required for model scoring"
+            bt.logging.error(error_msg)
+            raise RuntimeError(error_msg)
+        
+        bt.logging.info(f"Disk space check passed: {free_gb:.2f}GB available (>= {required_gb}GB required)")
+
     def should_restart(self) -> bool:
         # Check if enough time has elapsed since the last update check, if not assume we are up to date.
         if (datetime.now() - self.last_update_check).seconds < self.update_check_interval:
@@ -177,7 +298,18 @@ class ScoringManager:
 
     def _score_model(self, inputs: ScoreModelInputs):
         """ Actual model scoring logic """
+        
+        # Step 1: Comprehensive cleanup before starting any work
+        bt.logging.info(f"Starting model scoring for {inputs.hf_repo_id} - performing cleanup first")
+        self._comprehensive_cleanup()
+        
+        # Step 2: Check disk space requirement
+        bt.logging.info("Checking disk space requirements")
+        self._check_disk_space_requirement(required_gb=40)
+        
+        # Step 3: Proceed with actual scoring
         start_time = time.time()
+        bt.logging.info(f"Cleanup completed - starting model scoring for {inputs.hf_repo_id}")
 
         result_dict = run_voicebench_scoring(
             hf_repo_id=inputs.hf_repo_id,

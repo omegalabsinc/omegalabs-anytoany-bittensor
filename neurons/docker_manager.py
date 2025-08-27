@@ -37,15 +37,10 @@ class DockerManager:
         
         bt.logging.info(f"Initializing DockerManager with cache directory: {self.base_cache_dir}")
         
-        if cleanup_on_init:
-            print("Cleaning up Docker resources on initialization")
-            self._check_disk_space(required_gb=40)
     
     def _download_miner_files(self, repo_id: str, uid: str) -> Path:
         """Downloads required files from HuggingFace."""
         try:
-            # Check disk space with higher requirement for model download
-            self._check_disk_space(required_gb=40)
             
             repo_name = repo_id.replace("/", "_")
             miner_dir = self.base_cache_dir / repo_name
@@ -262,9 +257,6 @@ class DockerManager:
         container_name = f"miner_{uid}"
         
         try:
-            
-            # Check disk space with higher requirement (40GB)
-            self._check_disk_space(required_gb=40)
             
             # Create necessary cache subdirectories
             cache_dirs = ['models', 'hub', 'downloads']

@@ -132,7 +132,6 @@ def run_voicebench_scoring(
         bt.logging.info(f"Block {block} is older than model {hf_repo_id}. Penalizing model.")
         return {"combined_score": penalty_score}
     
-    cleanup_gpu_memory()
     log_gpu_memory('before hybrid evaluation')
     
     # Initialize Docker manager

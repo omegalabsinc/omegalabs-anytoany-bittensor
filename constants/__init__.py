@@ -60,11 +60,10 @@ deviation_percent = 0.1
 # Model scoring parameters.
 # ---------------------------------
 
-# MIN_AGE = 4 * 60 * 60  # 4 hours
-MIN_AGE = 0  # 4 hours #TODO: Remove for prod
+MIN_AGE = 0  # 4 hours
 MODEL_EVAL_TIMEOUT = 60 * 60 * 2  # 2 hours
 MIN_NON_ZERO_SCORES = 1  # Minimum number of non-zero scores required for weight assignment
-NUM_CACHED_MODELS = 6
+NUM_CACHED_MODELS = 1
 MAX_DS_FILES = 8
 PERCENT_IMPROVEMENT = 10 # Minimum percentage improvement required for a model to be considered better than the previous one
 PLAYERS_IN_ABOVE_BASELINE = 3
