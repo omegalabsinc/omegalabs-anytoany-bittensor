@@ -938,9 +938,10 @@ class Validator:
         return HTTPBasicAuth(hotkey, signature)
 
     async def try_sync_metagraph(self, ttl: int):
-        self.metagraph = bt.subtensor(self.subtensor.chain_endpoint).metagraph(self.config.netuid)
-        bt.logging.info("Synced metagraph")
-        self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
+        with bt.subtensor(self.subtensor.chain_endpoint) as sub:
+            self.metagraph = sub.metagraph(self.config.netuid)
+            bt.logging.info("Synced metagraph")
+            self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
 
     async def try_run_step(self, ttl: int):
         async def _try_run_step():
