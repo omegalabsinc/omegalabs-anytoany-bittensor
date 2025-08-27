@@ -762,13 +762,17 @@ class Validator:
             uid_to_rep[uid] = rep
 
         # 5. Split UIDs into below and above baseline
-        below_baseline = []
+        below_baseline_candidates = []
         above_baseline = []
         for uid, score in scores_per_uid.items():
             if score>baseline and len(above_baseline)<constants.PLAYERS_IN_ABOVE_BASELINE: # limit the above baseline pool
                 above_baseline.append(uid)
             elif score>0:
-                below_baseline.append(uid)
+                below_baseline_candidates.append((uid, score))
+        
+        # Select top 10 UIDs from below_baseline based on score
+        below_baseline_candidates.sort(key=lambda x: x[1], reverse=True)
+        below_baseline = [uid for uid, _ in below_baseline_candidates[:constants.PLAYERS_IN_BELOW_BASELINE]]
 
         weights = torch.zeros(len(uids), dtype=torch.float32)
         
