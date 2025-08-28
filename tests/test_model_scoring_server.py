@@ -21,7 +21,7 @@ import bittensor as bt
 
 # Import the server-based evaluation function
 from neurons.voicebench_adapter import run_voicebench_evaluation_miner
-from constants import VOICEBENCH_MAX_SAMPLES
+from constants import SAMPLES_PER_DATASET, VOICEBENCH_MAX_SAMPLES
 from datetime import datetime
 
 
@@ -41,6 +41,7 @@ def test_server_scoring(
         api_url: URL of the model server API endpoint (e.g., http://localhost:8000/api/v1/v2t)
         max_samples: Maximum number of samples per dataset to evaluate (None = all)
         datasets: List of specific datasets to evaluate (None = all VoiceBench datasets)
+        timeout: Request timeout for API calls in seconds
         
     Returns:
         Dictionary with scoring results matching the production format:
@@ -63,10 +64,11 @@ def test_server_scoring(
     try:
         # Run VoiceBench evaluation using the server adapter
         # This uses the exact same evaluation logic as the Docker version
+        # Note: max_samples is now handled by SAMPLES_PER_DATASET in the evaluator
         voicebench_results = run_voicebench_evaluation_miner(
             api_url=api_url,
             datasets=datasets,
-            max_samples_per_dataset=VOICEBENCH_MAX_SAMPLES
+            timeout=timeout
         )
         
         # Extract scores (matching production format)
@@ -160,7 +162,8 @@ def append_to_report(results: Dict[str, Any], report_file: str = "model_evaluati
             
             for dataset in dataset_names:
                 score = scores[dataset]
-                samples_used = VOICEBENCH_MAX_SAMPLES
+                # Include samples used from SAMPLES_PER_DATASET
+                samples_used = SAMPLES_PER_DATASET.get(dataset.split('_')[0], VOICEBENCH_MAX_SAMPLES)
                 f.write(f"  {dataset:<30} {score:>8.4f}  (samples: {samples_used})\n")
             
             # Write overall at the end
@@ -333,7 +336,14 @@ def main():
     print(f"   Experiment: {config.experiment_name}")
     print(f"   API URL: {config.api_url}")
     print(f"   Datasets: {config.datasets or 'all'}")
+    print(f"   Timeout: {config.timeout}s")
     print(f"   Report file: {config.report_file}")
+    
+    # Show samples per dataset configuration
+    print(f"\n📊 Samples per dataset:")
+    for dataset, samples in SAMPLES_PER_DATASET.items():
+        print(f"   {dataset}: {samples}")
+    print(f"   Default: {VOICEBENCH_MAX_SAMPLES}")
     
     # Run the evaluation
     results = test_server_scoring(

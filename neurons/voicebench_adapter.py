@@ -25,7 +25,7 @@ from neurons.voicebench_evaluators import (
     OpenEvaluator, MCQEvaluator, IFEvaluator, 
     BBHEvaluator, HarmEvaluator
 )
-
+from constants import VOICEBENCH_MAX_SAMPLES, SAMPLES_PER_DATASET
 
 # Dataset to evaluator mapping based on VoiceBench DATASETS_CONFIG
 DATASET_EVALUATOR_MAP = {
@@ -640,7 +640,7 @@ class VoiceBenchEvaluator:
         for dataset_name, dataset_splits in datasets_to_eval.items():
             # Use dataset-specific splits if none provided
             splits_to_use = splits if splits is not None else dataset_splits
-            
+            max_samples = SAMPLES_PER_DATASET.get(dataset_name, VOICEBENCH_MAX_SAMPLES)
             for split in splits_to_use:
                 try:
                     # Load VoiceBench dataset
@@ -649,10 +649,13 @@ class VoiceBenchEvaluator:
                     
                     # Apply sample limit if configured and track indices
                     dataset_indices = None
-                    if self.max_samples_per_dataset and len(dataset) > self.max_samples_per_dataset:
-                        dataset_indices = list(range(self.max_samples_per_dataset))
+                    if max_samples and len(dataset) > max_samples:
+                        # dataset_indices = list(range(max_samples))
+                        # random samples
+                        dataset_indices = random.sample(range(len(dataset)), max_samples)
+
                         dataset = dataset.select(dataset_indices)
-                        bt.logging.info(f"Limited {dataset_name}_{split} to {self.max_samples_per_dataset} samples")
+                        bt.logging.info(f"Limited {dataset_name}_{split} to {max_samples} samples")
                     else:
                         dataset_indices = list(range(len(dataset)))
                     
@@ -702,7 +705,7 @@ class VoiceBenchEvaluator:
         for dataset_name, dataset_splits in datasets_to_eval.items():
             # Use dataset-specific splits if none provided
             splits_to_use = splits if splits is not None else dataset_splits
-            
+            max_samples = SAMPLES_PER_DATASET.get(dataset_name, VOICEBENCH_MAX_SAMPLES)
             for split in splits_to_use:
                 try:
                     # Load VoiceBench dataset
@@ -711,14 +714,17 @@ class VoiceBenchEvaluator:
                     
                     # Apply sample limit if configured and track indices
                     dataset_indices = None
-                    if self.max_samples_per_dataset and len(dataset) > self.max_samples_per_dataset:
-                        dataset_indices = list(range(self.max_samples_per_dataset))
+                    if max_samples and len(dataset) > max_samples:
+                        # dataset_indices = list(range(max_samples))
+                        # random samples
+                        dataset_indices = random.sample(range(len(dataset)), max_samples)
+
                         dataset = dataset.select(dataset_indices)
-                        bt.logging.info(f"Limited {dataset_name}_{split} to {self.max_samples_per_dataset} samples")
+                        bt.logging.info(f"Limited {dataset_name}_{split} to {max_samples} samples")
                     else:
                         dataset_indices = list(range(len(dataset)))
-
-                    # Run inference with indices
+                    
+                    # Run Inference with indices
                     dataset_results = self._inference_dataset(
                         model_adapter, dataset, dataset_name, split, modality, dataset_indices
                     )
@@ -790,7 +796,7 @@ class VoiceBenchEvaluator:
                             #         bt.logging.info(f"Sampling rate: {audio_data['sampling_rate']}")
                             
                             response = self._generate_with_timeout(
-                                model_adapter.generate_audio, audio_data, timeout=60
+                                model_adapter.generate_audio, audio_data, timeout=200
                             )
                     # elif modality == 'text':
                     #     response = self._generate_with_timeout(
@@ -1050,6 +1056,7 @@ def run_voicebench_evaluation(
     evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
     
     bt.logging.info("Starting VoiceBench inference across all datasets...")
+    #TODO: create docker adapter here and use inference_with_adapter, no need to two seperate methods.
     # Run model inference on all VoiceBench datasets
     results = evaluator.inference_model(
         container_url=container_url,
