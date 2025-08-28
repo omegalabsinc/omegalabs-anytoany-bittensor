@@ -67,6 +67,7 @@ NUM_CACHED_MODELS = 1
 MAX_DS_FILES = 8
 PERCENT_IMPROVEMENT = 10 # Minimum percentage improvement required for a model to be considered better than the previous one
 PLAYERS_IN_ABOVE_BASELINE = 3
+PLAYERS_IN_BELOW_BASELINE = 10
 # ---------------------------------
 # Weight distribution parameters.
 # ---------------------------------
