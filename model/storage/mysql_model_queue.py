@@ -122,6 +122,8 @@ class ScoreHistory(Base):
     scorer_hotkey = Column(String(255), index=True)
     is_archived = Column(Boolean, default=False)
     metric_scores = Column(MySQLJSON, nullable=True)
+    wandb_run_id = Column(String(255), nullable=True)
+    wandb_run_url = Column(String(512), nullable=True)
     # Relationship to ModelQueue using dynamic table name (lambda function)
     model = relationship(
         "ModelQueue",
@@ -525,6 +527,13 @@ class ModelQueueManager:
                     """
                     
                     if model.is_being_scored and model.is_being_scored_by == scorer_hotkey:
+                        # Extract wandb fields from metric_scores if present
+                        wandb_run_id = None
+                        wandb_run_url = None
+                        if metric_scores and isinstance(metric_scores, dict):
+                            wandb_run_id = metric_scores.get('wandb_run_id')
+                            wandb_run_url = metric_scores.get('wandb_run_url')
+                        
                         new_score = ScoreHistory(
                             hotkey=model_hotkey,
                             uid=model_uid,
@@ -534,7 +543,9 @@ class ModelQueueManager:
                             model_hash=model_hash,
                             scorer_hotkey=scorer_hotkey,
                             model_metadata=model.model_metadata,
-                            metric_scores=metric_scores
+                            metric_scores=metric_scores,
+                            wandb_run_id=wandb_run_id,
+                            wandb_run_url=wandb_run_url
                         )
                         session.add(new_score)
                         model.is_new = False
