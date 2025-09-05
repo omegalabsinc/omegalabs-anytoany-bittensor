@@ -1125,6 +1125,8 @@ class Validator:
                                 score = scoring_response_json["score"]
                                 metric_scores = scoring_response_json["metric_scores"]
                                 metric_scores = {} if metric_scores is None else metric_scores
+                                metric_scores["wandb_run_url"] = scoring_response_json.get("wandb_run_url")
+                                metric_scores["wandb_run_id"] = scoring_response_json.get("wandb_run_id")
                                 if not is_scoring and score is None:
                                     error_msg = f"Scoring API failed. Error: {scoring_response_json.get('error', 'Unknown error')}"
                                     bt.logging.error(error_msg)

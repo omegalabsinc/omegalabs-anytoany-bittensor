@@ -49,11 +49,20 @@ class ModelScoreTaskData(BaseModel):
     status: ModelScoreStatus = ModelScoreStatus.SCORING
     started_at: datetime = Field(default_factory=datetime.now)
     error: Optional[str] = None
+    wandb_run_id: Optional[str] = None
 
     @computed_field
     @property
     def runtime_seconds(self) -> float:
         return (datetime.now() - self.started_at).total_seconds()
+    
+    @computed_field
+    @property
+    def wandb_run_url(self) -> Optional[str]:
+        """Generate wandb run URL from run ID"""
+        if self.wandb_run_id:
+            return f"https://wandb.ai/omega-labs/omega-sn21-validator-logs/runs/{self.wandb_run_id}"
+        return None
 
 def get_argparse():
     parser = argparse.ArgumentParser()
@@ -273,6 +282,92 @@ class ScoringManager:
                 self.wandb_run.finish()
                 self.new_wandb_run()
 
+    def _generate_wandb_run_id(self, inputs: ScoreModelInputs) -> Optional[str]:
+        """Generate a unique wandb run ID for scoring task"""
+        if self.config.wandb.off:
+            return None
+            
+        # Create safe hotkey (remove special characters)
+        safe_hotkey = "".join(c for c in inputs.hotkey if c.isalnum())[:12]
+        
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        # Create unique run ID using hotkey and timestamp
+        wandb_run_id = f"scoring-{safe_hotkey}-{timestamp}"
+        
+        return wandb_run_id
+
+    def _init_scoring_wandb_run(self, wandb_run_id: str, inputs: ScoreModelInputs):
+        """Initialize wandb run for scoring task in child process"""
+        try:
+            # Create safe hotkey for display
+            safe_hotkey = "".join(c for c in inputs.hotkey if c.isalnum())[:12]
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            run_name = f"scoring-{safe_hotkey}-{timestamp}"
+            
+            wandb_run = wandb.init(
+                id=wandb_run_id,
+                name=run_name,
+                project="omega-sn21-validator-logs",
+                entity="omega-labs",
+                resume="allow",
+                config={
+                    "type": "scoring_task",
+                    "model_id": inputs.hf_repo_id,
+                    "hotkey": inputs.hotkey,
+                    "block": inputs.block,
+                    "competition_id": inputs.competition_id,
+                },
+                tags=["scoring", "model_evaluation"],
+                allow_val_change=True,
+                anonymous="allow",
+            )
+            
+            # Setup bt.logging to wandb forwarding
+            self._setup_bt_logging_to_wandb()
+            
+            bt.logging.info(f"Initialized wandb run for scoring: {run_name}")
+            
+            # Log initial metadata
+            wandb.log({
+                "model_metadata": {
+                    "hf_repo_id": inputs.hf_repo_id,
+                    "hotkey": inputs.hotkey,
+                    "block": inputs.block,
+                    "competition_id": inputs.competition_id,
+                },
+                "status": "started"
+            })
+            
+            return wandb_run
+            
+        except Exception as e:
+            bt.logging.warning(f"Failed to initialize wandb run: {e}")
+            return None
+
+    def _setup_bt_logging_to_wandb(self):
+        """Setup bt.logging to forward to current wandb run"""
+        try:
+            import logging
+            
+            class WandbLogHandler(logging.Handler):
+                def emit(self, record):
+                    if wandb.run is not None:
+                        log_message = f"{record.levelname}: {record.getMessage()}"
+                        wandb.log({"bt_log": log_message})
+            
+            # Get the internal bittensor logger
+            bt_logger = bt.logging._logger
+            
+            # Add wandb handler
+            wandb_handler = WandbLogHandler()
+            wandb_handler.setLevel(logging.DEBUG)
+            bt_logger.addHandler(wandb_handler)
+            
+        except Exception as e:
+            bt.logging.warning(f"Failed to setup bt.logging to wandb forwarding: {e}")
+
     def new_wandb_run(self):
         # Shoutout SN13 for the wandb snippet!
         """Creates a new wandb run to save information to."""
@@ -357,18 +452,50 @@ class ScoringManager:
 
     def _score_model_wrapped(self, inputs: ScoreModelInputs, result_queue: multiprocessing.Queue):
         """ Wraps the scoring process in a queue to get the result """
+        wandb_run = None
         try:
+            # Initialize bittensor logging for child process
+            config = get_scoring_config()
+            bt.logging.set_debug()
+            
+            # Create wandb run if enabled and run ID exists
+            if not config.wandb.off and self.current_task and self.current_task.wandb_run_id:
+                wandb_run = self._init_scoring_wandb_run(self.current_task.wandb_run_id, inputs)
+            
             self.kill_docker_images()
             bt.logging.info(f"Starting scoring for model: {inputs.hf_repo_id}")
             result_dict = self._score_model(inputs)
             bt.logging.info(f"Completed scoring for model: {inputs.hf_repo_id}")
+            
+            # Log final results to wandb
+            if wandb_run:
+                wandb.log({
+                    "combined_score": result_dict.get('combined_score', 0),
+                    "raw_scores": result_dict.get('raw_scores', {}),
+                    "total_time_seconds": result_dict.get('total_time_seconds', 0),
+                    "status": "completed"
+                })
+            
             result_queue.put(('success', result_dict))
         except Exception as e:
             error_msg = f"{str(e)}\n{traceback.format_exc()}"
             bt.logging.error(f"Failed to score model {inputs.hf_repo_id}: {error_msg}")
+            
+            # Log error to wandb
+            if wandb_run:
+                wandb.log({
+                    "status": "failed",
+                    "error": str(e),
+                    "error_traceback": traceback.format_exc()
+                })
+            
             result_queue.put(('error', error_msg))
         finally:
             bt.logging.info(f"Scoring process completed for model: {inputs.hf_repo_id}")
+            
+            # Clean up wandb run
+            if wandb_run:
+                wandb.finish()
 
     def start_scoring(self, inputs: ScoreModelInputs):
         """ Starts the scoring process """
@@ -376,7 +503,12 @@ class ScoringManager:
             self.current_process.terminate()
             self.current_process.join(timeout=5)
 
-        self.current_task = ModelScoreTaskData(inputs=inputs)
+        # Generate wandb run ID for this scoring task
+        wandb_run_id = self._generate_wandb_run_id(inputs)
+        
+        self.current_task = ModelScoreTaskData(inputs=inputs, wandb_run_id=wandb_run_id)
+        
+        bt.logging.info(f"Created scoring task with wandb run ID: {wandb_run_id}")
 
         # Create a queue for getting the result
         result_queue = multiprocessing.Queue()
