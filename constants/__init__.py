@@ -28,12 +28,11 @@ ROOT_DIR = Path(__file__).parent.parent
 MAX_HUGGING_FACE_BYTES: int = 18 * 1024 * 1024 * 1024
 O1_MODEL_ID = "o1"
 V1_MODEL_ID = "v1"
-V2_MODEL_ID = "v2"
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
         reward_percentage=1.0,
-        competition_id=V2_MODEL_ID,
+        competition_id="v3",
     ),
 ]
 ORIGINAL_COMPETITION_ID = O1_MODEL_ID
