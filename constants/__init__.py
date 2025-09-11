@@ -28,12 +28,11 @@ ROOT_DIR = Path(__file__).parent.parent
 MAX_HUGGING_FACE_BYTES: int = 18 * 1024 * 1024 * 1024
 O1_MODEL_ID = "o1"
 V1_MODEL_ID = "v1"
-V2_MODEL_ID = "v2"
 # Schedule of model architectures
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
         reward_percentage=1.0,
-        competition_id=V2_MODEL_ID,
+        competition_id="v3",
     ),
 ]
 ORIGINAL_COMPETITION_ID = O1_MODEL_ID
@@ -76,4 +75,11 @@ BURN_UID = 111
 # Portion of the total weight routed to BURN_UID.
 BURN_RATE = 0.95
 #VoiceBench
-VOICEBENCH_MAX_SAMPLES=100
+# to run on full dataset, set VOICEBENCH_MAX_SAMPLES to 100000, and make the dict empty.
+VOICEBENCH_MAX_SAMPLES=100000
+SAMPLES_PER_DATASET = {
+   'commoneval': 50, # 200
+   'wildvoice': 100, # 1000
+   'advbench': 100, # 520
+   'ifeval': 50 # 345
+}
