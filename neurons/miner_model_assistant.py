@@ -77,6 +77,91 @@ class MinerModelAssistant(VoiceAssistant):
         
         return response.json()
     
+    def inference_v2v(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 60) -> Dict[str, Any]:
+        """
+        Send voice-to-voice inference request to container.
+
+        Args:
+            url: Container API URL
+            audio_array: Input audio array
+            sample_rate: Audio sample rate
+            timeout: Request timeout in seconds
+
+        Returns:
+            Dict containing inference results with audio and text
+        """
+        try:
+            # Input audio preprocessing 
+            processed_audio = audio_array
+            processed_sample_rate = sample_rate
+
+            # Ensure mono
+            if processed_audio.ndim == 2:
+                processed_audio = processed_audio.mean(axis=1)
+
+            # Ensure float32
+            processed_audio = processed_audio.astype(np.float32)
+
+            # Resample to 16kHz if needed
+            TARGET_SR = 16000
+            if processed_sample_rate != TARGET_SR:
+                import librosa
+                processed_audio = librosa.resample(processed_audio, orig_sr=processed_sample_rate, target_sr=TARGET_SR)
+                processed_sample_rate = TARGET_SR
+
+            # Add channel dimension (1, T) - matching streamlit app
+            processed_audio = processed_audio.reshape(1, -1)
+
+            # Convert audio array to base64
+            buffer = io.BytesIO()
+            np.save(buffer, processed_audio)
+            audio_b64 = base64.b64encode(buffer.getvalue()).decode()
+
+            # Send request to v2v endpoint (not v2t!)
+            response = requests.post(
+                f"{url}/api/v1/v2v",
+                json={
+                    "audio_data": audio_b64,
+                    "sample_rate": processed_sample_rate
+                },
+                timeout=timeout
+            )
+
+            response.raise_for_status()
+
+            # Parse response
+            result = response.json()
+            response_data = {}
+
+            # Get audio if available (for v2v models) - enhanced processing
+            if "audio_data" in result:
+                audio_bytes = base64.b64decode(result["audio_data"])
+                audio = np.load(io.BytesIO(audio_bytes), allow_pickle=False)
+
+                # Handle dimension (1, T) -> (T,) matching streamlit app
+                if audio.ndim == 2:
+                    audio = audio.squeeze(0)
+
+                # Store numpy array for compatibility
+                response_data["audio"] = audio
+
+                # Convert to WAV bytes for file saving - matching streamlit app
+                import soundfile as sf
+                wav_buf = io.BytesIO()
+                sf.write(wav_buf, audio, processed_sample_rate, format='WAV')
+                wav_buf.seek(0)
+                response_data["audio_wav_bytes"] = wav_buf.getvalue()
+                response_data["audio_sample_rate"] = processed_sample_rate
+
+            return response_data
+
+        except requests.exceptions.RequestException as e:
+            bt.logging.error(f"V2V inference request failed: {str(e)}")
+            raise
+        except Exception as e:
+            bt.logging.error(f"inside docker_manager: Failed to process v2v inference result: {str(e)}")
+            raise
+    
     def generate_audio(self, audio, max_new_tokens=2048):
         """
         Generate text response from audio input (legacy interface).

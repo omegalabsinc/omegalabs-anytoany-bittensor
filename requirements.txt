@@ -28,6 +28,8 @@ langdetect
 loguru>=0.7.2
 nltk>=3.8
 immutabledict
+# UTMOSv2 for TTS
+git+https://github.com/sarulab-speech/UTMOSv2.git#egg=UTMOSv2
 
 # For numerical operations
 numpy
