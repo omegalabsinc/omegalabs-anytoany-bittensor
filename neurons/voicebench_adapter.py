@@ -25,7 +25,7 @@ from neurons.voicebench_evaluators import (
     OpenEvaluator, MCQEvaluator, IFEvaluator, 
     BBHEvaluator, HarmEvaluator
 )
-from constants import VOICEBENCH_MAX_SAMPLES, SAMPLES_PER_DATASET
+from constants import VOICEBENCH_MAX_SAMPLES, SAMPLES_PER_DATASET, VOICEBENCH_DATASETS
 
 # Dataset to evaluator mapping based on VoiceBench DATASETS_CONFIG
 DATASET_EVALUATOR_MAP = {
@@ -547,22 +547,7 @@ class VoiceBenchEvaluator:
     Main evaluator that runs VoiceBench evaluation on Docker-containerized models.
     """
     
-    # All available VoiceBench datasets with their appropriate splits. which datasets to run.
-    VOICEBENCH_DATASETS = {
-        # 'alpacaeval': ['test'],
-        # 'alpacaeval_full': ['test'], 
-        'commoneval': ['test'],
-        'wildvoice': ['test'],
-        # 'openbookqa': ['test'],
-        # 'mmsu': ['physics'],  # Use one specific domain instead of 'test'
-        # 'sd-qa': ['usa'],  # Using USA dataset only
-        # 'mtbench': ['test'],
-        'ifeval': ['test'],
-        # 'bbh': ['test'],
-        'advbench': ['test']
-    }
-    
-    def __init__(self, max_samples_per_dataset: Optional[int] = None):
+    def __init__(self):
         """
         Initialize the VoiceBench evaluator.
         
@@ -570,8 +555,7 @@ class VoiceBenchEvaluator:
             max_samples_per_dataset: Maximum number of samples to evaluate per dataset.
                                     None means evaluate all samples (default).
         """
-        self.max_samples_per_dataset = max_samples_per_dataset
-        bt.logging.info(f"VoiceBenchEvaluator initialized with max_samples={max_samples_per_dataset or 'all'}")
+        bt.logging.info(f"VoiceBenchEvaluator initialized")
     
     def _generate_with_timeout(self, func, *args, timeout=30):
         """
@@ -609,18 +593,13 @@ class VoiceBenchEvaluator:
     
     def inference_model(
         self,
-        container_url: str,
-        docker_manager: DockerManager,
-        datasets: Optional[List[str]] = None,
-        splits: Optional[List[str]] = None,
-        modality: str = 'audio'
+        container_url: str
     ) -> Dict[str, Any]:
         """
         Evaluate a Docker-containerized model using VoiceBench.
         
         Args:
             container_url: URL of the running Docker container
-            docker_manager: DockerManager instance
             datasets: List of VoiceBench datasets to evaluate on (None = all datasets)
             splits: List of data splits to use (None = use dataset-specific splits)
             modality: Evaluation modality ('audio', 'text', or 'ttft')
@@ -628,18 +607,14 @@ class VoiceBenchEvaluator:
         Returns:
             Dictionary containing evaluation results
         """
-        adapter = DockerModelAdapter(container_url, docker_manager)
         results = {}
-        
-        # Use all datasets if none specified
-        if datasets is None:
-            datasets_to_eval = self.VOICEBENCH_DATASETS
-        else:
-            datasets_to_eval = {k: self.VOICEBENCH_DATASETS[k] for k in datasets if k in self.VOICEBENCH_DATASETS}
-        
-        for dataset_name, dataset_splits in datasets_to_eval.items():
+
+        miner_assistant = MinerModelAssistant(api_url=container_url) # just a placeholder for inference functions.
+
+        datasets_to_eval = VOICEBENCH_DATASETS
+                
+        for dataset_name, splits_to_use in datasets_to_eval.items():
             # Use dataset-specific splits if none provided
-            splits_to_use = splits if splits is not None else dataset_splits
             max_samples = SAMPLES_PER_DATASET.get(dataset_name, VOICEBENCH_MAX_SAMPLES)
             for split in splits_to_use:
                 try:
@@ -661,7 +636,7 @@ class VoiceBenchEvaluator:
                     
                     # Run Inference with indices
                     dataset_results = self._inference_dataset(
-                        adapter, dataset, dataset_name, split, modality, dataset_indices
+                        miner_assistant, dataset, dataset_name, split, dataset_indices
                     )
                     
                     results[f"{dataset_name}_{split}"] = dataset_results
@@ -671,96 +646,19 @@ class VoiceBenchEvaluator:
                     results[f"{dataset_name}_{split}"] = {"error": str(e)}
         
         return results
-    
-    def _inference_with_adapter(
-        self,
-        model_adapter,
-        datasets: Optional[List[str]] = None,
-        splits: Optional[List[str]] = None,
-        modality: str = 'audio'
-    ) -> Dict[str, Any]:
-        """
-        Run inference on model using a pre-created adapter.
-        
-        This method loads datasets and runs inference to collect model responses.
-        The actual evaluation/scoring happens separately in calculate_voicebench_scores_with_status.
-        
-        Args:
-            model_adapter: Pre-configured model adapter (DockerModelAdapter or ServerModelAdapter)
-            datasets: List of VoiceBench datasets to run inference on (None = all datasets)
-            splits: List of data splits to use (None = use dataset-specific splits)
-            modality: Inference modality ('audio', 'text', or 'ttft')
-            
-        Returns:
-            Dictionary containing inference results (responses from the model)
-        """
-        results = {}
-        
-        # Use all datasets if none specified
-        if datasets is None:
-            datasets_to_eval = self.VOICEBENCH_DATASETS
-        else:
-            datasets_to_eval = {k: self.VOICEBENCH_DATASETS[k] for k in datasets if k in self.VOICEBENCH_DATASETS}
-        
-        for dataset_name, dataset_splits in datasets_to_eval.items():
-            # Use dataset-specific splits if none provided
-            splits_to_use = splits if splits is not None else dataset_splits
-            max_samples = SAMPLES_PER_DATASET.get(dataset_name, VOICEBENCH_MAX_SAMPLES)
-            for split in splits_to_use:
-                try:
-                    # Load VoiceBench dataset
-                    dataset = load_dataset('hlt-lab/voicebench', dataset_name, split=split)
-                    dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
-                    
-                    # Apply sample limit if configured and track indices
-                    dataset_indices = None
-                    if max_samples and len(dataset) > max_samples:
-                        # dataset_indices = list(range(max_samples))
-                        # random samples
-                        dataset_indices = random.sample(range(len(dataset)), max_samples)
 
-                        dataset = dataset.select(dataset_indices)
-                        bt.logging.info(f"Limited {dataset_name}_{split} to {max_samples} samples")
-                    else:
-                        dataset_indices = list(range(len(dataset)))
-                    
-                    # Run Inference with indices
-                    dataset_results = self._inference_dataset(
-                        model_adapter, dataset, dataset_name, split, modality, dataset_indices
-                    )
-                    
-                    results[f"{dataset_name}_{split}"] = dataset_results
-                    
-                except Exception as e:
-                    bt.logging.error(f"Error evaluating {dataset_name}_{split}: {e}")
-                    results[f"{dataset_name}_{split}"] = {"error": str(e)}
-        
-        return results
-    
     def _inference_dataset(
         self,
-        model_adapter: DockerModelAdapter,
+        model_assistant: MinerModelAssistant,
         dataset,
         dataset_name: str,
         split: str,
-        modality: str,
         dataset_indices: List[int] = None
     ) -> Dict[str, Any]:
-        """
-        This is inference on Miner model.
         
-        Args:
-            model_adapter: DockerModelAdapter instance
-            dataset: Loaded dataset
-            dataset_name: Name of the dataset
-            split: Data split
-            modality: Evaluation modality #TODO: No need for this. Only using for audio-to-text.
-            
-        Returns:
-            Inference results for this dataset
-        """
         responses = []
-        
+        modality = 'audio'# unnecessary flag, remove later might be used somewhere.
+
         # Generate responses with timeout and retry logic
         for i, item in enumerate(dataset):
             # Get the original HuggingFace dataset index
@@ -777,37 +675,13 @@ class VoiceBenchEvaluator:
                     # Add timeout for individual inference calls
                     start_time = time.time()
                     
-                    if modality == 'audio':
-                        # Check if audio field exists
-                        if 'audio' not in item:
-                            bt.logging.warning(f"No audio field in item {i+1}, skipping")
-                            response = ""
-                        else:
-                            audio_data = item['audio']
-                            # bt.logging.info(f"Audio data type: {type(audio_data)}")
-                            # bt.logging.info(f"Audio data keys: {audio_data.keys() if hasattr(audio_data, 'keys') else 'N/A'}")
-                            
-                            # Log the exact data being passed
-                            # if isinstance(audio_data, dict):
-                            #     bt.logging.info(f"Audio dict keys: {list(audio_data.keys())}")
-                            #     if 'array' in audio_data:
-                            #         bt.logging.info(f"Array shape: {audio_data['array'].shape if hasattr(audio_data['array'], 'shape') else 'N/A'}")
-                            #     if 'sampling_rate' in audio_data:
-                            #         bt.logging.info(f"Sampling rate: {audio_data['sampling_rate']}")
-                            
-                            response = self._generate_with_timeout(
-                                model_adapter.generate_audio, audio_data, timeout=200
-                            )
-                    # elif modality == 'text':
-                    #     response = self._generate_with_timeout(
-                    #         model_adapter.generate_text, item['prompt'], timeout=30
-                    #     )
-                    # elif modality == 'ttft':
-                    #     response = self._generate_with_timeout(
-                    #         model_adapter.generate_ttft, item['audio'], timeout=30
-                    #     )
-                    else:
-                        raise ValueError(f"Unsupported modality: {modality}")
+                    # Get audio data
+                    audio_data = item['audio']['array']
+                    sample_rate = item['audio']['sampling_rate']
+                    
+                    response = self._generate_with_timeout(
+                        model_assistant.inference_v2t, audio_data, sample_rate
+                    )
                     
                     # Validate response
                     if not isinstance(response, str):
@@ -1002,7 +876,7 @@ def run_voicebench_evaluation_miner(
     Returns:
         Complete evaluation results including scores
     """
-    evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
+    evaluator = VoiceBenchEvaluator()
     
     bt.logging.info("Starting comprehensive VoiceBench evaluation via miner API...")
     
@@ -1031,18 +905,13 @@ def run_voicebench_evaluation_miner(
 
 
 def run_voicebench_evaluation(
-    container_url: str,
-    docker_manager: DockerManager,
-    datasets: Optional[List[str]] = None,
-    splits: Optional[List[str]] = None,
-    max_samples_per_dataset: Optional[int] = None
+    container_url: str
 ) -> Dict[str, Any]:
     """
     Convenience function to run VoiceBench evaluation on a Docker model.
     
     Args:
         container_url: URL of the running Docker container
-        docker_manager: DockerManager instance
         datasets: List of datasets to evaluate (None = all VoiceBench datasets)
         splits: List of splits to evaluate (None = use dataset-specific splits)
         max_samples_per_dataset: Maximum number of samples per dataset (None = all samples)
@@ -1053,17 +922,12 @@ def run_voicebench_evaluation(
             'evaluation_status': status.get('overall', {})
             }
     """
-    evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
-    
+    evaluator = VoiceBenchEvaluator()
+
     bt.logging.info("Starting VoiceBench inference across all datasets...")
-    #TODO: create docker adapter here and use inference_with_adapter, no need to two seperate methods.
     # Run model inference on all VoiceBench datasets
     results = evaluator.inference_model(
-        container_url=container_url,
-        docker_manager=docker_manager,
-        datasets=datasets,  # None means all datasets
-        splits=splits,      # None means dataset-specific splits
-        modality='audio'
+        container_url=container_url
     )
     """
     Output format:

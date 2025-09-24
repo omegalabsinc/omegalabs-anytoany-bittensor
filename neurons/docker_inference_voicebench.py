@@ -24,8 +24,9 @@ from datasets import load_dataset, Audio
 from neurons.docker_manager import DockerManager
 from evaluation.S2S.distance import S2SMetrics
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
-from constants import penalty_score, VOICEBENCH_MAX_SAMPLES
+from constants import penalty_score, VOICEBENCH_WEIGHT, VOICE_MOS_WEIGHT
 from utilities.compare_block_and_model import compare_block_and_model
+from neurons.miner_model_assistant import MinerModelAssistant
 
 # VoiceBench integration
 from neurons.voicebench_adapter import run_voicebench_evaluation
@@ -118,7 +119,7 @@ def _compute_s2s_legacy_metrics(container_url: str, docker_manager: DockerManage
         return {"combined_score": penalty_score, "error": str(e)}
 
 
-def run_voicebench_scoring(
+def run_full_scoring(
     hf_repo_id: str,
     hotkey: str,
     block: int,
@@ -172,15 +173,9 @@ def run_voicebench_scoring(
         # Run VoiceBench evaluation
         voicebench_score = 0.0
         bt.logging.info("Running comprehensive VoiceBench evaluation...")
-        # Get max samples from environment or use default
-        max_samples = VOICEBENCH_MAX_SAMPLES
         
         voicebench_results = run_voicebench_evaluation(
-            container_url=container_url,
-            docker_manager=docker_manager,
-            datasets=None,  # Use all datasets
-            splits=None,    # Use dataset-specific splits
-            max_samples_per_dataset=max_samples
+            container_url=container_url
         )
         
         voicebench_score = voicebench_results['voicebench_scores'].get('overall', 0.0)
@@ -193,9 +188,7 @@ def run_voicebench_scoring(
         # Run Voice MOS evaluation
         bt.logging.info("Running Voice MOS evaluation...")
         voice_mos_results = run_voice_mos_evaluation(
-            container_url=container_url,
-            docker_manager=docker_manager,
-            max_samples_per_dataset=max_samples
+            container_url=container_url
         )
 
         voice_mos_score = voice_mos_results.get('voice_mos_score', 0.0)
@@ -204,10 +197,7 @@ def run_voicebench_scoring(
 
         bt.logging.info(f"Voice MOS evaluation completed. Score: {voice_mos_score:.3f}")
 
-        # Combine scores (configurable weights)
-        voicebench_weight = 0.7  # 70% text accuracy
-        voice_mos_weight = 0.3   # 30% voice quality
-        combined_score = (voicebench_score * voicebench_weight) + (voice_mos_score * voice_mos_weight)
+        combined_score = (voicebench_score * VOICEBENCH_WEIGHT) + (voice_mos_score * VOICE_MOS_WEIGHT)
 
         results['combined_score'] = combined_score
         results['raw_scores'] = {
@@ -245,8 +235,6 @@ def run_voicebench_scoring(
 
 def run_voice_mos_evaluation(
     container_url: str,
-    docker_manager: DockerManager,
-    max_samples_per_dataset: int = 10
 ) -> Dict[str, Any]:
     """
     Run voice quality evaluation using v2v endpoint and MOS scoring.
@@ -260,9 +248,7 @@ def run_voice_mos_evaluation(
         # Inference phase - call v2v endpoint, save audio files
         inference_results = inference_voice_mos(
             container_url=container_url,
-            docker_manager=docker_manager,
-            temp_audio_dir=temp_audio_dir,
-            max_samples_per_dataset=max_samples_per_dataset
+            temp_audio_dir=temp_audio_dir
         )
 
         # Scoring phase - get MOS score from saved audio
@@ -301,12 +287,11 @@ def run_voice_mos_evaluation(
 
 def inference_voice_mos(
     container_url: str,
-    docker_manager: DockerManager,
     temp_audio_dir: str,
-    max_samples_per_dataset: int
 ) -> Dict[str, Any]:
     """
     Call v2v endpoint on VoiceBench samples and save audio outputs.
+    Using only 2 random samples per dataset.
     """
     # VoiceBench datasets (same as used in voicebench_adapter.py)
     VOICEBENCH_DATASETS = {
@@ -315,11 +300,13 @@ def inference_voice_mos(
         'ifeval': ['test'],
         'advbench': ['test']
     }
+    miner_assistant = MinerModelAssistant(api_url=container_url)
 
     total_samples = 0
     success_count = 0
     sample_details = []
     datasets_evaluated = []
+    # how many samples to use here?? I think 2 random from each dataset should be fine for now.
 
     for dataset_name, splits in VOICEBENCH_DATASETS.items():
         bt.logging.info(f"Processing dataset: {dataset_name}")
@@ -332,29 +319,26 @@ def inference_voice_mos(
 
             # Get random samples
             dataset_size = len(dataset)
-            sample_count = min(max_samples_per_dataset, dataset_size)
+            sample_count = min(2, dataset_size)
             sample_indices = random.sample(range(dataset_size), sample_count)
 
             for sample_idx in sample_indices:
-                total_samples += 1
-                sample = dataset[sample_idx]
+                try:
+                    total_samples += 1
+                    sample = dataset[sample_idx]
 
-                # Get audio data
-                audio_data = sample['audio']['array']
-                sample_rate = sample['audio']['sampling_rate']
+                    # Get audio data
+                    audio_data = sample['audio']['array']
+                    sample_rate = sample['audio']['sampling_rate']
 
-                # Call v2v endpoint
-                start_time = time.time()
-                response = docker_manager.inference_v2v(
-                    url=container_url,
-                    audio_array=audio_data,
-                    sample_rate=sample_rate,
-                    timeout=30
-                )
-                inference_time = time.time() - start_time
+                    # Call v2v endpoint
+                    start_time = time.time()
+                    response = miner_assistant.inference_v2v(
+                        audio_array=audio_data,
+                        sample_rate=sample_rate
+                    )
+                    inference_time = time.time() - start_time
 
-                # Check if we got audio response
-                if 'audio_wav_bytes' in response and response['audio_wav_bytes'] is not None:
                     # Save audio file with flat naming
                     filename = f"{dataset_name}_{split}_{sample_idx:04d}.wav"
                     audio_path = os.path.join(temp_audio_dir, filename)
@@ -374,9 +358,11 @@ def inference_voice_mos(
                         'inference_time': inference_time,
                         'success': True
                     })
-
-                else:
-                    bt.logging.warning(f"No audio in response for {dataset_name}_{sample_idx}")
+                    
+                except Exception as e:
+                    bt.logging.error(f"Error processing {dataset_name}_{sample_idx}: {e}")
+                    traceback.print_exc()
+                    inference_time = time.time() - start_time if 'start_time' in locals() else 0.0
                     sample_details.append({
                         'dataset': dataset_name,
                         'split': split,
@@ -384,7 +370,7 @@ def inference_voice_mos(
                         'filename': None,
                         'inference_time': inference_time,
                         'success': False,
-                        'error': 'No audio in response'
+                        'error': str(e)
                     })
 
     success_rate = success_count / total_samples if total_samples > 0 else 0.0
@@ -459,7 +445,7 @@ if __name__ == "__main__":
     
     for hf_repo_id in test_repos:
         bt.logging.info(f"Testing hybrid evaluation on {hf_repo_id}")
-        results = run_voicebench_scoring(
+        results = run_full_scoring(
             hf_repo_id=hf_repo_id,
             hotkey=None,
             block=5268488,
