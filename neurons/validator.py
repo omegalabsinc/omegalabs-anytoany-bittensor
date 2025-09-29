@@ -1533,15 +1533,6 @@ class Validator:
                 response.raise_for_status()
                 response_json = response.json()
                 return response_json
-                # if "success" in response_json and not response_json["success"]:
-                #     bt.logging.warning(response_json["message"])
-                #     return None
-                # elif "success" in response_json and response_json["success"]:
-                #     model_scores = response_json["model_scores"]
-                #     bt.logging.info(f"Retrieved model scores from API")
-                #     return model_scores
-                # if attempt > 0:
-                #     bt.logging.debug(f"Successfully retrieved model scores after {attempt + 1} attempts")
             
             except requests.exceptions.RequestException as e:
                 if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt

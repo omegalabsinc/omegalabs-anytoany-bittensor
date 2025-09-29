@@ -6,23 +6,19 @@ to be evaluated using the VoiceBench framework. It bridges the interface gap
 between VoiceBench's expected model API and the Docker container HTTP API.
 """
 
-import json
 import time
 import signal
-import numpy as np
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import bittensor as bt
 import random
 
 # Remove VoiceBench dependency - everything is now in neurons/
 
 from datasets import load_dataset, Audio
-from neurons.docker_manager import DockerManager
 from neurons.miner_model_assistant import MinerModelAssistant
 from neurons.llm_judge import evaluate_responses_with_llm
 from neurons.voicebench_evaluators import (
-    OpenEvaluator, MCQEvaluator, IFEvaluator, 
+    OpenEvaluator, MCQEvaluator, IFEvaluator,
     BBHEvaluator, HarmEvaluator
 )
 from constants import VOICEBENCH_MAX_SAMPLES, SAMPLES_PER_DATASET, VOICEBENCH_DATASETS
@@ -355,193 +351,6 @@ def calculate_voicebench_scores_with_status(
     
     return scores, status
 
-
-class MinerModelAdapter:
-    """
-    Adapter that makes miner model APIs compatible with VoiceBench evaluation.
-    
-    This class implements the VoiceBench model interface while internally calling
-    miner model HTTP APIs for inference.
-    """
-    
-    def __init__(self, api_url: str, timeout: int = 600):
-        """
-        Initialize the adapter.
-        
-        Args:
-            api_url: URL of the miner model API
-            timeout: Request timeout in seconds
-        """
-        self.miner_assistant = MinerModelAssistant(api_url=api_url, timeout=timeout)
-        
-    def generate_audio(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response from audio input (VoiceBench interface).
-        
-        Args:
-            audio_input: Audio data dict with 'array' and 'sampling_rate' keys
-            
-        Returns:
-            Text response from the model
-        """
-        # Validate input
-        if not isinstance(audio_input, dict):
-            bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
-            raise ValueError("audio_input must be a dictionary")
-        
-        if 'array' not in audio_input or 'sampling_rate' not in audio_input:
-            raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
-        
-        audio_array = np.array(audio_input['array'])
-        sample_rate = audio_input['sampling_rate']
-        
-        # Validate audio data
-        if audio_array.size == 0:
-            bt.logging.warning("Empty audio array provided")
-            raise ValueError(f"Empty audio array provided")
-
-        if sample_rate <= 0:
-            raise ValueError(f"Invalid sample rate: {sample_rate}")
-        
-        # Call server inference
-        result = self.miner_assistant.inference_v2t(
-            audio_array=audio_array,
-            sample_rate=sample_rate
-        )
-        
-        # Validate and extract text response
-        if not isinstance(result, dict):
-            bt.logging.warning(f"Unexpected result type: {type(result)}")
-            return ""
-        
-        text_response = result.get('text')
-        
-        if not isinstance(text_response, str):
-            bt.logging.error(f"Expected string response but got {type(text_response)}: {text_response}")
-            raise ValueError("Model response must be a string")
-        
-        return text_response.strip()
-    
-    def generate_text(self, text_input: str) -> str:
-        """
-        Generate response from text input.
-        
-        Args:
-            text_input: Text prompt
-            
-        Returns:
-            Text response (error message for audio-only models)
-        """
-        return self.miner_assistant.generate_text(text_input)
-    
-    def generate_ttft(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response for time-to-first-token measurement.
-        
-        Args:
-            audio_input: Audio data dict
-            
-        Returns:
-            Text response
-        """
-        return self.generate_audio(audio_input)
-
-
-class DockerModelAdapter:
-    """
-    Adapter that makes Docker-containerized models compatible with VoiceBench evaluation.
-    
-    This class implements the VoiceBench model interface while internally managing
-    Docker containers for model inference.
-    """
-    
-    def __init__(self, container_url: str, docker_manager: DockerManager):
-        """
-        Initialize the adapter.
-        
-        Args:
-            container_url: URL of the running Docker container
-            docker_manager: DockerManager instance for container operations
-        """
-        self.container_url = container_url
-        self.docker_manager = docker_manager
-        
-    def generate_audio(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response from audio input (VoiceBench interface).
-        
-        Args:
-            audio_input: Audio data dict with 'array' and 'sampling_rate' keys
-            
-        Returns:
-            Text response from the model
-        """
-        
-        # Validate input
-        if not isinstance(audio_input, dict):
-            bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
-            raise ValueError("audio_input must be a dictionary")
-        
-        if 'array' not in audio_input or 'sampling_rate' not in audio_input:
-            raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
-        
-        audio_array = np.array(audio_input['array'])
-        sample_rate = audio_input['sampling_rate']
-        
-        # Validate audio data
-        if audio_array.size == 0:
-            bt.logging.warning("Empty audio array provided")
-            raise ValueError(f"Empty audio array provided")
-
-        if sample_rate <= 0:
-            raise ValueError(f"Invalid sample rate: {sample_rate}")
-        
-        # Call Docker container inference
-        result = self.docker_manager.inference_v2t(
-            url=self.container_url,
-            audio_array=audio_array,
-            sample_rate=sample_rate
-        )
-        
-        # Validate and extract text response
-        if not isinstance(result, dict):
-            bt.logging.warning(f"Unexpected result type: {type(result)}")
-            return ""
-        
-        # Handle voice-to-voice models that may not return text
-        text_response = result.get('text')
-        
-        if not isinstance(text_response, str):
-            bt.logging.error(f"Expected string response but got {type(text_response)}: {text_response}")
-            raise ValueError("Model response must be a string")
-        
-        return text_response.strip()
-    
-    def generate_text(self, text_input: str) -> str:
-        """
-        Generate response from text input (fallback for text-only evaluation).
-        
-        Args:
-            text_input: Text prompt
-            
-        Returns:
-            Text response (empty for audio-only models)
-        """
-        return ""
-    
-    def generate_ttft(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response for time-to-first-token measurement.
-        
-        Args:
-            audio_input: Audio data dict
-            
-        Returns:
-            Text response
-        """
-        return self.generate_audio(audio_input)
-
-
 class VoiceBenchEvaluator:
     """
     Main evaluator that runs VoiceBench evaluation on Docker-containerized models.
@@ -609,7 +418,7 @@ class VoiceBenchEvaluator:
         """
         results = {}
 
-        miner_assistant = MinerModelAssistant(api_url=container_url) # just a placeholder for inference functions.
+        miner_assistant = MinerModelAssistant(base_url=container_url) # just a placeholder for inference functions.
 
         datasets_to_eval = VOICEBENCH_DATASETS
                 
@@ -735,174 +544,6 @@ class VoiceBenchEvaluator:
             'success_rate': success_rate,
             'responses': responses
         }
-    
-    def run_gpt_evaluation(self, results_file: str) -> Dict[str, Any]:
-        """
-        Run GPT-4 evaluation on generated responses using llm_judge.
-        
-        Args:
-            results_file: Path to results file
-            
-        Returns:
-            GPT evaluation results
-        """
-        try:
-            # Load results from file
-            data = []
-            with open(results_file, 'r') as f:
-                for line in f:
-                    json_obj = json.loads(line.strip())
-                    data.append(json_obj)
-            
-            # Use the llm_judge module to evaluate responses
-            bt.logging.info(f"Running LLM evaluation on {len(data)} samples")
-            eval_results = evaluate_responses_with_llm(data)
-            
-            # Save evaluation results
-            eval_file = results_file.replace('.jsonl', '_eval.jsonl')
-            with open(eval_file, 'w') as f:
-                for result in eval_results:
-                    f.write(json.dumps(result) + '\n')
-            
-            return {'gpt_evaluation': eval_results}
-                
-        except Exception as e:
-            bt.logging.error(f"GPT evaluation error: {str(e)}")
-            return {'error': f'GPT evaluation error: {str(e)}'}
-    
-    def calculate_final_scores(self, results: Dict[str, Any]) -> Dict[str, float]:
-        """
-        Calculate final VoiceBench scores with dataset-specific weighting.
-        
-        Args:
-            results: Complete evaluation results
-            
-        Returns:
-            Dictionary of final scores
-        """
-        scores = {}
-        dataset_weights = {
-            # Core conversational datasets (higher weight)
-            'alpacaeval_test': 2.0,
-            'commoneval_test': 2.0,
-            'wildvoice_test': 2.0,
-            
-            # Reasoning and QA datasets
-            'bbh_test': 1.5,
-            'mmsu_test': 1.5,
-            'openbookqa_test': 1.0,
-            
-            # Safety and instruction following
-            'advbench_test': 1.5,
-            'ifeval_test': 1.5,
-            
-            # Multi-turn and regional
-            'mtbench_test': 1.0,
-            'sd-qa_aus': 0.8,
-            'sd-qa_usa': 0.8,
-            'sd-qa_gbr': 0.8,
-            'sd-qa_ind': 0.8,
-            
-            # Full alpaca dataset
-            'alpacaeval_full_test': 1.0
-        }
-        
-        weighted_scores = {}
-        total_weight = 0.0
-        
-        for dataset_key, dataset_results in results.items():
-            if 'error' in dataset_results:
-                scores[dataset_key] = 0.0
-                continue
-            
-            # Calculate dataset score based on success rate and response quality
-            success_rate = dataset_results.get('success_rate', 0.0)
-            
-            # For datasets with responses, calculate average response length as quality indicator
-            responses = dataset_results.get('responses', [])
-            if responses:
-                valid_responses = [r for r in responses if 'error' not in r and r.get('response', '').strip()]
-                voice_only_responses = [r for r in responses if 'error' not in r and r.get('response', '') == '[VOICE_OUTPUT_NO_TEXT]']
-                
-                if valid_responses:
-                    avg_response_length = sum(len(r.get('response', '')) for r in valid_responses) / len(valid_responses)
-                    # Normalize response length (assume good responses are 50-500 chars)
-                    length_score = min(1.0, max(0.1, avg_response_length / 200.0))
-                    # Combine success rate with response quality
-                    dataset_score = (success_rate * 0.7) + (length_score * 0.3)
-                elif voice_only_responses:
-                    # Handle voice-to-voice only models
-                    # They get partial credit for producing audio output
-                    bt.logging.info(f"Dataset {dataset_key}: Voice-to-voice only model detected ({len(voice_only_responses)} voice responses)")
-                    dataset_score = success_rate * 0.3  # Reduced score for voice-only models in text evaluation
-                else:
-                    dataset_score = success_rate * 0.5  # Penalize for no valid responses
-            else:
-                dataset_score = success_rate
-            
-            scores[dataset_key] = dataset_score
-            
-            # Apply weighting for overall score calculation
-            weight = dataset_weights.get(dataset_key, 1.0)
-            weighted_scores[dataset_key] = dataset_score * weight
-            total_weight += weight
-        
-        # Calculate weighted overall score
-        if total_weight > 0:
-            scores['overall'] = sum(weighted_scores.values()) / total_weight
-        else:
-            scores['overall'] = 0.0
-            
-        return scores
-
-
-def run_voicebench_evaluation_miner(
-    api_url: str,
-    datasets: Optional[List[str]] = None,
-    splits: Optional[List[str]] = None,
-    timeout: int = 600,
-    max_samples_per_dataset: Optional[int] = None
-) -> Dict[str, Any]:
-    """
-    Convenience function to run VoiceBench evaluation on a miner model API.
-    
-    Args:
-        api_url: URL of the miner model API
-        datasets: List of datasets to evaluate (None = all VoiceBench datasets)
-        splits: List of splits to evaluate (None = use dataset-specific splits)
-        timeout: Request timeout for API calls
-        max_samples_per_dataset: Maximum number of samples per dataset (None = all samples)
-        
-    Returns:
-        Complete evaluation results including scores
-    """
-    evaluator = VoiceBenchEvaluator()
-    
-    bt.logging.info("Starting comprehensive VoiceBench evaluation via miner API...")
-    
-    # Create miner model adapter
-    adapter = MinerModelAdapter(api_url=api_url, timeout=timeout)
-    # Run model inference on all VoiceBench datasets
-    results = evaluator._inference_with_adapter(
-        model_adapter=adapter,
-        datasets=datasets,  # None means all datasets
-        splits=splits,      # None means dataset-specific splits
-        modality='audio'
-    )
-    
-    # Calculate scores using proper evaluators with status tracking
-    bt.logging.info("Starting VoiceBench evaluation with proper evaluators...")
-    scores, status = calculate_voicebench_scores_with_status(results)
-    
-    bt.logging.info(f"VoiceBench evaluation completed.")
-    bt.logging.info(f"Overall score: {scores.get('overall', 0.0):.3f}")
-    bt.logging.info(f"Evaluation status: {status.get('overall', {})}")
-    
-    return {
-        'voicebench_scores': scores,
-        'evaluation_status': status
-    }
-
 
 def run_voicebench_evaluation(
     container_url: str

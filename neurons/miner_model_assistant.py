@@ -16,19 +16,8 @@ from typing import Dict, Any
 
 from constants import V2T_TIMEOUT, V2V_TIMEOUT
 
-class VoiceAssistant:
-    """Base class for voice assistants (matching VoiceBench interface)"""
-    
-    def generate_audio(self, audio, max_new_tokens=2048):
-        """Generate response from audio input"""
-        raise NotImplementedError
-    
-    def generate_text(self, text):
-        """Generate response from text input"""
-        raise NotImplementedError
 
-
-class MinerModelAssistant(VoiceAssistant):
+class MinerModelAssistant():
     """
     Voice assistant that interfaces with miner model APIs.
     
@@ -164,75 +153,3 @@ class MinerModelAssistant(VoiceAssistant):
             return ""
         
         return text_response.strip()
-
-
-class DynamicMinerModelAssistant(MinerModelAssistant):
-    """
-    Dynamic version that can adapt to different miner model API endpoints.
-    
-    This version can be configured for different miner models with different
-    API endpoints and formats.
-    """
-    
-    def __init__(self, base_url="http://localhost", port=8000, endpoint="/api/v1/v2t", timeout=600):
-        """
-        Initialize with flexible URL construction.
-        
-        Args:
-            base_url: Base URL of the miner model service
-            port: Port number
-            endpoint: API endpoint path
-            timeout: Request timeout
-        """
-        api_url = f"{base_url}:{port}{endpoint}"
-        super().__init__(api_url, timeout)
-        self.base_url = base_url
-        self.port = port
-        self.endpoint = endpoint
-    
-    def update_endpoint(self, new_endpoint):
-        """Update the API endpoint dynamically"""
-        self.endpoint = new_endpoint
-        self.api_url = f"{self.base_url}:{self.port}{new_endpoint}"
-        bt.logging.info(f"Updated API endpoint to: {self.api_url}")
-
-
-def create_miner_assistant(model_config: Dict[str, Any]) -> MinerModelAssistant:
-    """
-    Factory function to create miner model assistants based on configuration.
-    
-    Args:
-        model_config: Configuration dict with API details
-        
-    Returns:
-        MinerModelAssistant: Configured assistant instance
-    """
-    if 'api_url' in model_config:
-        # Direct URL configuration
-        return MinerModelAssistant(
-            api_url=model_config['api_url'],
-            timeout=model_config.get('timeout', 600)
-        )
-    else:
-        # Component-based URL construction
-        return DynamicMinerModelAssistant(
-            base_url=model_config.get('base_url', 'http://localhost'),
-            port=model_config.get('port', 8000),
-            endpoint=model_config.get('endpoint', '/api/v1/v2t'),
-            timeout=model_config.get('timeout', 600)
-        )
-
-
-# Example usage configurations
-EXAMPLE_CONFIGS = {
-    'landcruiser_model': {
-        'api_url': 'http://localhost:8000/api/v1/v2t',
-        'timeout': 600
-    },
-    'generic_miner': {
-        'base_url': 'http://localhost',
-        'port': 8000,
-        'endpoint': '/api/v1/inference',
-        'timeout': 300
-    }
-}

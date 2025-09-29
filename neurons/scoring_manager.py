@@ -23,8 +23,6 @@ import wandb
 
 from model.model_tracker import ModelTracker
 from constants import MODEL_EVAL_TIMEOUT, NUM_CACHED_MODELS, SUBNET_UID
-from neurons.docker_inference_v2v import run_v2v_scoring
-from neurons.docker_model_scoring import run_o1_scoring
 from neurons.docker_inference_voicebench import run_full_scoring
 from utilities.temp_dir_cache import TempDirCache
 from utilities.gpu import get_gpu_memory, cleanup_gpu_memory
