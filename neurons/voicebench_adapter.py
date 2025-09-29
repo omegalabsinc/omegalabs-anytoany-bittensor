@@ -325,10 +325,15 @@ def calculate_voicebench_scores_with_status(
         """
         scores[dataset_key] = float(score)
         status[dataset_key] = dataset_status
-        
+
+        success_rate = dataset_status['success_rate']
+        scaled_score = float(score) * float(success_rate)
+        # log both scores
+        bt.logging.info(f"Dataset {dataset_key}: raw score={score:.3f}, success_rate={success_rate:.3f}, scaled_score={scaled_score:.3f}")
+
         # Apply weighting for overall score
         weight = dataset_weights.get(dataset_key, 1.0)
-        weighted_scores[dataset_key] = float(score) * weight
+        weighted_scores[dataset_key] = scaled_score * weight
         total_weight += weight
     
     # Calculate weighted overall score
@@ -468,67 +473,54 @@ class VoiceBenchEvaluator:
         responses = []
         modality = 'audio'# unnecessary flag, remove later might be used somewhere.
 
-        # Generate responses with timeout and retry logic
+        # Generate responses with timeout
         for i, item in enumerate(dataset):
             # Get the original HuggingFace dataset index
             hf_index = dataset_indices[i] if dataset_indices else i
             
-            max_retries = 2
-            retry_delay = 1
-            
             if i%50==0:
                 bt.logging.info(f"Processing item {i+1}/{len(dataset)} (HF index: {hf_index})")
             
-            for attempt in range(max_retries + 1):
-                try:
-                    # Add timeout for individual inference calls
-                    start_time = time.time()
-                    
-                    # Get audio data
-                    audio_data = item['audio']['array']
-                    sample_rate = item['audio']['sampling_rate']
-                    
-                    response = self._generate_with_timeout(
-                        model_assistant.inference_v2t, audio_data, sample_rate
-                    )
-                    
-                    # Validate response
-                    if not isinstance(response, str):
-                        response = str(response) if response is not None else ""
-                    
-                    inference_time = time.time() - start_time
-                    
-                    responses.append({
-                        'hf_index': hf_index,  # Add HuggingFace dataset index
-                        'prompt': item.get('prompt', ''),
-                        'response': response,
-                        'reference': item.get('output', ''),
-                        'inference_time': inference_time,
-                        'attempt': attempt + 1,
-                        **{k: v for k, v in item.items() if k not in ['audio', 'prompt', 'output']}
-                    })
-                    
-                    # Success, break retry loop
-                    break
-                    
-                except Exception as e:
-                    bt.logging.warning(f"Error processing item {i+1}/{len(dataset)} (attempt {attempt+1}): {e}")
-                    #TODO: Only retry in certain error cases. Not needed for all errors.
-                    if attempt < max_retries:
-                        bt.logging.info(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                        continue
-                    else:
-                        # Final attempt failed
-                        responses.append({
-                            'hf_index': hf_index,  # Add HuggingFace dataset index
-                            'prompt': item.get('prompt', ''),
-                            'response': '',
-                            'reference': item.get('output', ''),
-                            'error': str(e),
-                            'failed_attempts': attempt + 1
-                        })
-                        break
+            try:
+                # Add timeout for individual inference calls
+                start_time = time.time()
+                
+                # Get audio data
+                audio_data = item['audio']['array']
+                sample_rate = item['audio']['sampling_rate']
+                
+                response = self._generate_with_timeout(
+                    model_assistant.inference_v2t, audio_data, sample_rate
+                )
+                
+                # Validate response
+                if not isinstance(response, str):
+                    response = str(response) if response is not None else ""
+                
+                inference_time = time.time() - start_time
+                
+                responses.append({
+                    'hf_index': hf_index,  # Add HuggingFace dataset index
+                    'prompt': item.get('prompt', ''),
+                    'response': response,
+                    'reference': item.get('output', ''),
+                    'inference_time': inference_time,
+                    'attempt': 1,
+                    **{k: v for k, v in item.items() if k not in ['audio', 'prompt', 'output']}
+                })
+                
+            except Exception as e:
+                bt.logging.warning(f"Error processing item {i+1}/{len(dataset)} : {e}")
+                # Final attempt failed
+                responses.append({
+                    'hf_index': hf_index,  # Add HuggingFace dataset index
+                    'prompt': item.get('prompt', ''),
+                    'response': '',
+                    'reference': item.get('output', ''),
+                    'error': str(e),
+                    'failed_attempts': 1
+                })
+
         
         # Calculate basic metrics
         total_responses = len(responses)
