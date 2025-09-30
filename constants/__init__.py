@@ -68,7 +68,7 @@ PERCENT_IMPROVEMENT = 10 # Minimum percentage improvement required for a model t
 PLAYERS_IN_ABOVE_BASELINE = 3
 PLAYERS_IN_BELOW_BASELINE = 10
 
-V2T_TIMEOUT = 200  # seconds
+V2T_TIMEOUT = 80  # seconds
 V2V_TIMEOUT = 200  # seconds
 
 VOICEBENCH_WEIGHT = 0.7  # Weight of VoiceBench score in final model score
