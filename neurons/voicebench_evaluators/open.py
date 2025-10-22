@@ -37,5 +37,9 @@ class OpenEvaluator(Evaluator):
                     score = float(score)
                 except Exception as e:
                     score = extract_rating(score)
+                if score>5.0:
+                    score = 5.0
+                elif score<1.0:
+                    score = 1.0
                 scores.append(score)
         return {'gpt': np.mean(scores)}
