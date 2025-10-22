@@ -41,5 +41,5 @@ class OpenEvaluator(Evaluator):
                     score = 5.0
                 elif score<1.0:
                     score = 1.0
-                scores.append(score)
+                scores.append(score-1.0)  # Normalize to 0-4 scale
         return {'gpt': np.mean(scores)}

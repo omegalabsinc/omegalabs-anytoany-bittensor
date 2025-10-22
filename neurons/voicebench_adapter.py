@@ -230,8 +230,8 @@ def evaluate_dataset_with_proper_evaluator(
 
         # Extract score based on evaluator output format
         if 'gpt' in eval_result:
-            # OpenEvaluator returns 1-5, normalize to 0-1
-            score = eval_result['gpt'] / 5.0
+            # OpenEvaluator returns 0-4, normalize to 0-1
+            score = eval_result['gpt'] / 4.0
         elif 'acc' in eval_result:
             # MCQ/BBH return 0-100 percentage
             score = eval_result['acc'] / 100.0
