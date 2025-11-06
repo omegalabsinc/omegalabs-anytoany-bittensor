@@ -18,7 +18,6 @@ Usage:
 """
 
 import threading
-import asyncio
 import datetime
 import bittensor as bt
 from typing import Optional
@@ -50,7 +49,6 @@ class SubtensorConnectionManager:
         # For async connection (singleton)
         self._async_subtensor = None
         self._async_created_at = None
-        self._async_lock = None  # Created lazily in async context
 
         bt.logging.debug(
             f"SubtensorConnectionManager initialized with {refresh_interval_hours}h refresh interval"
@@ -126,22 +124,17 @@ class SubtensorConnectionManager:
     # =========================================================================
 
     async def get_async_subtensor(self):
-        if self._async_lock is None:
-            self._async_lock = asyncio.Lock()
-
-        async with self._async_lock:
-            if self._async_subtensor is None or self._async_created_at is None:
-                print
-                await self._create_async_connection()
-            else:
-                age = datetime.datetime.now() - self._async_created_at
-                if age > self.refresh_interval:
-                    bt.logging.info(
-                        f"Async subtensor connection is {age.total_seconds()/3600:.1f}h old; refreshing "
-                        f"(threshold: {self.refresh_interval.total_seconds()/3600:.0f}h)"
-                    )
-                    await self._refresh_async_connection()
-            return self._async_subtensor
+        if self._async_subtensor is None or self._async_created_at is None:
+            await self._create_async_connection()
+        else:
+            age = datetime.datetime.now() - self._async_created_at
+            if age > self.refresh_interval:
+                bt.logging.info(
+                    f"Async subtensor connection is {age.total_seconds()/3600:.1f}h old; refreshing "
+                    f"(threshold: {self.refresh_interval.total_seconds()/3600:.0f}h)"
+                )
+                await self._refresh_async_connection()
+        return self._async_subtensor
 
     async def _create_async_connection(self):
         """
