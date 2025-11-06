@@ -470,63 +470,76 @@ class Validator:
             init_database()
             queue_manager = ModelQueueManager()
 
-        # The below loop iterates across all miner uids and checks to see
-        # if they should be updated.
-        while not self.stop_event.is_set():
-            try:
-                # Get the next uid to check
-                next_uid = next(self.miner_iterator)
+        # Create persistent event loop for this thread
+        # This allows AsyncSubtensor singleton to be reused without "different loop" errors
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        bt.logging.info("Created persistent event loop for update thread")
 
-                # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
-                time_diff = (
-                    dt.datetime.now() - uid_last_checked[next_uid]
-                    if next_uid in uid_last_checked
-                    else None
-                )
-                
-                if time_diff and time_diff < dt.timedelta(minutes=update_delay_minutes):
-                    # If we have seen it within `update_delay_minutes` minutes then sleep until it has been at least `update_delay_minutes` minutes.
-                    time_to_sleep = (
-                        dt.timedelta(minutes=update_delay_minutes) - time_diff
-                    ).total_seconds()
-                    bt.logging.debug(
-                        f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
+        try:
+            # The below loop iterates across all miner uids and checks to see
+            # if they should be updated.
+            while not self.stop_event.is_set():
+                try:
+                    # Get the next uid to check
+                    next_uid = next(self.miner_iterator)
+
+                    # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
+                    time_diff = (
+                        dt.datetime.now() - uid_last_checked[next_uid]
+                        if next_uid in uid_last_checked
+                        else None
                     )
-                    time.sleep(time_to_sleep)
-                
-                bt.logging.debug(f"Updating model for UID={next_uid}")
 
-                # Get their hotkey from the metagraph.
-                hotkey = self.metagraph.hotkeys[next_uid]
+                    if time_diff and time_diff < dt.timedelta(minutes=update_delay_minutes):
+                        # If we have seen it within `update_delay_minutes` minutes then sleep until it has been at least `update_delay_minutes` minutes.
+                        time_to_sleep = (
+                            dt.timedelta(minutes=update_delay_minutes) - time_diff
+                        ).total_seconds()
+                        bt.logging.debug(
+                            f"Update loop has already processed all UIDs in the last {update_delay_minutes} minutes. Sleeping {time_to_sleep:.0f} seconds."
+                        )
+                        time.sleep(time_to_sleep)
 
-                # Compare metadata and tracker, syncing new model from remote store to local if necessary.
-                updated = asyncio.run(self.model_updater.sync_model(hotkey))
+                    bt.logging.debug(f"Updating model for UID={next_uid}")
 
-                metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
-                if metadata is not None and self.is_model_old_enough(metadata):
-                    bt.logging.info(f"Model is old enough for UID={next_uid} with hotkey {hotkey}, metadata: {metadata} , {self.config.run_api}")
-                    if self.config.run_api:
-                        queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
+                    # Get their hotkey from the metagraph.
+                    hotkey = self.metagraph.hotkeys[next_uid]
+
+                    # Compare metadata and tracker, syncing new model from remote store to local if necessary.
+                    # Use persistent loop instead of asyncio.run() to avoid creating new loop each iteration
+                    updated = loop.run_until_complete(self.model_updater.sync_model(hotkey))
+
+                    metadata = self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey)
+                    if metadata is not None and self.is_model_old_enough(metadata):
+                        bt.logging.info(f"Model is old enough for UID={next_uid} with hotkey {hotkey}, metadata: {metadata} , {self.config.run_api}")
+                        if self.config.run_api:
+                            queue_manager.store_updated_model(next_uid, hotkey, metadata, updated)
+                        else:
+                            with self.all_uids_lock:
+                                self.all_uids[metadata.id.competition_id].add(next_uid)
+
+                        bt.logging.debug(f"Updated model for UID={next_uid}. Was new = {updated}")
+                        if updated:
+                            bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}.")
                     else:
-                        with self.all_uids_lock:
-                            self.all_uids[metadata.id.competition_id].add(next_uid)
-                    
-                    bt.logging.debug(f"Updated model for UID={next_uid}. Was new = {updated}")
-                    if updated:
-                        bt.logging.debug(f"Found a new model for UID={next_uid} for competition {metadata.id.competition_id}.")
-                else:
-                    bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
+                        bt.logging.debug(f"Unable to sync model for consensus UID {next_uid} with hotkey {hotkey}")
 
-                uid_last_checked[next_uid] = dt.datetime.now()
-                # Sleep for a bit to avoid spamming the API
-                time.sleep(0.5)
+                    uid_last_checked[next_uid] = dt.datetime.now()
+                    # Sleep for a bit to avoid spamming the API
+                    time.sleep(0.5)
 
-            except Exception as e:
-                bt.logging.error(
-                    f"Error in update loop \n {e} \n {traceback.format_exc()}"
-                )
+                except Exception as e:
+                    bt.logging.error(
+                        f"Error in update loop \n {e} \n {traceback.format_exc()}"
+                    )
 
-        bt.logging.info("Exiting update models loop.")
+            bt.logging.info("Exiting update models loop.")
+
+        finally:
+            # Clean up the event loop when thread exits
+            bt.logging.info("Closing update thread event loop")
+            loop.close()
 
     def clean_models(self, clean_period_minutes: int):
         # The below loop checks to clear out all models in local storage that are no longer referenced.
