@@ -6,26 +6,22 @@ to be evaluated using the VoiceBench framework. It bridges the interface gap
 between VoiceBench's expected model API and the Docker container HTTP API.
 """
 
-import json
 import time
 import signal
-import numpy as np
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List
 import bittensor as bt
 import random
 
 # Remove VoiceBench dependency - everything is now in neurons/
 
 from datasets import load_dataset, Audio
-from neurons.docker_manager import DockerManager
 from neurons.miner_model_assistant import MinerModelAssistant
 from neurons.llm_judge import evaluate_responses_with_llm
 from neurons.voicebench_evaluators import (
-    OpenEvaluator, MCQEvaluator, IFEvaluator, 
+    OpenEvaluator, MCQEvaluator, IFEvaluator,
     BBHEvaluator, HarmEvaluator
 )
-from constants import VOICEBENCH_MAX_SAMPLES, SAMPLES_PER_DATASET
+from constants import VOICEBENCH_MAX_SAMPLES, SAMPLES_PER_DATASET, VOICEBENCH_DATASETS
 
 # Dataset to evaluator mapping based on VoiceBench DATASETS_CONFIG
 DATASET_EVALUATOR_MAP = {
@@ -123,7 +119,9 @@ def evaluate_dataset_with_proper_evaluator(
             for i, response in enumerate(llm_responses):
                 # Extract the llm_score from the response dict
                 # # Convert score to string format expected by OpenEvaluator
-                scores = response.get('score', ['0'])
+                scores = response.get('score')
+                if not scores:# None, not present or empty list
+                    scores = ['1.0']
                 eval_data.append({
                     'score':  scores  # OpenEvaluator expects list of score strings
                 })
@@ -232,8 +230,8 @@ def evaluate_dataset_with_proper_evaluator(
 
         # Extract score based on evaluator output format
         if 'gpt' in eval_result:
-            # OpenEvaluator returns 1-5, normalize to 0-1
-            score = eval_result['gpt'] / 5.0
+            # OpenEvaluator returns 0-4, normalize to 0-1
+            score = eval_result['gpt'] / 4.0
         elif 'acc' in eval_result:
             # MCQ/BBH return 0-100 percentage
             score = eval_result['acc'] / 100.0
@@ -329,10 +327,15 @@ def calculate_voicebench_scores_with_status(
         """
         scores[dataset_key] = float(score)
         status[dataset_key] = dataset_status
-        
+
+        success_rate = dataset_status['success_rate']
+        scaled_score = float(score) * float(success_rate)
+        # log both scores
+        bt.logging.info(f"Dataset {dataset_key}: raw score={score:.3f}, success_rate={success_rate:.3f}, scaled_score={scaled_score:.3f}")
+
         # Apply weighting for overall score
         weight = dataset_weights.get(dataset_key, 1.0)
-        weighted_scores[dataset_key] = float(score) * weight
+        weighted_scores[dataset_key] = scaled_score * weight
         total_weight += weight
     
     # Calculate weighted overall score
@@ -355,214 +358,12 @@ def calculate_voicebench_scores_with_status(
     
     return scores, status
 
-
-class MinerModelAdapter:
-    """
-    Adapter that makes miner model APIs compatible with VoiceBench evaluation.
-    
-    This class implements the VoiceBench model interface while internally calling
-    miner model HTTP APIs for inference.
-    """
-    
-    def __init__(self, api_url: str, timeout: int = 600):
-        """
-        Initialize the adapter.
-        
-        Args:
-            api_url: URL of the miner model API
-            timeout: Request timeout in seconds
-        """
-        self.miner_assistant = MinerModelAssistant(api_url=api_url, timeout=timeout)
-        
-    def generate_audio(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response from audio input (VoiceBench interface).
-        
-        Args:
-            audio_input: Audio data dict with 'array' and 'sampling_rate' keys
-            
-        Returns:
-            Text response from the model
-        """
-        # Validate input
-        if not isinstance(audio_input, dict):
-            bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
-            raise ValueError("audio_input must be a dictionary")
-        
-        if 'array' not in audio_input or 'sampling_rate' not in audio_input:
-            raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
-        
-        audio_array = np.array(audio_input['array'])
-        sample_rate = audio_input['sampling_rate']
-        
-        # Validate audio data
-        if audio_array.size == 0:
-            bt.logging.warning("Empty audio array provided")
-            raise ValueError(f"Empty audio array provided")
-
-        if sample_rate <= 0:
-            raise ValueError(f"Invalid sample rate: {sample_rate}")
-        
-        # Call server inference
-        result = self.miner_assistant.inference_v2t(
-            audio_array=audio_array,
-            sample_rate=sample_rate
-        )
-        
-        # Validate and extract text response
-        if not isinstance(result, dict):
-            bt.logging.warning(f"Unexpected result type: {type(result)}")
-            return ""
-        
-        text_response = result.get('text')
-        
-        if not isinstance(text_response, str):
-            bt.logging.error(f"Expected string response but got {type(text_response)}: {text_response}")
-            raise ValueError("Model response must be a string")
-        
-        return text_response.strip()
-    
-    def generate_text(self, text_input: str) -> str:
-        """
-        Generate response from text input.
-        
-        Args:
-            text_input: Text prompt
-            
-        Returns:
-            Text response (error message for audio-only models)
-        """
-        return self.miner_assistant.generate_text(text_input)
-    
-    def generate_ttft(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response for time-to-first-token measurement.
-        
-        Args:
-            audio_input: Audio data dict
-            
-        Returns:
-            Text response
-        """
-        return self.generate_audio(audio_input)
-
-
-class DockerModelAdapter:
-    """
-    Adapter that makes Docker-containerized models compatible with VoiceBench evaluation.
-    
-    This class implements the VoiceBench model interface while internally managing
-    Docker containers for model inference.
-    """
-    
-    def __init__(self, container_url: str, docker_manager: DockerManager):
-        """
-        Initialize the adapter.
-        
-        Args:
-            container_url: URL of the running Docker container
-            docker_manager: DockerManager instance for container operations
-        """
-        self.container_url = container_url
-        self.docker_manager = docker_manager
-        
-    def generate_audio(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response from audio input (VoiceBench interface).
-        
-        Args:
-            audio_input: Audio data dict with 'array' and 'sampling_rate' keys
-            
-        Returns:
-            Text response from the model
-        """
-        
-        # Validate input
-        if not isinstance(audio_input, dict):
-            bt.logging.error(f"Expected dict but got {type(audio_input)}: {str(audio_input)[:200]}")
-            raise ValueError("audio_input must be a dictionary")
-        
-        if 'array' not in audio_input or 'sampling_rate' not in audio_input:
-            raise ValueError("audio_input must contain 'array' and 'sampling_rate' keys")
-        
-        audio_array = np.array(audio_input['array'])
-        sample_rate = audio_input['sampling_rate']
-        
-        # Validate audio data
-        if audio_array.size == 0:
-            bt.logging.warning("Empty audio array provided")
-            raise ValueError(f"Empty audio array provided")
-
-        if sample_rate <= 0:
-            raise ValueError(f"Invalid sample rate: {sample_rate}")
-        
-        # Call Docker container inference
-        result = self.docker_manager.inference_v2t(
-            url=self.container_url,
-            audio_array=audio_array,
-            sample_rate=sample_rate
-        )
-        
-        # Validate and extract text response
-        if not isinstance(result, dict):
-            bt.logging.warning(f"Unexpected result type: {type(result)}")
-            return ""
-        
-        # Handle voice-to-voice models that may not return text
-        text_response = result.get('text')
-        
-        if not isinstance(text_response, str):
-            bt.logging.error(f"Expected string response but got {type(text_response)}: {text_response}")
-            raise ValueError("Model response must be a string")
-        
-        return text_response.strip()
-    
-    def generate_text(self, text_input: str) -> str:
-        """
-        Generate response from text input (fallback for text-only evaluation).
-        
-        Args:
-            text_input: Text prompt
-            
-        Returns:
-            Text response (empty for audio-only models)
-        """
-        return ""
-    
-    def generate_ttft(self, audio_input: Dict[str, Any]) -> str:
-        """
-        Generate response for time-to-first-token measurement.
-        
-        Args:
-            audio_input: Audio data dict
-            
-        Returns:
-            Text response
-        """
-        return self.generate_audio(audio_input)
-
-
 class VoiceBenchEvaluator:
     """
     Main evaluator that runs VoiceBench evaluation on Docker-containerized models.
     """
     
-    # All available VoiceBench datasets with their appropriate splits. which datasets to run.
-    VOICEBENCH_DATASETS = {
-        # 'alpacaeval': ['test'],
-        # 'alpacaeval_full': ['test'], 
-        'commoneval': ['test'],
-        'wildvoice': ['test'],
-        # 'openbookqa': ['test'],
-        # 'mmsu': ['physics'],  # Use one specific domain instead of 'test'
-        # 'sd-qa': ['usa'],  # Using USA dataset only
-        # 'mtbench': ['test'],
-        'ifeval': ['test'],
-        # 'bbh': ['test'],
-        'advbench': ['test']
-    }
-    
-    def __init__(self, max_samples_per_dataset: Optional[int] = None):
+    def __init__(self):
         """
         Initialize the VoiceBench evaluator.
         
@@ -570,8 +371,7 @@ class VoiceBenchEvaluator:
             max_samples_per_dataset: Maximum number of samples to evaluate per dataset.
                                     None means evaluate all samples (default).
         """
-        self.max_samples_per_dataset = max_samples_per_dataset
-        bt.logging.info(f"VoiceBenchEvaluator initialized with max_samples={max_samples_per_dataset or 'all'}")
+        bt.logging.info(f"VoiceBenchEvaluator initialized")
     
     def _generate_with_timeout(self, func, *args, timeout=30):
         """
@@ -609,18 +409,13 @@ class VoiceBenchEvaluator:
     
     def inference_model(
         self,
-        container_url: str,
-        docker_manager: DockerManager,
-        datasets: Optional[List[str]] = None,
-        splits: Optional[List[str]] = None,
-        modality: str = 'audio'
+        container_url: str
     ) -> Dict[str, Any]:
         """
         Evaluate a Docker-containerized model using VoiceBench.
         
         Args:
             container_url: URL of the running Docker container
-            docker_manager: DockerManager instance
             datasets: List of VoiceBench datasets to evaluate on (None = all datasets)
             splits: List of data splits to use (None = use dataset-specific splits)
             modality: Evaluation modality ('audio', 'text', or 'ttft')
@@ -628,18 +423,14 @@ class VoiceBenchEvaluator:
         Returns:
             Dictionary containing evaluation results
         """
-        adapter = DockerModelAdapter(container_url, docker_manager)
         results = {}
-        
-        # Use all datasets if none specified
-        if datasets is None:
-            datasets_to_eval = self.VOICEBENCH_DATASETS
-        else:
-            datasets_to_eval = {k: self.VOICEBENCH_DATASETS[k] for k in datasets if k in self.VOICEBENCH_DATASETS}
-        
-        for dataset_name, dataset_splits in datasets_to_eval.items():
+
+        miner_assistant = MinerModelAssistant(base_url=container_url) # just a placeholder for inference functions.
+
+        datasets_to_eval = VOICEBENCH_DATASETS
+                
+        for dataset_name, splits_to_use in datasets_to_eval.items():
             # Use dataset-specific splits if none provided
-            splits_to_use = splits if splits is not None else dataset_splits
             max_samples = SAMPLES_PER_DATASET.get(dataset_name, VOICEBENCH_MAX_SAMPLES)
             for split in splits_to_use:
                 try:
@@ -661,7 +452,7 @@ class VoiceBenchEvaluator:
                     
                     # Run Inference with indices
                     dataset_results = self._inference_dataset(
-                        adapter, dataset, dataset_name, split, modality, dataset_indices
+                        miner_assistant, dataset, dataset_name, split, dataset_indices
                     )
                     
                     results[f"{dataset_name}_{split}"] = dataset_results
@@ -671,181 +462,67 @@ class VoiceBenchEvaluator:
                     results[f"{dataset_name}_{split}"] = {"error": str(e)}
         
         return results
-    
-    def _inference_with_adapter(
-        self,
-        model_adapter,
-        datasets: Optional[List[str]] = None,
-        splits: Optional[List[str]] = None,
-        modality: str = 'audio'
-    ) -> Dict[str, Any]:
-        """
-        Run inference on model using a pre-created adapter.
-        
-        This method loads datasets and runs inference to collect model responses.
-        The actual evaluation/scoring happens separately in calculate_voicebench_scores_with_status.
-        
-        Args:
-            model_adapter: Pre-configured model adapter (DockerModelAdapter or ServerModelAdapter)
-            datasets: List of VoiceBench datasets to run inference on (None = all datasets)
-            splits: List of data splits to use (None = use dataset-specific splits)
-            modality: Inference modality ('audio', 'text', or 'ttft')
-            
-        Returns:
-            Dictionary containing inference results (responses from the model)
-        """
-        results = {}
-        
-        # Use all datasets if none specified
-        if datasets is None:
-            datasets_to_eval = self.VOICEBENCH_DATASETS
-        else:
-            datasets_to_eval = {k: self.VOICEBENCH_DATASETS[k] for k in datasets if k in self.VOICEBENCH_DATASETS}
-        
-        for dataset_name, dataset_splits in datasets_to_eval.items():
-            # Use dataset-specific splits if none provided
-            splits_to_use = splits if splits is not None else dataset_splits
-            max_samples = SAMPLES_PER_DATASET.get(dataset_name, VOICEBENCH_MAX_SAMPLES)
-            for split in splits_to_use:
-                try:
-                    # Load VoiceBench dataset
-                    dataset = load_dataset('hlt-lab/voicebench', dataset_name, split=split)
-                    dataset = dataset.cast_column("audio", Audio(sampling_rate=16_000))
-                    
-                    # Apply sample limit if configured and track indices
-                    dataset_indices = None
-                    if max_samples and len(dataset) > max_samples:
-                        # dataset_indices = list(range(max_samples))
-                        # random samples
-                        dataset_indices = random.sample(range(len(dataset)), max_samples)
 
-                        dataset = dataset.select(dataset_indices)
-                        bt.logging.info(f"Limited {dataset_name}_{split} to {max_samples} samples")
-                    else:
-                        dataset_indices = list(range(len(dataset)))
-                    
-                    # Run Inference with indices
-                    dataset_results = self._inference_dataset(
-                        model_adapter, dataset, dataset_name, split, modality, dataset_indices
-                    )
-                    
-                    results[f"{dataset_name}_{split}"] = dataset_results
-                    
-                except Exception as e:
-                    bt.logging.error(f"Error evaluating {dataset_name}_{split}: {e}")
-                    results[f"{dataset_name}_{split}"] = {"error": str(e)}
-        
-        return results
-    
     def _inference_dataset(
         self,
-        model_adapter: DockerModelAdapter,
+        model_assistant: MinerModelAssistant,
         dataset,
         dataset_name: str,
         split: str,
-        modality: str,
         dataset_indices: List[int] = None
     ) -> Dict[str, Any]:
-        """
-        This is inference on Miner model.
         
-        Args:
-            model_adapter: DockerModelAdapter instance
-            dataset: Loaded dataset
-            dataset_name: Name of the dataset
-            split: Data split
-            modality: Evaluation modality #TODO: No need for this. Only using for audio-to-text.
-            
-        Returns:
-            Inference results for this dataset
-        """
         responses = []
-        
-        # Generate responses with timeout and retry logic
+        modality = 'audio'# unnecessary flag, remove later might be used somewhere.
+
+        # Generate responses with timeout
         for i, item in enumerate(dataset):
             # Get the original HuggingFace dataset index
             hf_index = dataset_indices[i] if dataset_indices else i
             
-            max_retries = 2
-            retry_delay = 1
-            
             if i%50==0:
                 bt.logging.info(f"Processing item {i+1}/{len(dataset)} (HF index: {hf_index})")
             
-            for attempt in range(max_retries + 1):
-                try:
-                    # Add timeout for individual inference calls
-                    start_time = time.time()
-                    
-                    if modality == 'audio':
-                        # Check if audio field exists
-                        if 'audio' not in item:
-                            bt.logging.warning(f"No audio field in item {i+1}, skipping")
-                            response = ""
-                        else:
-                            audio_data = item['audio']
-                            # bt.logging.info(f"Audio data type: {type(audio_data)}")
-                            # bt.logging.info(f"Audio data keys: {audio_data.keys() if hasattr(audio_data, 'keys') else 'N/A'}")
-                            
-                            # Log the exact data being passed
-                            # if isinstance(audio_data, dict):
-                            #     bt.logging.info(f"Audio dict keys: {list(audio_data.keys())}")
-                            #     if 'array' in audio_data:
-                            #         bt.logging.info(f"Array shape: {audio_data['array'].shape if hasattr(audio_data['array'], 'shape') else 'N/A'}")
-                            #     if 'sampling_rate' in audio_data:
-                            #         bt.logging.info(f"Sampling rate: {audio_data['sampling_rate']}")
-                            
-                            response = self._generate_with_timeout(
-                                model_adapter.generate_audio, audio_data, timeout=200
-                            )
-                    # elif modality == 'text':
-                    #     response = self._generate_with_timeout(
-                    #         model_adapter.generate_text, item['prompt'], timeout=30
-                    #     )
-                    # elif modality == 'ttft':
-                    #     response = self._generate_with_timeout(
-                    #         model_adapter.generate_ttft, item['audio'], timeout=30
-                    #     )
-                    else:
-                        raise ValueError(f"Unsupported modality: {modality}")
-                    
-                    # Validate response
-                    if not isinstance(response, str):
-                        response = str(response) if response is not None else ""
-                    
-                    inference_time = time.time() - start_time
-                    
-                    responses.append({
-                        'hf_index': hf_index,  # Add HuggingFace dataset index
-                        'prompt': item.get('prompt', ''),
-                        'response': response,
-                        'reference': item.get('output', ''),
-                        'inference_time': inference_time,
-                        'attempt': attempt + 1,
-                        **{k: v for k, v in item.items() if k not in ['audio', 'prompt', 'output']}
-                    })
-                    
-                    # Success, break retry loop
-                    break
-                    
-                except Exception as e:
-                    bt.logging.warning(f"Error processing item {i+1}/{len(dataset)} (attempt {attempt+1}): {e}")
-                    #TODO: Only retry in certain error cases. Not needed for all errors.
-                    if attempt < max_retries:
-                        bt.logging.info(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                        continue
-                    else:
-                        # Final attempt failed
-                        responses.append({
-                            'hf_index': hf_index,  # Add HuggingFace dataset index
-                            'prompt': item.get('prompt', ''),
-                            'response': '',
-                            'reference': item.get('output', ''),
-                            'error': str(e),
-                            'failed_attempts': attempt + 1
-                        })
-                        break
+            try:
+                # Add timeout for individual inference calls
+                start_time = time.time()
+                
+                # Get audio data
+                audio_data = item['audio']['array']
+                sample_rate = item['audio']['sampling_rate']
+                
+                response = self._generate_with_timeout(
+                    model_assistant.inference_v2t, audio_data, sample_rate
+                )
+                
+                # Validate response
+                if not isinstance(response, str):
+                    response = str(response) if response is not None else ""
+                
+                inference_time = time.time() - start_time
+                
+                responses.append({
+                    'hf_index': hf_index,  # Add HuggingFace dataset index
+                    'prompt': item.get('prompt', ''),
+                    'response': response,
+                    'reference': item.get('output', ''),
+                    'inference_time': inference_time,
+                    'attempt': 1,
+                    **{k: v for k, v in item.items() if k not in ['audio', 'prompt', 'output']}
+                })
+                
+            except Exception as e:
+                bt.logging.warning(f"Error processing item {i+1}/{len(dataset)} : {e}")
+                # Final attempt failed
+                responses.append({
+                    'hf_index': hf_index,  # Add HuggingFace dataset index
+                    'prompt': item.get('prompt', ''),
+                    'response': '',
+                    'reference': item.get('output', ''),
+                    'error': str(e),
+                    'failed_attempts': 1
+                })
+
         
         # Calculate basic metrics
         total_responses = len(responses)
@@ -861,188 +538,15 @@ class VoiceBenchEvaluator:
             'success_rate': success_rate,
             'responses': responses
         }
-    
-    def run_gpt_evaluation(self, results_file: str) -> Dict[str, Any]:
-        """
-        Run GPT-4 evaluation on generated responses using llm_judge.
-        
-        Args:
-            results_file: Path to results file
-            
-        Returns:
-            GPT evaluation results
-        """
-        try:
-            # Load results from file
-            data = []
-            with open(results_file, 'r') as f:
-                for line in f:
-                    json_obj = json.loads(line.strip())
-                    data.append(json_obj)
-            
-            # Use the llm_judge module to evaluate responses
-            bt.logging.info(f"Running LLM evaluation on {len(data)} samples")
-            eval_results = evaluate_responses_with_llm(data)
-            
-            # Save evaluation results
-            eval_file = results_file.replace('.jsonl', '_eval.jsonl')
-            with open(eval_file, 'w') as f:
-                for result in eval_results:
-                    f.write(json.dumps(result) + '\n')
-            
-            return {'gpt_evaluation': eval_results}
-                
-        except Exception as e:
-            bt.logging.error(f"GPT evaluation error: {str(e)}")
-            return {'error': f'GPT evaluation error: {str(e)}'}
-    
-    def calculate_final_scores(self, results: Dict[str, Any]) -> Dict[str, float]:
-        """
-        Calculate final VoiceBench scores with dataset-specific weighting.
-        
-        Args:
-            results: Complete evaluation results
-            
-        Returns:
-            Dictionary of final scores
-        """
-        scores = {}
-        dataset_weights = {
-            # Core conversational datasets (higher weight)
-            'alpacaeval_test': 2.0,
-            'commoneval_test': 2.0,
-            'wildvoice_test': 2.0,
-            
-            # Reasoning and QA datasets
-            'bbh_test': 1.5,
-            'mmsu_test': 1.5,
-            'openbookqa_test': 1.0,
-            
-            # Safety and instruction following
-            'advbench_test': 1.5,
-            'ifeval_test': 1.5,
-            
-            # Multi-turn and regional
-            'mtbench_test': 1.0,
-            'sd-qa_aus': 0.8,
-            'sd-qa_usa': 0.8,
-            'sd-qa_gbr': 0.8,
-            'sd-qa_ind': 0.8,
-            
-            # Full alpaca dataset
-            'alpacaeval_full_test': 1.0
-        }
-        
-        weighted_scores = {}
-        total_weight = 0.0
-        
-        for dataset_key, dataset_results in results.items():
-            if 'error' in dataset_results:
-                scores[dataset_key] = 0.0
-                continue
-            
-            # Calculate dataset score based on success rate and response quality
-            success_rate = dataset_results.get('success_rate', 0.0)
-            
-            # For datasets with responses, calculate average response length as quality indicator
-            responses = dataset_results.get('responses', [])
-            if responses:
-                valid_responses = [r for r in responses if 'error' not in r and r.get('response', '').strip()]
-                voice_only_responses = [r for r in responses if 'error' not in r and r.get('response', '') == '[VOICE_OUTPUT_NO_TEXT]']
-                
-                if valid_responses:
-                    avg_response_length = sum(len(r.get('response', '')) for r in valid_responses) / len(valid_responses)
-                    # Normalize response length (assume good responses are 50-500 chars)
-                    length_score = min(1.0, max(0.1, avg_response_length / 200.0))
-                    # Combine success rate with response quality
-                    dataset_score = (success_rate * 0.7) + (length_score * 0.3)
-                elif voice_only_responses:
-                    # Handle voice-to-voice only models
-                    # They get partial credit for producing audio output
-                    bt.logging.info(f"Dataset {dataset_key}: Voice-to-voice only model detected ({len(voice_only_responses)} voice responses)")
-                    dataset_score = success_rate * 0.3  # Reduced score for voice-only models in text evaluation
-                else:
-                    dataset_score = success_rate * 0.5  # Penalize for no valid responses
-            else:
-                dataset_score = success_rate
-            
-            scores[dataset_key] = dataset_score
-            
-            # Apply weighting for overall score calculation
-            weight = dataset_weights.get(dataset_key, 1.0)
-            weighted_scores[dataset_key] = dataset_score * weight
-            total_weight += weight
-        
-        # Calculate weighted overall score
-        if total_weight > 0:
-            scores['overall'] = sum(weighted_scores.values()) / total_weight
-        else:
-            scores['overall'] = 0.0
-            
-        return scores
-
-
-def run_voicebench_evaluation_miner(
-    api_url: str,
-    datasets: Optional[List[str]] = None,
-    splits: Optional[List[str]] = None,
-    timeout: int = 600,
-    max_samples_per_dataset: Optional[int] = None
-) -> Dict[str, Any]:
-    """
-    Convenience function to run VoiceBench evaluation on a miner model API.
-    
-    Args:
-        api_url: URL of the miner model API
-        datasets: List of datasets to evaluate (None = all VoiceBench datasets)
-        splits: List of splits to evaluate (None = use dataset-specific splits)
-        timeout: Request timeout for API calls
-        max_samples_per_dataset: Maximum number of samples per dataset (None = all samples)
-        
-    Returns:
-        Complete evaluation results including scores
-    """
-    evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
-    
-    bt.logging.info("Starting comprehensive VoiceBench evaluation via miner API...")
-    
-    # Create miner model adapter
-    adapter = MinerModelAdapter(api_url=api_url, timeout=timeout)
-    # Run model inference on all VoiceBench datasets
-    results = evaluator._inference_with_adapter(
-        model_adapter=adapter,
-        datasets=datasets,  # None means all datasets
-        splits=splits,      # None means dataset-specific splits
-        modality='audio'
-    )
-    
-    # Calculate scores using proper evaluators with status tracking
-    bt.logging.info("Starting VoiceBench evaluation with proper evaluators...")
-    scores, status = calculate_voicebench_scores_with_status(results)
-    
-    bt.logging.info(f"VoiceBench evaluation completed.")
-    bt.logging.info(f"Overall score: {scores.get('overall', 0.0):.3f}")
-    bt.logging.info(f"Evaluation status: {status.get('overall', {})}")
-    
-    return {
-        'voicebench_scores': scores,
-        'evaluation_status': status
-    }
-
 
 def run_voicebench_evaluation(
-    container_url: str,
-    docker_manager: DockerManager,
-    datasets: Optional[List[str]] = None,
-    splits: Optional[List[str]] = None,
-    max_samples_per_dataset: Optional[int] = None
+    container_url: str
 ) -> Dict[str, Any]:
     """
     Convenience function to run VoiceBench evaluation on a Docker model.
     
     Args:
         container_url: URL of the running Docker container
-        docker_manager: DockerManager instance
         datasets: List of datasets to evaluate (None = all VoiceBench datasets)
         splits: List of splits to evaluate (None = use dataset-specific splits)
         max_samples_per_dataset: Maximum number of samples per dataset (None = all samples)
@@ -1053,17 +557,12 @@ def run_voicebench_evaluation(
             'evaluation_status': status.get('overall', {})
             }
     """
-    evaluator = VoiceBenchEvaluator(max_samples_per_dataset=max_samples_per_dataset)
-    
+    evaluator = VoiceBenchEvaluator()
+
     bt.logging.info("Starting VoiceBench inference across all datasets...")
-    #TODO: create docker adapter here and use inference_with_adapter, no need to two seperate methods.
     # Run model inference on all VoiceBench datasets
     results = evaluator.inference_model(
-        container_url=container_url,
-        docker_manager=docker_manager,
-        datasets=datasets,  # None means all datasets
-        splits=splits,      # None means dataset-specific splits
-        modality='audio'
+        container_url=container_url
     )
     """
     Output format:

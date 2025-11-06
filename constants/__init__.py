@@ -32,7 +32,7 @@ V1_MODEL_ID = "v1"
 COMPETITION_SCHEDULE: List[CompetitionParameters] = [
     CompetitionParameters(
         reward_percentage=1.0,
-        competition_id="v3",
+        competition_id="v4",
     ),
 ]
 ORIGINAL_COMPETITION_ID = O1_MODEL_ID
@@ -67,13 +67,18 @@ MAX_DS_FILES = 8
 PERCENT_IMPROVEMENT = 10 # Minimum percentage improvement required for a model to be considered better than the previous one
 PLAYERS_IN_ABOVE_BASELINE = 3
 PLAYERS_IN_BELOW_BASELINE = 10
+
+V2T_TIMEOUT = 80  # seconds
+V2V_TIMEOUT = 200  # seconds
+
+VOICEBENCH_WEIGHT = 0.7  # Weight of VoiceBench score in final model score
+VOICE_MOS_WEIGHT = 0.3  # Weight of VoiceMOS score in final model score
 # ---------------------------------
 # Weight distribution parameters.
 # ---------------------------------
 # UID that receives the majority of weight (used as a burn sink).
 BURN_UID = 111
-# Portion of the total weight routed to BURN_UID.
-BURN_RATE = 0.95
+
 #VoiceBench
 # to run on full dataset, set VOICEBENCH_MAX_SAMPLES to 100000, and make the dict empty.
 VOICEBENCH_MAX_SAMPLES=100000
@@ -83,3 +88,20 @@ SAMPLES_PER_DATASET = {
    'advbench': 100, # 520
    'ifeval': 50 # 345
 }
+
+# All available VoiceBench datasets with their appropriate splits. which datasets to run.
+VOICEBENCH_DATASETS = {
+    # 'alpacaeval': ['test'],
+    # 'alpacaeval_full': ['test'], 
+    'commoneval': ['test'],
+    'wildvoice': ['test'],
+    # 'openbookqa': ['test'],
+    # 'mmsu': ['physics'],  # Use one specific domain instead of 'test'
+    # 'sd-qa': ['usa'],  # Using USA dataset only
+    # 'mtbench': ['test'],
+    'ifeval': ['test'],
+    # 'bbh': ['test'],
+    'advbench': ['test']
+}
+
+CONTAINER_TIMEOUT = 300  # seconds -> to prevent hanging containers

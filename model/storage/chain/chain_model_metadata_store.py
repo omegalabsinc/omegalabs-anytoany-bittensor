@@ -5,9 +5,12 @@ import os
 from model.data import ModelId, ModelMetadata
 import constants
 from model.storage.model_metadata_store import ModelMetadataStore
-from typing import Optional
-
+from typing import Optional, TYPE_CHECKING
+import time
 from utilities import utils
+
+if TYPE_CHECKING:
+    from utilities.subtensor_connection_manager import SubtensorConnectionManager
 
 
 class ChainModelMetadataStore(ModelMetadataStore):
@@ -15,29 +18,28 @@ class ChainModelMetadataStore(ModelMetadataStore):
 
     def __init__(
         self,
-        subtensor: bt.subtensor,
+        subtensor_manager: "SubtensorConnectionManager",
         subnet_uid: int,
         wallet: Optional[bt.wallet] = None,
     ):
-        self.subtensor = subtensor
+        self.subtensor_manager = subtensor_manager
         self.wallet = (
             wallet  # Wallet is only needed to write to the chain, not to read.
         )
         self.subnet_uid = subnet_uid
-
-        # this is a hacky way to prime the get_metadata function
-        SN21_OWNER_KEY = "5GsHpHeCGhxstoEEZTR64VUashnDP4n7ir7LbNdRfXpkMU7R"
-        metadata = bt.extrinsics_subpackage.serving.get_metadata(self.subtensor, self.subnet_uid, SN21_OWNER_KEY)
-        bt.logging.debug(f"primed get_metadata call successfully: metadata={metadata} (ok to be None)")
+        self._last_metadata_call_time = 0
+        self._metadata_rate_limit_delay = 2  # 2s = max 1 call/2 seconds
 
     async def store_model_metadata(self, hotkey: str, model_id: ModelId):
         """Stores model metadata on this subnet for a specific wallet."""
         if self.wallet is None:
             raise ValueError("No wallet available to write to the chain.")
 
-        # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
+        # Use thread-local sync connection for commit (async commit not available in API)
+        # Still use subprocess timeout for safety (commit is rare operation)
+        subtensor = self.subtensor_manager.get_subtensor()
         partial = functools.partial(
-            self.subtensor.commit,
+            subtensor.commit,
             self.wallet,
             self.subnet_uid,
             model_id.to_compressed_str(),
@@ -47,12 +49,27 @@ class ChainModelMetadataStore(ModelMetadataStore):
     async def retrieve_model_metadata(self, hotkey: str) -> Optional[ModelMetadata]:
         """Retrieves model metadata on this subnet for specific hotkey"""
 
-        # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
-        partial = functools.partial(
-            bt.extrinsics_subpackage.serving.get_metadata, self.subtensor, self.subnet_uid, hotkey
-        )
-
-        metadata = utils.run_in_subprocess(partial, 60)
+        # Use async method with timeout - NO subprocess needed!
+        # This eliminates HTTP 429 errors from connection forking
+        try:
+            async_sub = await self.subtensor_manager.get_async_subtensor()
+            elapsed = time.time() - self._last_metadata_call_time
+            if elapsed < self._metadata_rate_limit_delay:
+                delay = self._metadata_rate_limit_delay - elapsed
+                bt.logging.trace(f"Rate limiting: sleeping {delay:.3f}s")
+                await asyncio.sleep(delay)
+            # Use async get_metadata with timeout (tested and verified to work!)
+            self._last_metadata_call_time = time.time()
+            metadata = await asyncio.wait_for(
+                bt.core.extrinsics.asyncex.serving.get_metadata(async_sub, self.subnet_uid, hotkey, reuse_block=True),
+                timeout=60
+            )
+        except asyncio.TimeoutError:
+            bt.logging.warning(f"Timeout retrieving metadata for hotkey {hotkey}")
+            return None
+        except Exception as e:
+            bt.logging.error(f"Error retrieving metadata for hotkey {hotkey}: {e}")
+            return None
 
         if not metadata:
             return None

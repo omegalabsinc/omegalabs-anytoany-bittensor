@@ -1,37 +1,24 @@
 """
-Hybrid Docker Inference with VoiceBench Integration
-
-This module provides a comprehensive evaluation approach that combines:
-1. Traditional S2S metrics (PESQ, WER, MIMI, anti-spoofing) from existing pipeline
-2. VoiceBench evaluation across all 11 datasets and 9 task categories
-
-The hybrid approach ensures backward compatibility while adding comprehensive
-voice assistant benchmarking capabilities.
+Runs voicebench evaluation
+Runs voice mos evaluation
 """
 
 import os
 import time
 import traceback
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 import bittensor as bt
 from pathlib import Path
 
 # Existing imports
 from neurons.docker_manager import DockerManager
-from evaluation.S2S.distance import S2SMetrics
 from utilities.gpu import log_gpu_memory, cleanup_gpu_memory
-from constants import penalty_score, VOICEBENCH_MAX_SAMPLES
+from constants import penalty_score, VOICEBENCH_WEIGHT, VOICE_MOS_WEIGHT
 from utilities.compare_block_and_model import compare_block_and_model
 
-# VoiceBench integration
+# scorings
 from neurons.voicebench_adapter import run_voicebench_evaluation
-
-# Existing dataset import for fallback compatibility
-from neurons.docker_inference_v2v import (
-    pull_latest_diarization_dataset,
-    pull_latest_diarization_dataset_fallback
-)
-
+from neurons.mos_scoring import run_voice_mos_evaluation
 
 
 def _verify_hotkey(hf_repo_id: str, hotkey: str, local_dir: str) -> bool:
@@ -51,70 +38,7 @@ def _verify_hotkey(hf_repo_id: str, hotkey: str, local_dir: str) -> bool:
         return False
 
 
-def _compute_s2s_legacy_metrics(container_url: str, docker_manager: DockerManager, hf_repo_id: str) -> Dict[str, Any]:
-    """
-    Compute legacy S2S metrics for backward compatibility.
-    
-    This function maintains the original S2S evaluation logic but as a component
-    of the hybrid evaluation system.
-    """
-    # Pull diarization dataset (existing logic)
-    mini_batch = pull_latest_diarization_dataset()
-    if mini_batch is None:
-        bt.logging.info("Pulling fallback diarization dataset")
-        mini_batch = pull_latest_diarization_dataset_fallback()
-        
-    if mini_batch is None:
-        bt.logging.error("No diarization dataset available")
-        return {"combined_score": penalty_score, "error": "no_dataset"}
-    
-    # Initialize S2S metrics
-    s2s_metrics = S2SMetrics()
-    
-    # Process samples (simplified version of original logic)
-    try:
-        total_scores = []
-        
-        for i in range(min(len(mini_batch['audio']), 3)):  # Limit samples for efficiency
-            audio_array = mini_batch['audio'][i]['array']
-            sample_rate = mini_batch['audio'][i]['sampling_rate']
-            
-            # Run inference through Docker container
-            result = docker_manager.inference_v2v(
-                url=container_url,
-                audio_array=audio_array,
-                sample_rate=sample_rate
-            )
-            
-            if 'audio' in result:
-                # Compute S2S metrics
-                metrics_dict = s2s_metrics.compute_distance(
-                    gt_audio_arrs=[[audio_array, sample_rate]],
-                    generated_audio_arrs=[[result['audio'], sample_rate]]
-                )
-                
-                # Extract score (simplified scoring logic)
-                score = metrics_dict.get('combined_score', 0.0)
-                total_scores.append(score)
-        
-        # Calculate average score
-        if total_scores:
-            combined_score = sum(total_scores) / len(total_scores)
-        else:
-            combined_score = 0.0
-            
-        return {
-            "combined_score": combined_score,
-            "sample_count": len(total_scores),
-            "individual_scores": total_scores
-        }
-        
-    except Exception as e:
-        bt.logging.error(f"S2S metrics computation failed: {e}")
-        return {"combined_score": penalty_score, "error": str(e)}
-
-
-def run_voicebench_scoring(
+def run_full_scoring(
     hf_repo_id: str,
     hotkey: str,
     block: int,
@@ -168,15 +92,9 @@ def run_voicebench_scoring(
         # Run VoiceBench evaluation
         voicebench_score = 0.0
         bt.logging.info("Running comprehensive VoiceBench evaluation...")
-        # Get max samples from environment or use default
-        max_samples = VOICEBENCH_MAX_SAMPLES
         
         voicebench_results = run_voicebench_evaluation(
-            container_url=container_url,
-            docker_manager=docker_manager,
-            datasets=None,  # Use all datasets
-            splits=None,    # Use dataset-specific splits
-            max_samples_per_dataset=max_samples
+            container_url=container_url
         )
         
         voicebench_score = voicebench_results['voicebench_scores'].get('overall', 0.0)
@@ -185,11 +103,30 @@ def run_voicebench_scoring(
         results['evaluation_details'] = voicebench_results.get('evaluation_details', {})  # NEW: Include full details with sample_details
         
         bt.logging.info(f"VoiceBench evaluation completed. Score: {voicebench_score:.3f}")
-        
-        results['combined_score'] = voicebench_score
-        
+
+        # Run Voice MOS evaluation
+        bt.logging.info("Running Voice MOS evaluation...")
+        voice_mos_results = run_voice_mos_evaluation(
+            container_url=container_url
+        )
+
+        voice_mos_score = voice_mos_results.get('voice_mos_score', 0.0)
+        results['voice_mos_score'] = voice_mos_score
+        results['voice_mos_details'] = voice_mos_results.get('voice_mos_details', {})
+
+        bt.logging.info(f"Voice MOS evaluation completed. Score: {voice_mos_score:.3f}")
+
+        combined_score = (voicebench_score * VOICEBENCH_WEIGHT) + (voice_mos_score * VOICE_MOS_WEIGHT)
+
+        results['combined_score'] = combined_score
+        results['raw_scores'] = {
+            'voicebench': voicebench_score,
+            'voice_mos': voice_mos_score
+        }
+
+        bt.logging.info(f"Combined score: {combined_score:.3f} (VB: {voicebench_score:.3f}, MOS: {voice_mos_score:.3f})")
         bt.logging.info(f"Evaluation completed for {hf_repo_id}")
-        
+
         return results
         
     except Exception as e:
@@ -221,7 +158,7 @@ if __name__ == "__main__":
     
     for hf_repo_id in test_repos:
         bt.logging.info(f"Testing hybrid evaluation on {hf_repo_id}")
-        results = run_voicebench_scoring(
+        results = run_full_scoring(
             hf_repo_id=hf_repo_id,
             hotkey=None,
             block=5268488,

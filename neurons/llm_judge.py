@@ -166,7 +166,9 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
         item: Dictionary containing 'prompt', 'response', and optionally 'reference'
         
     Returns:
-        Item with added 'score' field
+        Item with added 'score' field > list of scores(parsed)
+        'llm_score' - single score float parsed
+        'llm_raw_response' - raw LLM response string
     """
     #TODO: Refactor this, unnecessary calculation here. 
     try:
@@ -206,31 +208,22 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
                 max_tokens=64,
                 temperature=0.1
             )
-            if "reference" in item and item["reference"]:
-                llm_score = 1.0 if score_text.lower().startswith('yes') else 0.0
-            else:
-                try:
-                    llm_score = float(score_text)
-                except ValueError:
-                    bt.logging.warning(f"Could not parse LLM score: {score_text}")
-                    llm_score = 0.0
+            try:
+                llm_score = float(score_text)
+            except ValueError:
+                bt.logging.warning(f"Could not parse LLM score: {score_text}")
+                llm_score = 1.0
             scores.append(llm_score)
         item['score'] = scores
         
         # Track which client was used
         item['llm_client_used'] = used_client
         
-        # Parse score checked  with api_judge in VoiceBench
-        if "reference" in item and item["reference"]:
-            # For QA tasks, convert Yes/No to binary score
-            llm_score = 1.0 if score_text.lower().startswith('yes') else 0.0
-        else:
-            # For open-ended tasks, parse numeric score
-            try:
-                llm_score = float(score_text) 
-            except ValueError:
-                bt.logging.warning(f"Could not parse LLM score: {score_text}")
-                llm_score = 0.0
+        try:
+            llm_score = float(score_text) 
+        except ValueError:
+            bt.logging.warning(f"Could not parse LLM score: {score_text}")
+            llm_score = 1.0
         
         item['llm_score'] = llm_score
         item['llm_raw_response'] = score_text
@@ -238,7 +231,7 @@ def generate_llm_score(item: Dict[str, Any]) -> Dict[str, Any]:
         
     except Exception as e:
         bt.logging.error(f"Error getting LLM score: {e}")
-        item['llm_score'] = 0.0
+        item['llm_score'] = 1.0
         item['llm_error'] = str(e)
     
     return item
@@ -263,7 +256,7 @@ def evaluate_responses_with_llm(responses: List[Dict[str, Any]]) -> List[Dict[st
         
         # Skip if there's no valid response text
         if not response.get('response', '').strip():
-            response['llm_score'] = 0.0
+            response['llm_score'] = 1.0
             response['llm_error'] = 'Empty response'
             evaluated_responses.append(response)
             continue

@@ -303,9 +303,19 @@ class Validator:
 
         # === Bittensor objects ====
         self.wallet = bt.wallet(config=self.config)
-        self.subtensor = bt.subtensor(config=self.config)
+
+        # Use connection manager for thread-safe subtensor with auto-refresh
+        from utilities.subtensor_connection_manager import SubtensorConnectionManager
+        self.subtensor_manager = SubtensorConnectionManager(
+            config=self.config,
+            refresh_interval_hours=12
+        )
+
         self.dendrite = bt.dendrite(wallet=self.wallet)
-        self.metagraph: bt.metagraph = self.subtensor.metagraph(self.config.netuid)
+
+        # Get initial metagraph using thread-local connection
+        subtensor = self.subtensor_manager.get_subtensor()
+        self.metagraph: bt.metagraph = subtensor.metagraph(self.config.netuid)
         torch.backends.cudnn.benchmark = True
         api_root = (
             "http://127.0.0.1:8003"
@@ -368,7 +378,7 @@ class Validator:
 
         # Setup a ModelMetadataStore
         self.metadata_store = ChainModelMetadataStore(
-            self.subtensor, self.config.netuid, self.wallet
+            self.subtensor_manager, self.config.netuid, self.wallet
         )
 
         # Setup a RemoteModelStore
@@ -873,15 +883,18 @@ class Validator:
     def try_set_scores_and_weights(self, ttl: int):
         def _try_set_weights():
             try:
+                # Get thread-local subtensor connection
+                subtensor = self.subtensor_manager.get_subtensor()
+
                 # Fetch latest metagraph
-                metagraph = self.subtensor.metagraph(self.config.netuid)
+                metagraph = subtensor.metagraph(self.config.netuid)
                 consensus = metagraph.C.cpu().numpy()
                 # cpu_weights = self.weights.cpu().numpy()
                 # adjusted_weights = self.adjust_for_vtrust(cpu_weights, consensus)
                 # self.weights = torch.tensor(adjusted_weights, dtype=torch.float32)
                 self.weights.nan_to_num(0.0)
 
-                self.subtensor.set_weights(
+                subtensor.set_weights(
                     netuid=self.config.netuid,
                     wallet=self.wallet,
                     uids=self.metagraph.uids,
@@ -942,10 +955,11 @@ class Validator:
         return HTTPBasicAuth(hotkey, signature)
 
     async def try_sync_metagraph(self, ttl: int):
-        with bt.subtensor(self.subtensor.chain_endpoint) as sub:
-            self.metagraph = sub.metagraph(self.config.netuid)
-            bt.logging.info("Synced metagraph")
-            self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
+        # Use thread-local connection from manager (already handles lifecycle & refresh)
+        subtensor = self.subtensor_manager.get_subtensor()
+        self.metagraph = subtensor.metagraph(self.config.netuid)
+        bt.logging.info("Synced metagraph")
+        self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
 
     async def try_run_step(self, ttl: int):
         async def _try_run_step():
@@ -1533,15 +1547,6 @@ class Validator:
                 response.raise_for_status()
                 response_json = response.json()
                 return response_json
-                # if "success" in response_json and not response_json["success"]:
-                #     bt.logging.warning(response_json["message"])
-                #     return None
-                # elif "success" in response_json and response_json["success"]:
-                #     model_scores = response_json["model_scores"]
-                #     bt.logging.info(f"Retrieved model scores from API")
-                #     return model_scores
-                # if attempt > 0:
-                #     bt.logging.debug(f"Successfully retrieved model scores after {attempt + 1} attempts")
             
             except requests.exceptions.RequestException as e:
                 if attempt < MAX_RETRIES - 1:  # Don't wait after the last attempt

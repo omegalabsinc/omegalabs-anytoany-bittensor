@@ -12,10 +12,11 @@ import huggingface_hub
 import psutil
 import shutil
 import socket
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict
 from docker.models.containers import Container
 import bittensor as bt
 
+from constants import CONTAINER_TIMEOUT
 
 
 class DockerManager:
@@ -226,8 +227,6 @@ class DockerManager:
         except Exception as e:
             bt.logging.error(f"Error cleaning old repos: {str(e)}")
 
-
-
     def _find_available_port(self, start_port: int = 8000, max_port: int = 9000) -> int:
         """
         Find an available port in the given range.
@@ -342,9 +341,11 @@ class DockerManager:
                 cap_drop=['ALL'],  # Drop all capabilities
                 read_only=True,  # Read-only root filesystem
                 tmpfs={
-                    '/tmp': 'rw,noexec,nosuid',
-                    '/run': 'rw,noexec,nosuid'
+                    '/tmp': 'rw,noexec,nosuid',      # keep locked down
+                    '/run': 'rw,noexec,nosuid',
+                    '/app/cache': 'rw,exec,nosuid',  # single exec-enabled cache dir
                 },
+                shm_size='2g',  # Add shared memory for better performance
                 pids_limit=100,  # Limit number of processes
                 mem_limit=self.get_memory_limit(),
                 environment={
@@ -354,8 +355,13 @@ class DockerManager:
                     'REPO_ID': repo_id,
                     'NVIDIA_VISIBLE_DEVICES': 'all',
                     'NVIDIA_DRIVER_CAPABILITIES': 'compute,utility,graphics',
-                    'TRANSFORMERS_CACHE': '/tmp/transformers_cache',
-                    'HF_HOME': '/tmp/hf_cache'
+
+                    # Point everything to the ONE exec-enabled dir
+                    'TRITON_CACHE_DIR': '/app/cache',
+                    'TORCHINDUCTOR_CACHE_DIR': '/app/cache',
+                    'XDG_CACHE_HOME': '/app/cache',
+                    'HF_HOME': '/app/cache',
+                    'TRANSFORMERS_CACHE': '/app/cache',
                 },
                 runtime='nvidia',
                 device_requests=[
@@ -391,7 +397,6 @@ class DockerManager:
             ]):
                 raise Exception("Dockerfile contains dangerous commands")
     
-
     def _test_network_isolation(self, container: Container, container_name: str) -> None:
         """
         Test that container cannot access internet but API endpoints work.
@@ -702,141 +707,7 @@ exit(1)  # All failed
             bt.logging.error(f"inside docker_manager: Failed to cleanup Docker resources: {str(e)}")
             raise
 
-    def inference_v2v(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 60) -> Dict[str, Any]:
-        """
-        Send inference request to container.
-        
-        Args:
-            url: Container API URL
-            audio_array: Input audio array
-            sample_rate: Audio sample rate
-            timeout: Request timeout in seconds
-            
-        Returns:
-            Dict containing inference results
-        """
-        try:
-            # Convert audio array to base64
-            buffer = io.BytesIO()
-            np.save(buffer, audio_array)
-            audio_b64 = base64.b64encode(buffer.getvalue()).decode()
-            
-            # Send request
-            response = requests.post(
-                f"{url}/api/v1/v2t",
-                json={
-                    "audio_data": audio_b64,
-                    "sample_rate": sample_rate
-                },
-                timeout=timeout
-            )
-            
-            response.raise_for_status()
-            
-            # Parse response
-            result = response.json()
-            
-            # Handle both v2t (text only) and v2v (audio + text) responses
-            response_data = {}
-            
-            # Get text if available
-            if "text" in result:
-                response_data["text"] = result["text"]
-            
-            # Get audio if available (for v2v models)
-            if "audio_data" in result:
-                try:
-                    audio_bytes = base64.b64decode(result["audio_data"])
-                    audio = np.load(io.BytesIO(audio_bytes))
-                    response_data["audio"] = audio
-                except Exception as e:
-                    bt.logging.warning(f"Failed to decode audio data: {e}")
-            
-            # Ensure we always have at least text field
-            if "text" not in response_data:
-                response_data["text"] = ""
-                
-            return response_data
-            
-        except requests.exceptions.RequestException as e:
-            bt.logging.error(f"Inference request failed: {str(e)}")
-            raise
-        except Exception as e:
-            bt.logging.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
-            raise
-    
-    def inference_v2t(self, url: str, audio_array: np.ndarray, sample_rate: int, timeout: int = 60) -> Dict[str, Any]:
-        """
-        Send inference request to container.
-        
-        Args:
-            url: Container API URL
-            audio_array: Input audio array
-            sample_rate: Audio sample rate
-            timeout: Request timeout in seconds
-            
-        Returns:
-            Dict containing inference results
-        """
-        # Convert audio array to base64
-        buffer = io.BytesIO()
-        np.save(buffer, audio_array)
-        audio_b64 = base64.b64encode(buffer.getvalue()).decode()
-        
-        # Send request
-        response = requests.post(
-            f"{url}/api/v1/v2t",
-            json={
-                "audio_data": audio_b64,
-                "sample_rate": sample_rate
-            },
-            timeout=timeout
-        )
-        
-        response.raise_for_status()
-            
-        return response.json()
-    
-
-    def inference_ibllama(self, url: str, video_embed: List[float], timeout: int = 60) -> Dict[str, Any]:
-        """
-        Send inference request to container for IBLlama model.
-        
-        Args:
-            url: Container API URL
-            video_embed: Input video embedding as list of floats
-            timeout: Request timeout in seconds
-            
-        Returns:
-            Dict containing inference results with generated captions
-        """
-        try:
-            # Send request
-            response = requests.post(
-                f"{url}/api/v1/v2t",
-                json={
-                    "embedding": video_embed
-                },
-                timeout=timeout
-            )
-            
-            response.raise_for_status()
-            
-            # Parse response
-            result = response.json()
-            
-            return {
-                "captions": result.get("texts", [])
-            }
-            
-        except requests.exceptions.RequestException as e:
-            bt.logging.error(f"Inference request failed: {str(e)}")
-            raise
-        except Exception as e:
-            bt.logging.error(f"inside docker_manager: Failed to process inference result: {str(e)}")
-            raise
-
-    def _wait_for_container(self, container: Container, expected_host_port: int, timeout: int = 300) -> None:
+    def _wait_for_container(self, container: Container, expected_host_port: int, timeout: int = CONTAINER_TIMEOUT) -> None:
         """
         Implements a robust health check mechanism for container initialization.
         
