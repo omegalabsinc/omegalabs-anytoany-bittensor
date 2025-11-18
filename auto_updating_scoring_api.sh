@@ -11,4 +11,4 @@ pip install -e .
 python -m nltk.downloader punkt punkt_tab
 
 # finally, run the scoring api
-python neurons/scoring_api.py $API_ARGS --auto_update
+python -m neurons.scoring_api $API_ARGS --auto_update

@@ -9,4 +9,4 @@ git pull
 pip install -e .
 
 # finally, run the validator
-python neurons/validator.py $VALIDATOR_ARGS --auto_update
+python -m neurons.validator $VALIDATOR_ARGS --auto_update
