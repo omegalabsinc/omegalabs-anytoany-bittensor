@@ -1,21 +1,12 @@
-imagebind @ git+https://github.com/facebookresearch/ImageBind.git@c3c3b2e1ce6fd850ff42ce0375823fe22880a7cc#egg=imagebind
-accelerate==1.2.1
 datasets==3.1.0
 docker==7.1.0
 hf_transfer==0.1.9
 jiwer==3.0.5
 pesq==0.0.4
 pyannote.audio==3.1.1
-pydub==0.25.1
-torchdata==0.10.0
-torchvision==0.19.1
 transformers==4.46.3
-tqdm==4.67.1
-ulid-py==1.1.0
-uv==0.5.18
 bittensor[torch]==9.10.1
 torch==2.4.1
-pesq==0.0.4
 librosa==0.10.2.post1
 wandb==0.19.1
 openai>=1.0.0
@@ -25,7 +16,6 @@ mysqlclient==2.2.4
 PyMySQL==1.1.1
 absl-py
 langdetect
-loguru>=0.7.2
 nltk>=3.8
 immutabledict
 # UTMOSv2 for TTS
