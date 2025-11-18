@@ -8,6 +8,9 @@ git pull
 # next, set up environment
 pip install -e .
 
+# Install git dependencies separately (not supported in setup.py install_requires)
+pip install git+https://github.com/sarulab-speech/UTMOSv2.git
+
 python -m nltk.downloader punkt punkt_tab
 
 # finally, run the scoring api
